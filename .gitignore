@@ -1,0 +1,28 @@
+# ── Gowin 编译产物 ──────────────────────────────────────────────
+impl/
+*.fs
+*.bin
+*.binx
+*.pr
+*.db
+*.log
+*.p
+*.power.html
+*.pin.html
+*.rpt.html
+*.tr.html
+*_tr_cata.html
+*_tr_content.html
+cmd.do
+device.cfg
+
+# ── 仿真产物 ────────────────────────────────────────────────────
+*.vvp
+*.vcd
+*.fst
+
+# ── 临时文件 ────────────────────────────────────────────────────
+.tmp/
+*~
+
+# ── 保留：.hex 参数表、.gprj、.cst、.sdc、build.tcl、src/、tools/、doc/

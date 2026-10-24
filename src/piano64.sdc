@@ -1,0 +1,6 @@
+create_clock -name CLOCK_50 -period 20.000 -waveform {0.000 10.000} [get_ports {CLOCK_50}]
+create_generated_clock -name CLK_SYS -source [get_ports {CLOCK_50}] -divide_by 1 [get_nets {clk_sys}]
+set_false_path -from [get_ports {RESET_n}]
+set_false_path -from [get_ports {KEY[*]}]
+set_output_delay -clock CLOCK_50 -max 10.000 [get_ports {AUD_BCK AUD_LRCK AUD_DIN}]
+set_output_delay -clock CLOCK_50 -min 0.000  [get_ports {AUD_BCK AUD_LRCK AUD_DIN}]
