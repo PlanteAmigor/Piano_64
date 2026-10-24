@@ -15,24 +15,43 @@ npz2hex_harm.py —— 把笛子/唢呐的「谐波表」npz 转成 FPGA 可读�
 
 所有音拼在一个地址空间里，每音给一个基址。每音内部的相对偏移：
 
-    标量区   K+1 字：{K, npsi}                     1 字（K, Ψ 条数）
+    标量区   {K, npsi}                             1 字（K, Ψ 条数）
              a_m[K]  b_m[K]                        2K 字（16 bit 有符号）
              dm_m[K]                                K 字（16 bit，0.001 Hz/LSB）
              tau_u_m[K]                             K 字（16 bit，0.01 ms/LSB）
-    ❰ 区     phi[NT]                              NT×2 字（32 bit **无符号**，Q11.21 圈）
+             env_scale[K]                           K 字（16 bit，Q1.15，Env 峰值）
+    ❰ 区     phi[NT]                              NT×2 字（32 bit **无符号**，Q13.19 圈）
     Ψ 区     psi[npsi][NT2]                        npsi×NT2 字（16 bit，Q3.12 圈）
-    Env 区   env[K][NT3]                           K×NT3 字（16 bit，Q0.15）
+    Env 区   env[K][NT3]                           K×NT3 字（**8 bit**，见下）
 
-★ Φ 存【绝对值】32 位 Q11.21，不存增量：
-  - 16 bit 存绝对值只剩 5 bit 小数（1/32 圈 ≈ 0.11 rad），超出 0.2 rad 要求
-  - 试过存「每样点增量」dphi 再用 32 bit 累加器重建，SNR 只有 4 dB ——
-    累积误差把相位咬掉了；存绝对值直接查表无此问题
-  - Q11.21：最大 1172.78 圈 ⇒ 2.46e9 < 2^32，用**无符号** 32 位刚好
-  - 分辨率 2^-21 圈；相邻表点差约 1.95 圈，相对误差 2.4e-7
-    ⇒ 频率误差 9.4e-5 Hz，远小于公式表要求的 0.011 Hz
+★ Φ 用 32 位无符号 Q13.19（不是 Q11.21！）：
+  - ★★ 高音的 Φ 会到【4695 圈】（MIDI 91，f0=1568 Hz × 3 s）
+    Q11.21 的整数位只有 11 bit（最大 2047 圈），直接削顶；
+    症状是 MIDI 79 以后 SNR 从 43 dB 崩到 2 dB —— 调试时踩过
+  - Q13.19：整数 13 位（最大 8191 圈）+ 小数 19 位，8191×2^19 = 4.294e9 < 2^32 刚好
+  - 分辨率 2^-19 圈；相邻表点差约 2 圈，相对误差 9.5e-7
+    ⇒ 频率误差 3.7e-4 Hz，远小于公式表要求的 0.011 Hz
 
-◆ 实测定点量化后 SNR（vs 浮点参考 47.3 dB）:
-    MIDI 67 (K=62) 44.82 dB   MIDI 79 (K=31) 43.68 dB   MIDI 91 (K=15) 48.11 dB
+★ Env 用【8 位 + 每谐波缩放因子】而不是 16 位：
+  - Gowin BSRAM 只有 1/2/4/8/16/32/36 位模式，12 位会落进 16 位模式【白降不省块】，
+    所以只能选 8 位
+  - 8 位纯线性只有 41.7 dB（相对 16 位损失 5.5 dB）
+  - 加一个每谐波峰值缩放因子 env_scale[m] = max|env[m]|，存 int8/127×scale：
+        MIDI 67 (K=62)  41.74 → 45.23 dB
+        MIDI 79 (K=31)  39.28 → 40.94 dB
+        MIDI 91 (K=15)  29.64 → 45.30 dB   ★ 小包络谐波提升最大
+    代价只有 K 个 16 位字/音（共 836 字）
+  - 实测其他方案无效：mu-law 8 位只有 42.5 dB；每谐波 RMS 归一反而更差（32.3 dB）
+  - 表点数决不能再减：Env 150→100 点直接掉到 22.3 dB，
+    这张表本来就是「起振段密、持续段疏」的非均匀时间轴
+
+◆ 8 位 Env + 每谐波归一化后，全 25 音实测（对比 npz 的 xh）：
+    平均 SNR 42.10 dB，最低 37.25 dB（MIDI 76），最高 46.04 dB
+    gain 全部 ≈ 1.0000（量纲未揭歪）
+    16 位 Env 版本平均约 45 dB，但占 227 块（图 68%）
+
+◆ 最终存储：3.155 Mbit = 51.6% of 6.12 Mbit ≈ 172 块 = 51%
+    （16 位 Env 版本 4.158 Mbit = 68% ≈ 227 块，省 55 块）
 
 用法：
     export TMPDIR=$PWD/.tmp
@@ -101,15 +120,24 @@ def main():
         NT3 = int(d['nt3'])
         mask = np.asarray(d['phm_mask'], dtype=np.float64)
         npsi = int((mask != 0).sum())
-        words = (2 + 2 * K + K + K) + NT * 2 + npsi * NT2 + K * NT3
+        words = (2 + 4 * K + K) + NT * 2 + npsi * NT2 + K * NT3
         info[mi] = dict(K=K, NT=NT, NT2=NT2, NT3=NT3, npsi=npsi, words=words)
         tot_words += words
 
-    print('  总字数 %d（16 bit）= %.3f Mbit = %.1f%% of 6.12 Mbit'
+    print('  总字数 %d（按 16 bit/字 计）= %.3f Mbit = %.1f%% of 6.12 Mbit'
           % (tot_words, tot_words * 16 / 1e6, tot_words * 16 / 6.12e6 * 100))
-    print('  按 18432 bit/块 估算 BSRAM ≈ %d 块 = %.0f%%'
-          % (int(np.ceil(tot_words * 16 / 18432)),
-             tot_words * 16 / 18432 / 340 * 100))
+    # Env 区是 8 bit，其他 16/32 bit → 精确算 bit
+    tot_bits = 0
+    for mi in midis:
+        v = info[mi]
+        tot_bits += (2 + 4 * v['K']) * 16          # 标量区
+        tot_bits += v['NT'] * 32                   # Φ
+        tot_bits += v['npsi'] * v['NT2'] * 16      # Ψ
+        tot_bits += v['K'] * v['NT3'] * 8          # Env = 8 bit
+    print('  实际 bit 占用 %.3f Mbit = %.1f%% of 6.12 Mbit'
+          % (tot_bits / 1e6, tot_bits / 6.12e6 * 100))
+    nb = int(np.ceil(tot_bits / 18432))
+    print('  按 18432 bit/块 估算 BSRAM ≈ %d 块 = %.0f%%' % (nb, nb / 340 * 100))
     print('  K 范围 %d..%d，Ψ 条数 %d..%d'
           % (min(v['K'] for v in info.values()), max(v['K'] for v in info.values()),
              min(v['npsi'] for v in info.values()), max(v['npsi'] for v in info.values())))
@@ -143,15 +171,15 @@ def main():
         env = np.asarray(d['env'], dtype=np.float64)
         mask = np.asarray(d['phm_mask'], dtype=np.float64)
 
-        # Φ → 32 位无符号绝对值（Q11.21 圈）。直接查表，不做差分/累加。
-        SC_PHI = float(1 << 21)
+        # Φ → 32 位无符号绝对值（Q13.19 圈）。直接查表，不做差分/累加。
+        # ★ Q13.19 整数位 13 bit，最大 8191 圈；高音实测到 4695 圈
+        SC_PHI = float(1 << 19)
 
         # 量化
         SC_A = 4096.0                     # a/b：±8.0 → Q3.12
         SC_DM = 1000.0                    # dm：0.001 Hz/LSB，±32 Hz
         SC_TU = 100000.0                  # tau_u：0.01 ms/LSB，0..655 ms
         SC_PS = 8192.0                    # psi：±4 圈 → Q3.12（实测最大 2.28 圈）
-        SC_EV = 32768.0                   # env：±1.0 → Q0.15
 
         def q(v, sc, lo, hi):
             return np.round(np.clip(v * sc, lo, hi)).astype(np.int64) & 0xFFFF
@@ -163,10 +191,13 @@ def main():
         data[w:w + K] = q(am, SC_A, -32768, 32767);      w += K
         data[w:w + K] = q(bm, SC_A, -32768, 32767);      w += K
         data[w:w + K] = q(dm, SC_DM, -32768, 32767);     w += K
-        data[w:w + K] = q(tau_u, SC_TU, 0, 65535);       w += K
+        data[w:w + K] = q(tau_u, SC_TU, 0, 65535);      w += K
+        # ★ 每谐波 Env 缩放因子（峰值），Q1.15（实测峰值到 1.15，Q0.16 会削顶）
+        env_sc = np.abs(env).max(axis=1) if env.ndim > 1 else np.abs(env).max()
+        data[w:w + K] = q(env_sc, 32768.0, 0, 65535);    w += K
 
         # phi 存 32 位无符号：低 16 字在前，高 16 字接后
-        ph32 = np.round(np.clip(phi, 0.0, 2047.0) * SC_PHI).astype(np.uint64) & 0xFFFFFFFF
+        ph32 = np.round(np.clip(phi, 0.0, 8191.0) * SC_PHI).astype(np.uint64) & 0xFFFFFFFF
         data[w:w + NT] = (ph32 & 0xFFFF).astype(np.uint16)
         w += NT
         data[w:w + NT] = ((ph32 >> 16) & 0xFFFF).astype(np.uint16)
@@ -180,8 +211,14 @@ def main():
             psi_all.append(np.abs(row).max())
             w += NT2
 
+        # ★ Env 存 8 位：int8 = round(env/scale*127)，解码 env = int8/127*scale
         for m in range(K):
-            data[w:w + NT3] = q(env[m], SC_EV, -32768, 32767)
+            sc_m = env_sc[m] if hasattr(env_sc, '__len__') else env_sc
+            if sc_m < 1e-9:
+                data[w:w + NT3] = 0
+            else:
+                qv = np.round(np.clip(env[m] / sc_m * 127.0, -127, 127)).astype(np.int64)
+                data[w:w + NT3] = (qv & 0xFF).astype(np.uint16)
             w += NT3
 
         stats.append(dict(midi=mi, K=K, npsi=npsi, words=inf['words'],
