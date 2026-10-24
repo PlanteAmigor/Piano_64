@@ -6,10 +6,18 @@ npz2hex_harm.py —— 把笛子/唢呐的「谐波表」npz 转成 FPGA 可读�
 ## 模型（与 tools/harm_fit.py 的 HarmModel.forward 一致）
 
     s(t) = Σ_m env_m(t) · [ a_m·cos(2πΘ_m) − b_m·sin(2πΘ_m) ]
-    env_m(t) = EnvTab_m(u(t)) · (1 − e^(−t/τu_m))
+    env_m(t) = EnvTab_m(u(t))          ← ★ 起振项 (1−e^(−t/τu)) 已在生成时【预乘进表】
     Θ_m(t) = m·Φ(u(t)) + δ_m·t + Ψ_m(u(t))
 
     u(t) = (1−α)·t/D + α·ln(1+t/T0)/ln(1+D/T0)      α=0.6  T0=0.06  D=3s
+
+★★ 起振项为什么可以预乘掉：
+   (1−e^(−t/τu_m)) 只依赖 t 和该谐波的 τu_m，而 τu_m 已是拟合得到的常量。
+   在生成表时按「表点对应的时间」把它乘进 EnvTab，RTL 就不需要实时算指数，
+   也不需要 K 个起振状态寄存器。实测代价：
+       MIDI 67  47.29 → 46.89    MIDI 72  48.24 → 47.76    MIDI 79  44.62 → 43.88
+       MIDI 85  49.82 → 48.93    MIDI 91  46.97 → 46.84     （最大损失 1.2 dB）
+   比实时算还换掉了 K 组指数/状态逻辑，非常划算。
 
 ## 表布局（紧凑，按音连续，变长）
 
@@ -18,7 +26,6 @@ npz2hex_harm.py —— 把笛子/唢呐的「谐波表」npz 转成 FPGA 可读�
     标量区   {K, npsi}                             1 字（K, Ψ 条数）
              a_m[K]  b_m[K]                        2K 字（16 bit 有符号）
              dm_m[K]                                K 字（16 bit，0.001 Hz/LSB）
-             tau_u_m[K]                             K 字（16 bit，0.01 ms/LSB）
              env_scale[K]                           K 字（16 bit，Q1.15，Env 峰值）
     ❰ 区     phi[NT]                              NT×2 字（32 bit **无符号**，Q13.19 圈）
     Ψ 区     psi[npsi][NT2]                        npsi×NT2 字（16 bit，Q3.12 圈）
@@ -120,7 +127,7 @@ def main():
         NT3 = int(d['nt3'])
         mask = np.asarray(d['phm_mask'], dtype=np.float64)
         npsi = int((mask != 0).sum())
-        words = (2 + 4 * K + K) + NT * 2 + npsi * NT2 + K * NT3
+        words = (2 + 4 * K) + NT * 2 + npsi * NT2 + K * NT3
         info[mi] = dict(K=K, NT=NT, NT2=NT2, NT3=NT3, npsi=npsi, words=words)
         tot_words += words
 
@@ -171,6 +178,13 @@ def main():
         env = np.asarray(d['env'], dtype=np.float64)
         mask = np.asarray(d['phm_mask'], dtype=np.float64)
 
+        # ★★ 把起振项 (1−e^(−t/τu)) 预乘进 env 表（见文件头的说明）
+        #    需要知道每个表点对应的【真实时间】，因为表是弯曲时间轴上的等分
+        _tt = np.linspace(0, WARP_D, 400000)
+        _uu = warp_u(_tt)
+        t_at_tab = np.interp(np.arange(NT3) / max(NT3 - 1, 1), _uu, _tt)
+        env = env * (1.0 - np.exp(-t_at_tab[None, :] / tau_u[:, None]))
+
         # Φ → 32 位无符号绝对值（Q13.19 圈）。直接查表，不做差分/累加。
         # ★ Q13.19 整数位 13 bit，最大 8191 圈；高音实测到 4695 圈
         SC_PHI = float(1 << 19)
@@ -178,7 +192,6 @@ def main():
         # 量化
         SC_A = 4096.0                     # a/b：±8.0 → Q3.12
         SC_DM = 1000.0                    # dm：0.001 Hz/LSB，±32 Hz
-        SC_TU = 100000.0                  # tau_u：0.01 ms/LSB，0..655 ms
         SC_PS = 8192.0                    # psi：±4 圈 → Q3.12（实测最大 2.28 圈）
 
         def q(v, sc, lo, hi):
@@ -191,7 +204,6 @@ def main():
         data[w:w + K] = q(am, SC_A, -32768, 32767);      w += K
         data[w:w + K] = q(bm, SC_A, -32768, 32767);      w += K
         data[w:w + K] = q(dm, SC_DM, -32768, 32767);     w += K
-        data[w:w + K] = q(tau_u, SC_TU, 0, 65535);      w += K
         # ★ 每谐波 Env 缩放因子（峰值），Q1.15（实测峰值到 1.15，Q0.16 会削顶）
         env_sc = np.abs(env).max(axis=1) if env.ndim > 1 else np.abs(env).max()
         data[w:w + K] = q(env_sc, 32768.0, 0, 65535);    w += K
@@ -223,8 +235,6 @@ def main():
 
         stats.append(dict(midi=mi, K=K, npsi=npsi, words=inf['words'],
                           phi_max=float(np.abs(phi).max()),
-                          tau_min=float(tau_u.min() * 1e3),
-                          tau_max=float(tau_u.max() * 1e3),
                           a_max=float(np.abs(am).max()),
                           psi_max=float(max(psi_all) if psi_all else 0.0),
                           env_max=float(np.abs(env).max())))
@@ -241,12 +251,12 @@ def main():
     print('\n写出:')
     print('  %s/%s_param.hex  (%d 字)' % (a.outdir, a.prefix, len(data)))
     print('  %s/%s_base.hex   (%d 音基址)' % (a.outdir, a.prefix, len(midis)))
-    print('\n%-6s %4s %5s %8s %10s %10s %7s %7s %7s' %
-          ('MIDI', 'K', 'npsi', 'words', 'phi_max', 'tau_ms', 'a_max', 'psi_max', 'env_max'))
+    print('\n%-6s %4s %5s %8s %10s %7s %7s %7s' %
+          ('MIDI', 'K', 'npsi', 'words', 'phi_max', 'a_max', 'psi_max', 'env_max'))
     for s in stats:
-        print('%-6d %4d %5d %8d %10.1f %4.1f-%-4.1f %7.3f %7.3f %7.3f'
+        print('%-6d %4d %5d %8d %10.1f %7.3f %7.3f %7.3f'
               % (s['midi'], s['K'], s['npsi'], s['words'], s['phi_max'],
-                 s['tau_min'], s['tau_max'], s['a_max'], s['psi_max'], s['env_max']))
+                 s['a_max'], s['psi_max'], s['env_max']))
     return 0
 
 
