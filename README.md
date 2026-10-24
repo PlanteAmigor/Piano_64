@@ -32,10 +32,37 @@ cd piano64
 ### 重新构建
 
 ```bash
-../../bin/gw_sh build.tcl
+# Gowin EDA 装在本机 /mnt/project/ov-cli/Gowin（无需 license，实测可完整跑完 PnR）
+export LD_LIBRARY_PATH=/mnt/project/ov-cli/Gowin/IDE/lib
+export QT_QPA_PLATFORM=xcb
+/mnt/project/ov-cli/Gowin/IDE/bin/gw_sh build.tcl
 # 判据：ERROR 0 条（不要看 warning 数量）
 # 产物：impl/pnr/piano64.fs
 ```
+
+> 原交接文档里写的是 `../../bin/gw_sh build.tcl`，那是原作者机器上的路径，
+> 本机不存在，已替换为上面的绝对路径。
+
+### 重新生成参数表（可选）
+
+参数表 `.hex` 已随仓库提交，一般不需要重跑。改分量数或换乐器时才需要：
+
+```bash
+export TMPDIR=$PWD/../../.tmp
+PY=../../.venv/bin/python
+
+# 古筝：先把 49 个单音 txt 合并，再生成表
+$PY tools/merge_guzheng_txt.py \
+    --dir ../../out/古筝_全音域/参数 --out ../../.tmp/guzheng_all.md
+$PY tools/gen_modal_rom.py --table ../../.tmp/guzheng_all.md \
+    --note-lo 38 --prefix gz_param --npart 128 --normalize 3000
+
+# 钢琴
+$PY tools/gen_modal_rom.py --table ../../out/piano/钢琴公式表.md \
+    --note-lo 21 --prefix add_param --npart 128 --normalize 3000
+```
+
+`--npart` 决定每音取多少个模态（64 / 128 / 256），生成的表行数 = 音数 × npart。
 
 ### IDE 打开
 
@@ -158,27 +185,53 @@ Gowin IDE → File → Open Project → piano64.gprj
 
 **应对**：布局整体后移到索引 5 起，前 5 颗永远发 0。**建议换一条灯带。**
 
-### ② 时序违例 48 条
+### ② 时序违例 1 条（I2S 输出）
 
-见上文和 `doc/分量数可行性分析.md`。**不影响听感，不需要修。**
+实测（128 分量版）：25 条 setup 路径中只有 1 条违例，是 `u_tx/din_s0 → AUD_DIN`
+的 **−0.085 ns**，与加法引擎无关。
 
-### ③ 还没有 Flash 音色库
+加法引擎最差 slack 是 **+9.82 ns**（周期 20 ns），余量充足。
 
-当前只有钢琴一个音色（参数表编译进 BSRAM 的 `$readmemh` 初值）。
+违例原因是 `piano64.sdc` 里 `set_output_delay -max 10.000` 定得过紧
+（20 ns 周期只剩 10 ns 给外部）。**不影响听感，不需要修**；若要去掉，
+改成 8 ns 或用 I/O 输出寄存器即可。
 
-**下一步计划**：把多个音色表写进板载 W25Q64 Flash（剩 3.25 MB，能放 ~48 张表），上电时读到 BSRAM，长按模式键切换。
+> 原交接文档说「48 条违例、最差 −10 ns、引擎路径 23 ns」，那是估算而非实测。
+> 实际编译结果与此差异很大，详见 `doc/分量数可行性分析.md` 的勘误说明。
+
+### ③ 音色库
+
+工程里已带**两套** 128 分量参数表，通过 `src/add_top.v` 的
+`TIMBRE_SEL` 常量切换（0 = 钢琴，1 = 古筝）：
+
+| 音色 | 参数表 | 音域 | 分量 | 表深度 |
+|---|---|---|---:|---:|
+| 钢琴 | `add_param0/1/2.hex` | 88 音 MIDI 21–108 | 128 | 11264 |
+| 古筝 | `gz_param0/1/2.hex` | 49 音 MIDI 38–86 | 128 | 6272 |
+
+两张表不能同时装：钢琴 90 块 pROM + 古筝 33 块 = 123 块，加状态 RAM 后
+接近 BSRAM 上限。一次编一个音色。
+
+**下一步计划**：把多个音色表写进板载 W25Q64 Flash（剩 3.25 MB），
+上电时读到 BSRAM，长按模式键切换。
 
 **技术障碍**：
 - `add_param_rom.v` 要改成**可写 RAM**（现在是只读 `$readmemh`）
 - 新增 QSPI Flash 读模块（用配置完成后释放的 MSPI 脚）
-- 古筝表 ✓ 已有源数据；**笛子表是不同模型**（Φ/Ψ/Env 表），当前引擎跑不了
+- **笛子/唢呐是不同模型**（Φ/Ψ/Env 三张表 + 时变相位），当前引擎跑不了
+
+### ④ ATK 起音项当前不可用
+
+`add_voice8.v` 保留了起音上升项 `(1−e^(−t/τu))` 的逻辑，但参数表只存了 3 个
+bank，`Rr` 被固定成 `25'd1`，起音速率实际没存。所以 `ATK` 必须为 0。
+古筝的「铮铮」感需要这一项，将来要改用 4 bank 的表格式。
 
 ---
 
 ## 原理一句话
 
-> **音色就是一张参数表（88 音 × 64 分量，每行存频率/衰减/幅度/相位）；
-> 每个采样点都是 FPGA 现场用 64 个正弦分量累加算出来的 —— 没有预录任何 PCM。**
+> **音色就是一张参数表（88 音 × 128 分量，每行存频率/衰减/幅度/相位）；
+> 每个采样点都是 FPGA 现场用 128 个正弦分量累加算出来的 —— 没有预录任何 PCM。**
 
 ---
 
@@ -188,9 +241,9 @@ Gowin IDE → File → Open Project → piano64.gprj
 |---|---|
 | 纯硬件实时合成，延迟 ≤10 ms | 按键到 I2S **82 µs** |
 | 复音 ≥4 | **4 声部** |
-| 单音分量 ≥32 | **64 路**（2 倍）|
+| 单音分量 ≥32 | **128 路**（4 倍）|
 | 严禁预录 PCM | 只存**参数**，每点实时计算 |
-| ≥2 音色切换 | 目前 1 个（钢琴），Flash 库待做 |
+| ≥2 音色切换 | **2 套表已带**（钢琴/古筝），靠 `TIMBRE_SEL` 切换；Flash 在线切换待做 |
 
 ---
 
@@ -200,12 +253,22 @@ Gowin IDE → File → Open Project → piano64.gprj
 piano64/
 ├── README.md                    本文件
 ├── doc/                         三份说明文档
-├── src/                         RTL 源码（14 个 .v）
-├── add_param0..2.hex            参数表（5632 行 × 3 bank）
-├── add_sine.hex                 正弦表
-├── build.tcl                    命令行构建
-├── piano64.gprj                 IDE 工程
-├── piano64.cst                  引脚约束
+├── src/                         RTL 源码（16 个 .v）
+│     add_top.v                  顶层（音色选择 TIMBRE_SEL）
+│     add_engine8.v              引擎：4 声部共用一份参数 ROM  ★当前使用
+│     add_voice8.v               声部：128 分量 / 8 级流水线     ★当前使用
+│     add_engine.v  add_voice.v  旧版 64 分量 / 16 级（参考与回退，不参与综合）
+│     add_param_rom.v            参数表 ROM（钢琴 / 古筝两份）
+│     add_sine_lut.v             正弦表 + 线性插值
+│     mix_sum.v                  4 路求和 + 软限幅
+│     key_scan.v  note_alloc.v   按键扫描 / 复音分配
+│     pcm5102a_tx.v  pll50.v     I2S 发送 / PLL
+│     ws2812_*.v                 灯带驱动
+├── tools/                       参数表生成脚本
+│     gen_modal_rom.py           模态表 → .hex（--npart 可选 64/128/256）
+│     merge_guzheng_txt.py       古筝 49 个单音 txt → 合并格式
+├── add_param0..2.hex            钢琴参数表（11264 行 = 88 音 × 128 分量）
+├── gz_param0..2.hex             古筝参数表（  6272 行 = 49 音 × 128 分量）
 ├── piano64.sdc                  时序约束
 └── flash.sh                     烧录脚本
 ```
