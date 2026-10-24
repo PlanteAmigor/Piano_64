@@ -2,35 +2,51 @@
 //  add_voice_harm —— 谐波表驱动的加法声部（笛子 / 唢呐）
 //
 //      s(t) = Σ_{m=1..K} env_m(t) · A_m · sin(2π·Θ_m(t) + phi_m)
-//      Θ_m(t) = m·Φ(u(t)) + δ_m·t + Ψ_m(u(t))
-//      env_m(t) = EnvTab_m(u(t)) · env_scale_m / 127     ← 起振项已预乘进表
+//      Θ_m(t) = m·Φ(u(t)) + δ_m·t + Ψ_m(u(t)) + phi_m
+//      env_m(t) = EnvTab_m(u(t)) · env_scale_m / 127     ← 起振项已预乘
 //      u(t) = (1−α)·t/D + α·ln(1+t/T0)/ln(1+D/T0)        α=0.6 T0=0.06 D=3s
 //
+//  ── ★★ 关键：地址必须是【组合】的 ────────────────────────────────
+//     BSRAM 是同步读：地址在 T 拍有效 → 数据在 T+1 拍出来。
+//     第一版把 rom_addr 写成 output reg，在 s=0 的时钟沿才更新，
+//     等于地址比数据晚一拍，整条流水线错位，输出全是 x。
+//     （原 add_voice8.v 的 rom_addr 就是组合信号，这一点不能省。）
+//
 //  ── 定点格式（与 tools/npz2hex_harm.py 严格对应）──────────────────
-//      Φ      Q13.19  32 bit 无符号（绝对值；只用低 19 位做 m·Φ，整数部分无关）
+//      Φ      Q13.19  32 bit 无符号
 //      Ψ      Q3.12   16 bit 有符号
 //      A      Q3.13   16 bit 有符号
 //      phi_a  Q0.16   16 bit 有符号（圈，±0.5）
 //      δ      0.001Hz 16 bit 有符号
 //      env_scale Q1.15 16 bit 无符号
-//      env    int8（−127..127），真实值 = int8/127 × scale
+//      env    int8，真实值 = int8/127 × scale
 //
-//  ── 幅度缩放推导 ─────────────────────────────────────────────────
-//      env_true = h_env/127 × (h_SC/2^15)
-//      A_true   = h_A/2^13
-//      sin_true = h_sin/2^15
-//      hAS      = h_A × h_SC / 2^15           （Q4.13，env_true×A_true = h_env×hAS/(127×2^13)）
-//      p        = (h_env × hAS)/2^15
-//      acc     += p × h_sin
-//      ⇒ acc = Σ env_true·A_true·sin_true × (127 × 2^28)
-//      ⇒ sample = acc / (127 × 2^28) = acc >>> 35   （2^35/127 = 2.704e8 ≈ 127×2^28=3.407e10？
-//         ★ 这里不能用近似，见 SOUT 的说明：直接除 3.407e10 用移位不精确，
-//           所以缩放系数取 2^28，输出 acc >>> 28，再在顶层统一乘系数。）
+//  ── 时间表（每谐波 16 拍，s = 0..15）────────────────────────────
+//      s : 组合地址           | 本拍可用的 rd（上一拍地址的数据）
+//      ------------------------------------------------------------
+//      0 : A[m]               | —
+//      1 : phi_a[m]           | A[m]
+//      2 : dm[m]              | phi_a[m]
+//      3 : env_scale[m]       | dm[m]
+//      4 : psi_idx[m]         | env_scale[m]
+//      5 : Ψ_base(rd)         | psi_idx[m]
+//      6 : Ψ_base+1           | Ψ[m][i0]
+//      7 : Env_base           | Ψ[m][i1]
+//      8 : Env_base+1         | Env[m][j0]
+//      9 : (空闲)             | Env[m][j1]
+//      10: 插值 Ψ、Env
+//      11: 算 A×scale，相位对齐
+//      12: sin[Θ高10位]        |
+//      13: sin[+1]            | sin(i)
+//      14: —                  | sin(i+1)
+//      15: 插值 + 累加
 //
-//  ── 时间分配（每样点 1024 拍）────────────────────────────────────
-//      启动 1 拍（读表头）+ 前置 5 拍（u 2 读、Φ 2 读、插值）
-//      谐波循环：每谐波 16 拍 × K（K 最大 62 → 992）
-//      合计最坏 1 + 5 + 992 = 998 < 1024 ✓
+//  ── 幅度缩放 ─────────────────────────────────────────────────────
+//      hAS   = A × env_scale / 2^15          （Q4.13）
+//      p     = (env_int8 × hAS) / 2^15
+//      acc  += p × sin_int16
+//      ⇒ acc = y_true × 127 × 2^13 = y_true × 1,040,384
+//      ⇒ sample = acc >>> 20    ★ 第一版误写成 28，输出恒 0
 //==========================================================================
 `default_nettype none
 
@@ -51,17 +67,18 @@ module add_voice_harm #(
     input  wire                gate,
 
     input  wire [31:0]         rd,
-    output reg  [ROM_AW-1:0]   rom_addr,
+    output wire [ROM_AW-1:0]   rom_addr,      // ★ 组合输出
 
     input  wire [31:0]         u_rd,
-    output reg  [U_AW-1:0]     u_addr,
+    output wire [U_AW-1:0]     u_addr,        // ★ 组合输出
 
     input  wire [15:0]         sin_rd,
-    output reg  [9:0]          sin_addr,
+    output wire [9:0]          sin_addr,      // ★ 组合输出
 
     input  wire [ROM_AW-1:0]   base_rd,
 
     output reg  signed [15:0]  sample,
+    output reg                 sample_valid,
     output reg                 idle
 );
 
@@ -76,7 +93,7 @@ module add_voice_harm #(
     endfunction
 
     // ════════════════════════════════════════════════════════════════
-    //  节拍与全局状态
+    //  状态
     // ════════════════════════════════════════════════════════════════
     reg [9:0]  cnt;
     reg [19:0] t_smp;
@@ -86,24 +103,9 @@ module add_voice_harm #(
     wire [15:0] u_i  = t_smp[19:4];
     wire [3:0]  u_fr = t_smp[3:0];
 
-    // ════════════════════════════════════════════════════════════════
-    //  表头与分区偏移
-    // ════════════════════════════════════════════════════════════════
     reg [ROM_AW-1:0] base;
     reg [7:0]  K, npsi;
 
-    wire [ROM_AW-1:0] off_A   = base + 2;
-    wire [ROM_AW-1:0] off_PA  = base + 2 + K;
-    wire [ROM_AW-1:0] off_DM  = base + 2 + 2 * K;
-    wire [ROM_AW-1:0] off_SC  = base + 2 + 3 * K;
-    wire [ROM_AW-1:0] off_PI  = base + 2 + 4 * K;
-    wire [ROM_AW-1:0] off_PHI = base + 2 + 5 * K;
-    wire [ROM_AW-1:0] off_PSI = off_PHI + 2 * NT;
-    wire [ROM_AW-1:0] off_ENV = off_PSI + npsi * NT2;
-
-    // ════════════════════════════════════════════════════════════════
-    //  状态机
-    // ════════════════════════════════════════════════════════════════
     localparam [2:0] ST_IDLE = 3'd0,
                      ST_HEAD = 3'd1,
                      ST_PRE  = 3'd2,
@@ -117,147 +119,175 @@ module add_voice_harm #(
     reg       ready, pending;
 
     reg [31:0] u0, u1;
+    reg [ROM_AW-1:0] psi_a0, env_a0;      // 表读基址锁存
 
     reg signed [31:0] hA, hPA, hDM, hSC, hPI;
     reg signed [31:0] psi0, psi1, env0, env1, sn0, sn1;
     reg signed [31:0] hAS;
     reg signed [63:0] acc;
 
-    // 插值坐标（u × (T-1)，用 64 位中间量）
+    // ── 分区偏移 ───────────────────────────────────────────────────
+    wire [ROM_AW-1:0] off_A   = base + 2;
+    wire [ROM_AW-1:0] off_PA  = base + 2 + K;
+    wire [ROM_AW-1:0] off_DM  = base + 2 + 2 * K;
+    wire [ROM_AW-1:0] off_SC  = base + 2 + 3 * K;
+    wire [ROM_AW-1:0] off_PI  = base + 2 + 4 * K;
+    wire [ROM_AW-1:0] off_PHI = base + 2 + 5 * K;
+    wire [ROM_AW-1:0] off_PSI = off_PHI + 2 * NT;
+    wire [ROM_AW-1:0] off_ENV = off_PSI + npsi * NT2;
+
+    // ── 插值坐标 ───────────────────────────────────────────────────
     wire [63:0] uprod    = {32'd0, u_acc} * (NT  - 1);
     wire [9:0]  pidx     = uprod[40:32];
     wire [31:0] pfrac    = uprod[31:0];
 
     wire [63:0] psiprod  = {32'd0, u_acc} * (NT2 - 1);
-    wire [8:0]  psi_idx9 = psiprod[40:32];
+    wire [8:0]  psi_pos  = psiprod[40:32];
     wire [31:0] psi_fr   = psiprod[31:0];
 
     wire [63:0] envprod  = {32'd0, u_acc} * (NT3 - 1);
-    wire [7:0]  env_idx8 = envprod[39:32];
+    wire [7:0]  env_pos  = envprod[39:32];
     wire [31:0] env_fr   = envprod[31:0];
 
-    // ══════════════════════════════════════════════════════════
-    //  ★ 相位合成  Θ = m·Φ + δ_m·t + Ψ_m + phi_m   （单位：圈，19 位小数）
-    // ══════════════════════════════════════════════════════════
-    //  δ 的单位是 0.001 Hz，t_smp 是样点序号：
-    //      δ_Hz × t_s  = δ × 0.001 × t_smp / FS           （圈）
-    //      换算到 19 位小数（×2^19）：
-    //      = δ × t_smp × 0.001 × 2^19 / FS
-    //      = δ × t_smp × 0.010738
-    //      用 ×11264 >>20 实现（11264/2^20 = 0.010742，误差 0.04%）
+    // ── 相位合成 Θ（19 位小数）────────────────────────────────────
     wire signed [63:0] dmt_full = (hDM * $signed({44'd0, t_smp})) * 64'sd11264;
     wire signed [63:0] dmt      = (dmt_full + 64'sd524288) >>> 20;
+    wire signed [37:0] mphi     = $signed({1'b0, Phi[18:0]}) * $signed({30'd0, m});
+    wire signed [37:0] theta    = mphi + dmt[37:0] + psi0 + hPA;
 
-    // m·Φ：Φ 只取低 19 位（小数），×m 后再取低 19 位；整数部分与相位无关
-    wire signed [37:0] mphi = $signed({1'b0, Phi[18:0]}) * $signed({30'd0, m});
+    // ════════════════════════════════════════════════════════════════
+    //  组合地址逻辑（★ 这是正确性关键）
+    // ════════════════════════════════════════════════════════════════
+    reg [ROM_AW-1:0] rom_a;
+    always @(*) begin
+        rom_a = off_A;
+        case (st)
+        ST_HEAD: rom_a = base_rd;
+        ST_PRE: begin
+            case (pre)
+            3'd2: rom_a = off_PHI + pidx;
+            3'd3: rom_a = off_PHI + pidx + 10'd1;
+            default: rom_a = off_PHI;
+            endcase
+        end
+        ST_HARM: begin
+            case (s)
+            4'd0: rom_a = off_A  + m;
+            4'd1: rom_a = off_PA + m;
+            4'd2: rom_a = off_DM + m;
+            4'd3: rom_a = off_SC + m;
+            4'd4: rom_a = off_PI + m;
+            // s=5：用【本拍的 rd】（就是 psi_idx）算 Ψ 基址
+            4'd5: rom_a = (rd[15:0] == 16'hFFFF) ? off_PSI
+                        : off_PSI + rd[15:0] * NT2 + psi_pos;
+            4'd6: rom_a = psi_a0 + 10'd1;
+            4'd7: rom_a = env_a0;
+            4'd8: rom_a = env_a0 + 10'd1;
+            default: rom_a = off_A + m;
+            endcase
+        end
+        default: rom_a = off_A;
+        endcase
+    end
+    assign rom_addr = rom_a;
 
-    // 各项对齐到 19 位小数后相加
-    //    mphi : 19 + 6 = 25 位（已经带 19 位小数）
-    //    dmt  : 已 ×2^19
-    //    psi0 : 在 s=11 左移 7 位（Q3.12 → 19 位小数）
-    //    hPA  : 在 s=11 左移 3 位（Q0.16 → 19 位小数）
-    wire signed [37:0] theta = mphi + dmt[37:0] + psi0 + hPA;
+    assign u_addr   = u_i[U_AW-1:0];
+    assign sin_addr = theta[18:9];
 
+    // ════════════════════════════════════════════════════════════════
+    //  主时序
+    // ════════════════════════════════════════════════════════════════
     always @(posedge clk) begin
         if (!rst_n) begin
             cnt <= 10'd0; t_smp <= 20'd0; u_acc <= 32'd0; Phi <= 32'd0;
             st <= ST_IDLE; m <= 8'd0; s <= 4'd0; pre <= 3'd0;
             base <= {ROM_AW{1'b0}}; K <= 8'd0; npsi <= 8'd0;
-            rom_addr <= {ROM_AW{1'b0}}; u_addr <= {U_AW{1'b0}}; sin_addr <= 10'd0;
             u0 <= 32'd0; u1 <= 32'd0;
+            psi_a0 <= {ROM_AW{1'b0}}; env_a0 <= {ROM_AW{1'b0}};
             hA <= 0; hPA <= 0; hDM <= 0; hSC <= 0; hPI <= 0;
             psi0 <= 0; psi1 <= 0; env0 <= 0; env1 <= 0; sn0 <= 0; sn1 <= 0;
             hAS <= 0; acc <= 64'sd0; sample <= 16'sd0;
-            ready <= 1'b0; pending <= 1'b0; idle <= 1'b1;
+            ready <= 1'b0; pending <= 1'b0; idle <= 1'b1; sample_valid <= 1'b0;
         end
         else begin
             cnt <= (cnt == 10'd1023) ? 10'd0 : cnt + 10'd1;
+            sample_valid <= 1'b0;
 
             if (trig) pending <= 1'b1;
 
-            // ── 样点边界触发新一轮 ─────────────────────────────────
             if (pending && (cnt == 10'd0)) begin
-                pending  <= 1'b0;
-                ready    <= 1'b0;
-                base     <= base_rd;
-                rom_addr <= base_rd;
-                st       <= ST_HEAD;
-                t_smp    <= 20'd0;
-                u_acc    <= 32'd0;
-                acc      <= 64'sd0;
+                pending <= 1'b0;
+                ready   <= 1'b0;
+                base    <= base_rd;
+                st      <= ST_HEAD;
+                pre     <= 3'd0;
+                t_smp   <= 20'd0;
+                u_acc   <= 32'd0;
+                acc     <= 64'sd0;
             end
 
             case (st)
-            // ══ 表头：base+0 = {K, npsi} ═══════════════════════════
+            // ══ 表头（★ 必须两拍：同步 ROM 发地址后下一拍数据才有效）══
             ST_HEAD: begin
-                K    <= rd[7:0];
-                npsi <= rd[15:8];
-                st   <= ST_PRE;
-                pre  <= 3'd0;
+                if (pre == 3'd0) begin
+                    pre <= 3'd1;            // 第一拍：rom_addr 已组合为 base_rd
+                end
+                else begin
+                    K    <= rd[7:0];        // 第二拍：rd = ptab[base+0]
+                    npsi <= rd[15:8];
+                    st   <= ST_PRE;
+                    pre  <= 3'd0;
+                end
             end
             // ══ 前置：u 表 2 读 → 插值 → Φ 表 2 读 → 插值 ═════════
             ST_PRE: begin
                 case (pre)
-                3'd0: u_addr  <= u_i;
-                3'd1: begin
-                          u0     <= u_rd;
-                          u_addr <= u_i + 16'd1;
-                      end
+                3'd1: u0 <= u_rd;               // u[i0]（pre=0 时地址已为 u_i）
                 3'd2: begin
-                          u1    <= u_rd;
-                          // u = u0 + (u1 − u0) × frac/16
+                          u1    <= u_rd;        // u[i0+1]
                           u_acc <= u0 + (((u1 - u0) >> 4) * u_fr);
-                          rom_addr <= off_PHI + pidx;
                       end
-                3'd3: begin
-                          Phi      <= rd;
-                          rom_addr <= off_PHI + pidx + 10'd1;
-                      end
+                3'd3: Phi <= rd;                // Φ[i0]
                 3'd4: begin
-                          // Φ 插值（先用高位近似，精度见文件头）
                           Phi <= Phi + (((rd - Phi) >> 8) * pfrac[31:24]);
                           st  <= ST_HARM;
                           m   <= 8'd0;
                           s   <= 4'd0;
                       end
-                default: st <= ST_HARM;
+                default: ;
                 endcase
                 pre <= pre + 3'd1;
             end
-            // ══ 谐波循环：16 拍/谐波 ═══════════════════════════════
+            // ══ 谐波循环 ═══════════════════════════════════════════
             ST_HARM: begin
                 s <= s + 4'd1;
                 case (s)
-                4'd0: rom_addr <= off_A  + m;
-                4'd1: begin hA  <= sx16(rd[15:0]);  rom_addr <= off_PA + m; end
-                4'd2: begin hPA <= sx16(rd[15:0]);  rom_addr <= off_DM + m; end
-                4'd3: begin hDM <= sx16(rd[15:0]);  rom_addr <= off_SC + m; end
-                4'd4: begin hSC <= {16'd0, rd[15:0]}; rom_addr <= off_PI + m; end
+                4'd1: hA  <= sx16(rd[15:0]);                 // A
+                4'd2: hPA <= sx16(rd[15:0]);                 // phi_a
+                4'd3: hDM <= sx16(rd[15:0]);                 // dm
+                4'd4: hSC <= {16'd0, rd[15:0]};              // env_scale
                 4'd5: begin
-                          hPI <= {16'd0, rd[15:0]};
-                          rom_addr <= (rd[15:0] == 16'hFFFF)
-                                    ? off_PSI
-                                    : off_PSI + rd[15:0] * NT2 + psi_idx9;
+                          hPI   <= {16'd0, rd[15:0]};        // psi_idx
+                          psi_a0 <= (rd[15:0] == 16'hFFFF)
+                                  ? off_PSI
+                                  : off_PSI + rd[15:0] * NT2 + psi_pos;
+                          env_a0 <= off_ENV + m * NT3 + env_pos;
                       end
-                4'd6: begin psi0 <= sx16(rd[15:0]); rom_addr <= rom_addr + 10'd1; end
-                4'd7: begin
-                          psi1 <= sx16(rd[15:0]);
-                          rom_addr <= off_ENV + m * NT3 + env_idx8;
-                      end
-                4'd8: begin env0 <= sx8(rd[7:0]);  rom_addr <= rom_addr + 10'd1; end
-                4'd9: env1 <= sx8(rd[7:0]);
+                4'd6: psi0 <= sx16(rd[15:0]);                // Ψ i0
+                4'd7: psi1 <= sx16(rd[15:0]);                // Ψ i1
+                4'd8: env0 <= sx8(rd[7:0]);                  // Env j0
+                4'd9: env1 <= sx8(rd[7:0]);                  // Env j1
                 4'd10: begin
                           psi0 <= psi0 + (((psi1 - psi0) >> 8) * psi_fr[31:24]);
                           env0 <= env0 + (((env1 - env0) >> 8) * env_fr[31:24]);
                       end
                 4'd11: begin
-                          hAS  <= (hA * hSC) >>> 15;   // A × env_scale
-                          hPA  <= hPA <<< 3;           // Q0.16 → 19 位小数
-                          psi0 <= psi0 <<< 7;          // Q3.12 → 19 位小数
+                          hAS  <= (hA * hSC) >>> 15;         // A × scale
+                          hPA  <= hPA <<< 3;                 // Q0.16 → 19 位小数
+                          psi0 <= psi0 <<< 7;                // Q3.12 → 19 位小数
                       end
-                4'd12: sin_addr <= theta[18:9];
-                4'd13: begin sn0 <= sx16(sin_rd); sin_addr <= sin_addr + 10'd1; end
-                4'd14: sn1 <= sx16(sin_rd);
+                4'd13: sn0 <= sx16(sin_rd);                  // sin(i)
+                4'd14: sn1 <= sx16(sin_rd);                  // sin(i+1)
                 4'd15: begin
                           sn0 <= sn0 + (((sn1 - sn0) >> 4) * theta[8:5]);
                           acc <= acc + (((env0 * hAS) >>> 15) * sn0);
@@ -268,9 +298,10 @@ module add_voice_harm #(
                 default: ;
                 endcase
             end
-            // ══ 输出 ══════════════════════════════════════════════
+            // ══ 输出 ═══════════════════════════════════════════════
             ST_OUT: begin
-                sample <= sat16(acc >>> 28);
+                sample <= sat16(acc >>> 20);
+                sample_valid <= 1'b1;
                 acc    <= 64'sd0;
                 t_smp  <= t_smp + 20'd1;
                 ready  <= 1'b1;

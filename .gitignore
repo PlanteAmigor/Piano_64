@@ -26,3 +26,8 @@ device.cfg
 *~
 
 # ── 保留：.hex 参数表、.gprj、.cst、.sdc、build.tcl、src/、tools/、doc/
+
+# 仿真用的表副本（可由 tools/ 重新生成，体积 2.3 MB）
+sim/harm_tab/
+sim/*.vvp
+sim/harm_sim_out.txt
