@@ -107,6 +107,29 @@ module tb_voice_harm;
             $display("  > cyc=%0d trig=%b rst_n=%b pending=%b cnt=%0d st=%0d",
                      cyc, trig, rst_n, dut.pending, dut.cnt, dut.st);
     end
+    // ── 调试：打印第一个谐波的 16 拍 ──────────────────────
+    integer dbg2 = 0;
+    always @(posedge clk) begin
+        if (rst_n && dut.st == 3'd3 && dut.m == 8'd0 && dbg2 < 20) begin
+            dbg2 <= dbg2 + 1;
+            $display("s=%2d rom_a=%5d rd=%08h | hA=%6d hPA=%6d hDM=%6d hSC=%6d hPI=%5d psi0=%6d psi1=%6d env0=%6d env1=%6d sn0=%6d hAS=%6d",
+                     dut.s, dut.rom_addr, prd,
+                     dut.hA, dut.hPA, dut.hDM, dut.hSC, dut.hPI,
+                     dut.psi0, dut.psi1, dut.env0, dut.env1, dut.sn0, dut.hAS);
+        end
+    end
+
+    // ── 调试：打印每个样点结束的 acc ──────────────────────
+    integer nout = 0;
+    always @(posedge clk) begin
+        if (rst_n && dut.st == 3'd4 && nout < 24) begin
+            nout <= nout + 1;
+            $display("OUT#%0d acc=%0h  (acc>>>20)=%0d  t_smp=%0d cnt=%0d u=%08h u_fr=%0d",
+                     nout, dut.acc, $signed(dut.acc) >>> 20,
+                     dut.t_smp, dut.cnt, dut.u_acc, dut.u_fr);
+        end
+    end
+
     // ── 激励 ──────────────────────────────────────────────────────
     initial begin
         $display("### TB start @%0t", $time);

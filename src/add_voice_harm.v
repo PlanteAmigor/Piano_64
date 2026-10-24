@@ -45,8 +45,8 @@
 //      hAS   = A × env_scale / 2^15          （Q4.13）
 //      p     = (env_int8 × hAS) / 2^15
 //      acc  += p × sin_int16
-//      ⇒ acc = y_true × 127 × 2^13 = y_true × 1,040,384
-//      ⇒ sample = acc >>> 20    ★ 第一版误写成 28，输出恒 0
+//      ⇒ acc = Σ env·A·sin × (127 × 2^28)；输出取 acc >>> 28，
+//        顶层再除以 127 统一处理（或在此处用 2^35 近似，见 SOUT_NOTE）
 //==========================================================================
 `default_nettype none
 
@@ -191,7 +191,9 @@ module add_voice_harm #(
     end
     assign rom_addr = rom_a;
 
-    assign u_addr   = u_i[U_AW-1:0];
+    // ★ u 表要读相邻两点：pre=0 读 u_i，pre>=1 读 u_i+1
+    //   第一版一直是 u_i，导致 u0==u1、插值恒 0，u_acc 卡死在第一个表点
+    assign u_addr   = u_i[U_AW-1:0] + ((pre == 3'd0) ? {U_AW{1'b0}} : {{(U_AW-1){1'b0}}, 1'b1});
     assign sin_addr = theta[18:9];
 
     // ════════════════════════════════════════════════════════════════
