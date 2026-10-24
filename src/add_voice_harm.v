@@ -34,25 +34,28 @@
 //      6   : Φ_hi[i0+1]            | Φ_lo[i0+1]  → phi_lo1
 //      7   : —                     | Φ_hi[i0+1]  → 算 Phi = {hi,lo} + 插值
 //
-//  ST_HARM（每谐波 16 拍，s = 0..15）
+//  ST_HARM（每谐波 16 拍，s = 0..15）——9 拍表读 + 1 拍插值 + 6 拍乘法流水
 //      s : 组合地址           | 本拍可用的 rd（上一拍地址的数据）
 //      ------------------------------------------------------------
-//      0 : A[m]               | —
-//      1 : phi_a[m]           | A[m]
-//      2 : dm[m]              | phi_a[m]
-//      3 : env_scale[m]       | dm[m]
-//      4 : psi_idx[m]         | env_scale[m]
-//      5 : Ψ_base(rd)         | psi_idx[m]
-//      6 : Ψ_base+1           | Ψ[m][i0]
-//      7 : Env_base           | Ψ[m][i1]
-//      8 : Env_base+1         | Env[m][j0]
-//      9 : (空闲)             | Env[m][j1]
-//      10: 插值 Ψ、Env
-//      11: 算 A×scale，相位对齐
-//      12: sin[Θ高 10 位]      |
-//      13: sin[+1]            | sin(i)
-//      14: —                  | sin(i+1)
-//      15: 插值 + 累加
+//      0 : Env 基址           | —                （env_a0 是组合地址）
+//      1 : Env 基址+1         | Env[j0]          → env0(raw)
+//      2 : A[m]               | Env[j1]          → env1(raw)
+//      3 : phi_a[m]           | A[m]             → hA
+//      4 : dm[m]              | phi_a[m]         → hPA（顺手 <<3）
+//      5 : env_scale[m]       | dm[m]            → hDM
+//      6 : psi_idx[m]         | env_scale[m]     → hSC
+//      7 : Ψ 基址(用本拍 rd)   | psi_idx[m]       → hPI, psi_a0
+//      8 : Ψ 基址+1           | Ψ[m][i0]         → psi0(raw)
+//      9 : —                  | Ψ[m][i1]         → psi1(raw)；同时 Env 插值
+//      10: —                  |                  Ψ 插值并 <<7 对齐 19 位小数
+//      11: —                  |                  hAS = A × scale      乘法1
+//      12: sin[sa]            |                  sn0                    —
+//      13: sin[sa+1]          |                  sn1；pm = env0×hAS    乘法2
+//      14: —                  |                  snf = 正弦插值         乘法3
+//      15: —                  |                  acc += pm×snf         乘法4
+//
+//  ★ 每拍最多一个乘法。写成 acc += env0*hAS*sn0 是两级大乘法串在一拍，
+//    50 MHz 下必然违例，所以 pm 提前到 s=13、正弦插值放 s=14、累加放 s=15。
 //
 //  → 一样点 = 2 (HEAD) + 8 (PRE) + 16K + 1 (OUT) = 11 + 16K 拍，K ≤ 63 才能 < 1024
 //
@@ -148,12 +151,19 @@ module add_voice_harm #(
     reg       ready, pending;
 
     reg [31:0] u0, u1;
-    reg [ROM_AW-1:0] psi_a0, env_a0;      // 表读基址锁存
+    reg [ROM_AW-1:0] psi_a0;              // Ψ 表读基址锁存（需要在 s=7 用）
     reg [15:0] phi_lo, phi_hi, phi_lo1;   // Φ 是 32 位、分低/高两个 16 位块存
 
     reg signed [31:0] hA, hPA, hDM, hSC, hPI;
     reg signed [31:0] psi0, psi1, env0, env1, sn0, sn1;
     reg signed [31:0] hAS;
+    reg signed [37:0] dmt;    // δ·t 的相位贡献（19 位小数）
+    reg signed [37:0] mphi;   // m·Φ（19 位小数）
+    // ★ 三级流水拆开乘法，每拍最多一个乘法（否则两级大乘法串在一拍里，
+    //   50 MHz 下必然违例）：s=11 hAS=A×scale → s=13 pm=env0×hAS
+    //   → s=14 snf=正弦插值 → s=15 acc += pm×snf
+    reg signed [31:0] pm;
+    reg signed [31:0] snf;
     reg signed [63:0] acc;
 
     // ── 分区偏移 ───────────────────────────────────────────────────
@@ -179,6 +189,10 @@ module add_voice_harm #(
     wire [7:0]  env_pos  = envprod[39:32];
     wire [31:0] env_fr   = envprod[31:0];
 
+    // Env 区的字地址只依赖 m 和 env_pos，可以直接组合出来，
+    // 所以 ST_HARM 的第 0/1 拍就能去读 Env，省出两拍给后面的乘法流水
+    wire [ROM_AW-1:0] env_a0 = off_ENV + m * NT3 + env_pos;
+
     // ── Φ 插值（★ Φ 是 32 位无符号 Q13.19，表里按【两个 16 位块】存：
     //    前 NT 字是低半字，后 NT 字是高半字。只读低字会把 0.15 圈/表点的增量
     //    截断成 low16 的差，相位直接错 10°以上（实测 Phi 16613 vs 18759）
@@ -190,10 +204,16 @@ module add_voice_harm #(
     wire signed [63:0] phi_inc = (phi_mul + 64'sd32768) >>> 16;
 
     // ── 相位合成 Θ（19 位小数）────────────────────────────────────
-    wire signed [63:0] dmt_full = (hDM * $signed({44'd0, t_smp})) * 64'sd11264;
-    wire signed [63:0] dmt      = (dmt_full + 64'sd524288) >>> 20;
-    wire signed [37:0] mphi     = $signed({1'b0, Phi[18:0]}) * $signed({30'd0, m});
-    wire signed [37:0] theta    = mphi + dmt[37:0] + psi0 + hPA;
+    //  ★ dmt = δ·t，δ 单位 0.001 Hz。turns = hDM·0.001·t_smp/FS
+    //    11264/2^20 = 11/1024 ⇒ dmt = hDM·11·t_smp / 1024
+    //    —— 原来写成 (hDM*t_smp)*11264，是两个 64 位大乘法串在一拍，
+    //       实测关键路径 38 ns。这里拆成“先乘 11（移位加法）”再用寄存器寄存。
+    wire signed [31:0] hdm11 = hDM * 32'sd11;
+    wire signed [51:0] dmt_m = ($signed({{20{hdm11[31]}}, hdm11}) * $signed({32'd0, t_smp})
+                                + 52'sd512) >>> 10;
+    // mphi 在 s=0 就算好（Phi 整个样点不变、m 本拍已更新），不用每拍算
+    wire signed [37:0] mphi_w  = $signed({1'b0, Phi[18:0]}) * $signed({30'd0, m});
+    wire signed [37:0] theta    = mphi + dmt + psi0 + hPA;
 
     // ════════════════════════════════════════════════════════════════
     //  组合地址逻辑（★ 这是正确性关键）
@@ -214,17 +234,17 @@ module add_voice_harm #(
         end
         ST_HARM: begin
             case (s)
-            4'd0: rom_a = off_A  + m;
-            4'd1: rom_a = off_PA + m;
-            4'd2: rom_a = off_DM + m;
-            4'd3: rom_a = off_SC + m;
-            4'd4: rom_a = off_PI + m;
-            // s=5：用【本拍的 rd】（就是 psi_idx）算 Ψ 基址
-            4'd5: rom_a = (rd[15:0] == 16'hFFFF) ? off_PSI
+            4'd0: rom_a = env_a0;
+            4'd1: rom_a = env_a0 + 10'd1;
+            4'd2: rom_a = off_A  + m;
+            4'd3: rom_a = off_PA + m;
+            4'd4: rom_a = off_DM + m;
+            4'd5: rom_a = off_SC + m;
+            4'd6: rom_a = off_PI + m;
+            // s=7：用【本拍的 rd】（就是 psi_idx）算 Ψ 基址
+            4'd7: rom_a = (rd[15:0] == 16'hFFFF) ? off_PSI
                         : off_PSI + rd[15:0] * NT2 + psi_pos;
-            4'd6: rom_a = psi_a0 + 10'd1;
-            4'd7: rom_a = env_a0;
-            4'd8: rom_a = env_a0 + 10'd1;
+            4'd8: rom_a = psi_a0 + 10'd1;
             default: rom_a = off_A + m;
             endcase
         end
@@ -236,7 +256,7 @@ module add_voice_harm #(
     // ★ u 表要读相邻两点：pre=0 读 u_i，pre>=1 读 u_i+1
     //   第一版一直是 u_i，导致 u0==u1、插值恒 0，u_acc 卡死在第一个表点
     assign u_addr   = u_i[U_AW-1:0] + ((pre == 3'd0) ? {U_AW{1'b0}} : {{(U_AW-1){1'b0}}, 1'b1});
-    assign sin_addr = theta[18:9] + ((s == 4'd13) ? 10'd1 : 10'd0);
+    assign sin_addr = theta[18:9] + ((s == 4'd12) ? 10'd1 : 10'd0);
 
     // ════════════════════════════════════════════════════════════════
     //  主时序
@@ -247,11 +267,12 @@ module add_voice_harm #(
             st <= ST_IDLE; m <= 8'd0; s <= 4'd0; pre <= 3'd0;
             base <= {ROM_AW{1'b0}}; K <= 8'd0; npsi <= 8'd0;
             u0 <= 32'd0; u1 <= 32'd0;
-            psi_a0 <= {ROM_AW{1'b0}}; env_a0 <= {ROM_AW{1'b0}};
+            psi_a0 <= {ROM_AW{1'b0}};
             hA <= 0; hPA <= 0; hDM <= 0; hSC <= 0; hPI <= 0;
             psi0 <= 0; psi1 <= 0; env0 <= 0; env1 <= 0; sn0 <= 0; sn1 <= 0;
             phi_lo <= 16'd0; phi_hi <= 16'd0; phi_lo1 <= 16'd0;
-            hAS <= 0; acc <= 64'sd0; sample <= 16'sd0;
+            hAS <= 0; pm <= 0; snf <= 0; acc <= 64'sd0; sample <= 16'sd0;
+            dmt <= 0; mphi <= 0;
             ready <= 1'b0; pending <= 1'b0; idle <= 1'b1; sample_valid <= 1'b0;
         end
         else begin
@@ -310,56 +331,60 @@ module add_voice_harm #(
                 endcase
                 pre <= pre + 3'd1;
             end
-            // ══ 谐波循环 ═══════════════════════════════════════════
+            // ══ 谐波循环（16 拍：9 拍表读 + 1 拍算插值 + 6 拍乘法流水）══
+            //  s : 组合地址                | 本拍 rd
+            //  0 : Env 基址                | —
+            //  1 : Env 基址+1              | Env[j0]
+            //  2 : A[m]                    | Env[j1]
+            //  3 : phi_a[m]                | A
+            //  4 : dm[m]                   | phi_a
+            //  5 : env_scale[m]            | dm
+            //  6 : psi_idx[m]              | env_scale
+            //  7 : Ψ 基址（用本拍 rd）      | psi_idx
+            //  8 : Ψ 基址+1                | Ψ[i0]
+            //  9 : —                       | Ψ[i0+1]       ← 同时做 Env 插值
+            //  10: —                       |              ← Ψ 插值 + 相位对齐
+            //  11: —                       |              ← hAS = A×scale
+            //  12: sin[sa]                 |              ← sn0
+            //  13: sin[sa+1]               |              ← sn1 + pm = env0×hAS
+            //  14: —                       |              ← snf = 正弦插值
+            //  15: —                       |              ← acc += pm×snf
             ST_HARM: begin
                 s <= s + 4'd1;
                 case (s)
-                4'd1: hA  <= sx16(rd[15:0]);                 // A
-                4'd2: hPA <= sx16(rd[15:0]);                 // phi_a
-                4'd3: hDM <= sx16(rd[15:0]);                 // dm
-                4'd4: hSC <= {16'd0, rd[15:0]};              // env_scale
-                4'd5: begin
-                          hPI   <= {16'd0, rd[15:0]};        // psi_idx
+                4'd0: mphi <= mphi_w;                        // 乘法：m×Φ（本谐波只算一次）
+                4'd1: env0 <= sx8(rd[7:0]);                  // Env j0
+                4'd2: env1 <= sx8(rd[7:0]);                  // Env j1
+                4'd3: hA  <= sx16(rd[15:0]);                 // A
+                4'd4: hPA <= sx16(rd[15:0]) <<< 3;           // phi_a：Q0.16 → 19 位小数
+                4'd5: hDM <= sx16(rd[15:0]);                 // dm
+                4'd6: hSC <= {16'd0, rd[15:0]};              // env_scale
+                4'd7: begin                                   // psi_idx
+                          hPI    <= {16'd0, rd[15:0]};
                           psi_a0 <= (rd[15:0] == 16'hFFFF)
                                   ? off_PSI
                                   : off_PSI + rd[15:0] * NT2 + psi_pos;
-                          env_a0 <= off_ENV + m * NT3 + env_pos;
+                          dmt    <= dmt_m;                      // δ·t（hDM 在 s=5 锁好）
                       end
-                4'd6: psi0 <= (hPI == 32'hFFFF) ? 32'sd0 : sx16(rd[15:0]);   // Ψ i0
-                4'd7: psi1 <= (hPI == 32'hFFFF) ? 32'sd0 : sx16(rd[15:0]);   // Ψ i1
-                4'd8: env0 <= sx8(rd[7:0]);                  // Env j0
-                4'd9: env1 <= sx8(rd[7:0]);                  // Env j1
-                4'd10: begin
-                          // ★★ 三个坑叠在一起，一次说清：
-                          //   1) 先乘后移：写成 ((b-a)>>8)*frac 时差值小于 256 直接变 0
-                          //   2) 必须有符号：psi_fr[31:24] 是无符号 part-select，混进表达式后
-                          //      整个表达式被提升为无符号，>> 变逻辑右移，负差值立刻变成
-                          //      0x00FFFFFF（=16777215）—— env0 爆成 16777215 就是这个
-                          //   3) 所以用 $signed() 包住差值和小数，并改用 >>>
-                          // ★ 四舍五入（+半个 LSB）而不是直接 floor：
-                          //   floor 会引入 −0.5 LSB 的系统偏置，实测 SNR 差 6 dB；
-                          //   小数位从 8 位提到 16 位，再补回 2 dB
-                          psi0 <= psi0 + (($signed(psi1 - psi0) * $signed({16'd0, psi_fr[31:16]}) + 64'sd32768) >>> 16);
+                4'd8: psi0 <= (hPI == 32'hFFFF) ? 32'sd0 : sx16(rd[15:0]);   // Ψ i0
+                4'd9: begin
+                          psi1 <= (hPI == 32'hFFFF) ? 32'sd0 : sx16(rd[15:0]); // Ψ i1
+                          // Env 插值（env0/env1 在 s=1/s=2 就锁好了）
+                          // ★★ 三个坑：先乘后移 / 必须 $signed（part-select 无符号会把
+                          //    整个表达式变无符号，>> 成逻辑右移，负差值变 0x00FFFFFF）/
+                          //    四舍五入（floor 有 −0.5 LSB 偏置，实测差 6 dB）
                           env0 <= env0 + (($signed(env1 - env0) * $signed({16'd0, env_fr[31:16]}) + 64'sd32768) >>> 16);
                       end
-                4'd11: begin
-                          hAS  <= (hA * hSC + 32'sd16384) >>> 15;   // A × scale（四舍五入）
-                          hPA  <= hPA <<< 3;                 // Q0.16 → 19 位小数
-                          psi0 <= psi0 <<< 7;                // Q3.12 → 19 位小数
+                4'd10: psi0 <= (psi0 + (($signed(psi1 - psi0) * $signed({16'd0, psi_fr[31:16]}) + 64'sd32768) >>> 16)) <<< 7;
+                4'd11: hAS  <= (hA * hSC + 32'sd16384) >>> 15;   // 乘法 1：A × scale
+                4'd12: sn0  <= sx16(sin_rd);                     // sin(sa)
+                4'd13: begin
+                          sn1 <= sx16(sin_rd);                   // sin(sa+1)
+                          pm  <= env0 * hAS;                     // 乘法 2：env0 × hAS
                       end
-                4'd13: sn0 <= sx16(sin_rd);                  // sin(i)
-                4'd14: sn1 <= sx16(sin_rd);                  // sin(i+1)
+                4'd14: snf <= sn0 + (($signed(sn1 - sn0) * $signed({24'd0, theta[8:1]}) + 64'sd128) >>> 8);  // 乘法 3
                 4'd15: begin
-                          // ★ 同理：sn1-sn0 会为负，必须 $signed + >>>
-                          sn0 <= sn0 + (($signed(sn1 - sn0) * $signed({24'd0, theta[8:1]}) + 64'sd128) >>> 8);
-                          // ★★ 这里不能再写 ((env0*hAS)>>>15)*sn0：
-                          //    env0 最大才 127，hAS 最大 ~3.7e4，>>>15 之后每谐波幅度
-                          //    只剩 0..6 的整数，起振段 env0 只有 0~22 时大半谐波直接变 0，
-                          //    实测逐样点误差高达 50%
-                          //    改成 64 位全精度累加，15 位的缩放最后统一在 ST_OUT 里做
-                          acc <= acc + ($signed({{32{env0[31]}}, env0})
-                                      * $signed({{32{hAS[31]}}, hAS})
-                                      * $signed({{32{sn0[31]}}, sn0}));
+                          acc <= acc + ($signed({{32{pm[31]}}, pm}) * $signed({{32{snf[31]}}, snf}));  // 乘法 4
                           m   <= m + 8'd1;
                           s   <= 4'd0;
                           if (m + 8'd1 >= K) st <= ST_OUT;
