@@ -247,11 +247,12 @@ module add_voice_harm #(
                 3'd1: u0 <= u_rd;               // u[i0]（pre=0 时地址已为 u_i）
                 3'd2: begin
                           u1    <= u_rd;        // u[i0+1]
-                          u_acc <= u0 + (((u1 - u0) >> 4) * u_fr);
+                          // ★ 先乘后移：(u1-u0)>>4 会先把小数丢光，乘出来永远是 0
+                          u_acc <= u0 + (((u1 - u0) * u_fr) >> 4);
                       end
                 3'd3: Phi <= rd;                // Φ[i0]
                 3'd4: begin
-                          Phi <= Phi + (((rd - Phi) >> 8) * pfrac[31:24]);
+                          Phi <= Phi + (((rd - Phi) * pfrac[31:24]) >> 8);
                           st  <= ST_HARM;
                           m   <= 8'd0;
                           s   <= 4'd0;
@@ -280,8 +281,10 @@ module add_voice_harm #(
                 4'd8: env0 <= sx8(rd[7:0]);                  // Env j0
                 4'd9: env1 <= sx8(rd[7:0]);                  // Env j1
                 4'd10: begin
-                          psi0 <= psi0 + (((psi1 - psi0) >> 8) * psi_fr[31:24]);
-                          env0 <= env0 + (((env1 - env0) >> 8) * env_fr[31:24]);
+                          // ★ 先乘后移；写成 ((b-a)>>8)*frac 的话
+                          //   差值小于 256 时插值恒为 0，负差值还会变成 -frac（符号错）
+                          psi0 <= psi0 + (((psi1 - psi0) * psi_fr[31:24]) >> 8);
+                          env0 <= env0 + (((env1 - env0) * env_fr[31:24]) >> 8);
                       end
                 4'd11: begin
                           hAS  <= (hA * hSC) >>> 15;         // A × scale
@@ -291,7 +294,7 @@ module add_voice_harm #(
                 4'd13: sn0 <= sx16(sin_rd);                  // sin(i)
                 4'd14: sn1 <= sx16(sin_rd);                  // sin(i+1)
                 4'd15: begin
-                          sn0 <= sn0 + (((sn1 - sn0) >> 4) * theta[8:5]);
+                          sn0 <= sn0 + (((sn1 - sn0) * theta[8:5]) >> 4);
                           acc <= acc + (((env0 * hAS) >>> 15) * sn0);
                           m   <= m + 8'd1;
                           s   <= 4'd0;
