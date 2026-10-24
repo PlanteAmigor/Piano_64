@@ -24,9 +24,15 @@ npz2hex_harm.py —— 把笛子/唢呐的「谐波表」npz 转成 FPGA 可读�
 所有音拼在一个地址空间里，每音给一个基址。每音内部的相对偏移：
 
     标量区   {K, npsi}                             1 字（K, Ψ 条数）
-             a_m[K]  b_m[K]                        2K 字（16 bit 有符号）
+             A_m[K]  phi_a[K]                       2K 字（16 bit：A 是 Q3.13，phi_a 是圈的 Q0.16）
              dm_m[K]                                K 字（16 bit，0.001 Hz/LSB）
              env_scale[K]                           K 字（16 bit，Q1.15，Env 峰值）
+             psi_idx[K]                             K 字（16 bit，Ψ 表行号；0xFFFF = 该谐波无 Ψ）
+
+★★ 存 A/phi_a 而不是 a/b：
+   a·cos(θ) − b·sin(θ) = A·cos(θ + phi_c)，其中 A=sqrt(a²+b²)、phi_c=atan2(b,a)/(2π)
+   这样 RTL 只需【一次】正弦查表，不用同时拿 cos 和 sin 两张表。
+   实测量化后 SNR 无损（A/phi 是等价变换，只有两次 16 位量化误差）。
     ❰ 区     phi[NT]                              NT×2 字（32 bit **无符号**，Q13.19 圈）
     Ψ 区     psi[npsi][NT2]                        npsi×NT2 字（16 bit，Q3.12 圈）
     Env 区   env[K][NT3]                           K×NT3 字（**8 bit**，见下）
@@ -127,7 +133,7 @@ def main():
         NT3 = int(d['nt3'])
         mask = np.asarray(d['phm_mask'], dtype=np.float64)
         npsi = int((mask != 0).sum())
-        words = (2 + 4 * K) + NT * 2 + npsi * NT2 + K * NT3
+        words = (2 + 5 * K) + NT * 2 + npsi * NT2 + K * NT3
         info[mi] = dict(K=K, NT=NT, NT2=NT2, NT3=NT3, npsi=npsi, words=words)
         tot_words += words
 
@@ -171,6 +177,9 @@ def main():
         c = np.asarray(d['c'], dtype=np.float64)
         am = c[:K]
         bm = c[K:2 * K]
+        # ★ a/b → A/phi_c（幅度/相位形式），使 RTL 只需一次正弦查表
+        amp_a = np.hypot(am, bm)                        # A = sqrt(a²+b²)
+        phi_c = np.arctan2(bm, am) / (2 * np.pi)        # 圈，范围 -0.5..0.5
         dm = np.asarray(d['dm'], dtype=np.float64)          # Hz
         tau_u = np.asarray(d['u'], dtype=np.float64)        # s
         phi = np.asarray(d['phi'], dtype=np.float64)        # 圈（绝对值）
@@ -190,7 +199,8 @@ def main():
         SC_PHI = float(1 << 19)
 
         # 量化
-        SC_A = 4096.0                     # a/b：±8.0 → Q3.12
+        SC_A = 8192.0                     # A：±4.0 → Q3.13
+        SC_PA = 65536.0                   # phi_a：±0.5 圈 → 16 bit 有符号
         SC_DM = 1000.0                    # dm：0.001 Hz/LSB，±32 Hz
         SC_PS = 8192.0                    # psi：±4 圈 → Q3.12（实测最大 2.28 圈）
 
@@ -201,12 +211,19 @@ def main():
         data[w + 0] = (K & 0xFF) | ((npsi & 0xFF) << 8)
         data[w + 1] = inf['words'] & 0xFFFF
         w += 2
-        data[w:w + K] = q(am, SC_A, -32768, 32767);      w += K
-        data[w:w + K] = q(bm, SC_A, -32768, 32767);      w += K
+        data[w:w + K] = q(amp_a, SC_A, -32768, 32767);   w += K
+        data[w:w + K] = q(phi_c, SC_PA, -32768, 32767);  w += K
         data[w:w + K] = q(dm, SC_DM, -32768, 32767);     w += K
         # ★ 每谐波 Env 缩放因子（峰值），Q1.15（实测峰值到 1.15，Q0.16 会削顶）
         env_sc = np.abs(env).max(axis=1) if env.ndim > 1 else np.abs(env).max()
         data[w:w + K] = q(env_sc, 32768.0, 0, 65535);    w += K
+
+        # ★ Ψ 行号表：告知 RTL 第 m 个谐波对应 Ψ 区的第几行（0xFFFF = 无 Ψ）
+        psi_idx = np.full(K, 0xFFFF, dtype=np.int64)
+        rows_all = np.where(mask != 0)[0]
+        for r_i, r in enumerate(rows_all):
+            psi_idx[r] = r_i
+        data[w:w + K] = psi_idx & 0xFFFF;                w += K
 
         # phi 存 32 位无符号：低 16 字在前，高 16 字接后
         ph32 = np.round(np.clip(phi, 0.0, 8191.0) * SC_PHI).astype(np.uint64) & 0xFFFFFFFF
@@ -235,7 +252,7 @@ def main():
 
         stats.append(dict(midi=mi, K=K, npsi=npsi, words=inf['words'],
                           phi_max=float(np.abs(phi).max()),
-                          a_max=float(np.abs(am).max()),
+                          a_max=float(np.abs(amp_a).max()),
                           psi_max=float(max(psi_all) if psi_all else 0.0),
                           env_max=float(np.abs(env).max())))
 
