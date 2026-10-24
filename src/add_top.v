@@ -187,19 +187,32 @@ module add_top #(
     );
 
     //======================================================================
-    //  钢琴加法合成：88 音 × 64 分量（新模态表）
+    //  加法合成引擎：128 分量/声部，4 声部共用一份参数 ROM
+    //    ★ 与旧版（64 分量 × 16 级流水线）的区别见 src/add_voice8.v 文件头
+    //      实测：关键路径 15.1 ns → 9.3 ns，共用 ROM 让 pROM 92 块 → 29 块
     //======================================================================
+    //  音色选择（改这一个常量即可切换，参数表需同步放进工程根目录）
+    //    0 = 钢琴：88 音 × 128 分量 = 11264 深 → add_param0/1/2.hex
+    //    1 = 古筝：49 音 × 128 分量 =  6272 深 → gz_param0/1/2.hex
+    localparam integer TIMBRE_SEL  = 0;
+    localparam integer T_ROM_AW    = (TIMBRE_SEL == 1) ? 13 : 14;
+    localparam integer T_ROM_DEPTH = (TIMBRE_SEL == 1) ? 6272 : 11264;
+    localparam integer T_NOTE_LO   = (TIMBRE_SEL == 1) ? 38 : 21;
+    localparam integer T_NOTE_HI   = (TIMBRE_SEL == 1) ? 86 : 108;
+
     wire               tick;
     wire signed [15:0] eng_l, eng_r;
 
-    add_engine #(
+    add_engine8 #(
         .NVOICE   (NVOICE),
-        .MIX_SHIFT(MIX_SHIFT),
-        .ROM_DEPTH(5632),          // 88 音 × 64 分量
-        .NOTE_LO  (21),
-        .NOTE_HI  (108),
+        .NPART    (128),
+        .ROM_AW   (T_ROM_AW),
+        .ROM_DEPTH(T_ROM_DEPTH),
+        .NOTE_LO  (T_NOTE_LO),
+        .NOTE_HI  (T_NOTE_HI),
         .ATK      (0),
-        .TIMBRE   (0)
+        .TIMBRE   (TIMBRE_SEL),
+        .MIX_SHIFT(MIX_SHIFT)
     ) u_piano (
         .clk        (clk_sys),
         .rst_n      (engine_rst_n),

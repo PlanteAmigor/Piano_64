@@ -6,8 +6,10 @@
     <Device name="GW5AST-138C" pn="GW5AST-LV138PG484AC1/I0">gw5ast138c-007</Device>
     <FileList>
         <File path="src/add_top.v" type="file.verilog" enable="1"/>
-        <File path="src/add_engine.v" type="file.verilog" enable="1"/>
-        <File path="src/add_voice.v" type="file.verilog" enable="1"/>
+        <File path="src/add_engine8.v" type="file.verilog" enable="1"/>
+        <File path="src/add_voice8.v" type="file.verilog" enable="1"/>
+        <File path="src/add_engine.v" type="file.verilog" enable="0"/>
+        <File path="src/add_voice.v" type="file.verilog" enable="0"/>
         <File path="src/mix_sum.v" type="file.verilog" enable="1"/>
         <File path="src/add_param_rom.v" type="file.verilog" enable="1"/>
         <File path="src/add_sine_lut.v" type="file.verilog" enable="1"/>

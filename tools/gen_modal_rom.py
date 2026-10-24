@@ -27,7 +27,7 @@ gen_modal_rom.py —— 从【模态模型】公式表生成 add_voice 的 5-ban
 import argparse, math, os, re, sys
 
 FS = 48828.125
-NPART = 64
+NPART_DEFAULT = 64          # 可用 --npart 覆盖（128 / 256 ...）
 LIM24 = (1 << 24) - 1
 LIM32 = (1 << 32) - 1
 
@@ -69,7 +69,13 @@ def main():
     ap.add_argument('--normalize', type=int, default=0,
                     help='逐音峰值归一化到该值（0=不归一化）。'
                          '新表的 a 是每音绝对幅度，录音电平没统一，各音能差 24 dB')
+    ap.add_argument('--npart', type=int, default=NPART_DEFAULT,
+                    help='每音取前多少个模态（默认 %d）' % NPART_DEFAULT)
     a = ap.parse_args()
+    NPART = a.npart
+    if NPART < 1:
+        print('  ✗ --npart 必须 ≥ 1')
+        return 1
 
     notes = parse(a.table)
     midis = sorted(notes)
@@ -111,6 +117,9 @@ def main():
     maxa = max(r[2] for v in used.values() for r in v)
     print('  取前 %d 模态/音，共 %d 个（原表共 %d）'
           % (NPART, nmode, sum(len(v) for v in notes.values())))
+    empty = [m for m in midis if len(used[m]) < NPART]
+    if empty:
+        print('  ⚠ 模态数不足 %d 的音: %s（将补零）' % (NPART, empty))
     print('  前%d模态里 a 最大 = %.4f  → A_SCALE 上限 = %d（16 位）'
           % (NPART, maxa, int(65535 / maxa)))
 
