@@ -13,7 +13,7 @@
 
 module tb_voice_harm;
 
-    localparam integer NPC   = 64;          // 只仿真这么多样点（够看起振段）
+    localparam integer NPC   = 16384;        // 只仿真这么多样点（够看起振段）
     localparam integer MIDI  = 67;
     localparam integer NLO   = 67;
 
