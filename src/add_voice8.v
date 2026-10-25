@@ -149,7 +149,6 @@ module add_voice8 #(
     // ════════════════════════════════════════════════════════════════
     reg  [31:0] inc_r, R1_r, phi8_r, a16_r;
     reg  [31:0] ph_n;
-    reg  [31:0] sw_r;
     reg  signed [17:0] ds;
     reg  [9:0]  fr;
     reg  signed [17:0] sv0;
@@ -183,7 +182,7 @@ module add_voice8 #(
     always @(posedge clk) begin
         if (!rst_n) begin
             inc_r <= 32'd0; R1_r <= 32'd0; phi8_r <= 32'd0; a16_r <= 32'd0;
-            ph_n <= 32'd0; sw_r <= 32'd0; ds <= 18'sd0; fr <= 10'd0;
+            ph_n <= 32'd0; ds <= 18'sd0; fr <= 10'd0;
             sv0 <= 18'sd0; itp <= 29'sd0; sv <= 18'sd0;
             dec_raw <= 56'd0; dec1 <= 32'd0; amp_er <= 18'd0;
             pr <= 35'sd0; acc <= 24'sd0;
@@ -229,11 +228,16 @@ module add_voice8 #(
                     ph_n   <= ph_q + rd0;
                     laddr  <= (ph_q + rd0) >> 22;
                 end
-                3'd2:  sw_r <= sw_raw;
+                3'd2: begin end       // laddr 在这一拍送到正弦表，下一拍输出有效
                 3'd3: begin
-                    ds  <= $signed(sw_r[31:16]) - $signed(sw_r[15:0]);
+                    // ★★ 必须用【当拍】的 sw_raw，不能用打过一拍的 sw_r！
+                    //    正弦表是同步读：s==1 给的 laddr 在 s==3 这拍才出现在
+                    //    dout 上。如果在 s==2 就 sw_r <= sw_raw，采到的是
+                    //    【上一个分量】的地址（s==1 时 laddr 还是旧的），
+                    //    结果每个分量都在用邻居的频率 → 音高/音色全错。
+                    ds  <= $signed(sw_raw[31:16]) - $signed(sw_raw[15:0]);
                     fr  <= ph_n[21:12];
-                    sv0 <= $signed(sw_r[15:0]);
+                    sv0 <= $signed(sw_raw[15:0]);
                 end
                 // ★ 三个乘法在这一级并行，互不串联（这是关键路径缩短的原因）
                 3'd4: begin
