@@ -244,6 +244,41 @@ module add_top #(
     endfunction
 
     //======================================================================
+    //  灯带控制信号跨时钟域同步：clk_sys → CLOCK_50
+    //
+    //  u_led 必须用 CLOCK_50 直连（上板验证过的配置，不走 PLL），
+    //  但它的全部控制信号都产生于 clk_sys 域（mode / key_state /
+    //  guide_key / engine_rst_n）。直接跨域会让 PnR 报出 22 条 hold
+    //  违例（−0.726 ns）：CLK_SYS 与 CLOCK_50 虽然同为 50 MHz，却分布在
+    //  不同时钟树分支（PBR1/2 与 PBR2/3），实测偏斜约 0.7 ns，数据会跑赢
+    //  捕获时钟。
+    //
+    //  这些信号全部是「按键级」慢变量（去抖后 >10 ms 才变一次），
+    //  打两拍同步即可，对视觉效果无任何影响。
+    //  时序约束侧对应 piano64.sdc 里的
+    //      set_false_path -from [get_clocks CLK_SYS] -to [get_clocks CLOCK_50]
+    //  （标准 CDC 处理：同步器隔离后不再对跨域路径做时序检查）
+    //======================================================================
+    reg [2:0] led_mode_s0,  led_mode_s1;
+    reg [5:0] led_key_s0,   led_key_s1;
+    reg [2:0] led_gk_s0,    led_gk_s1;
+    reg [2:0] led_gk2_s0,   led_gk2_s1;
+    reg       led_rst_s0,   led_rst_s1;
+
+    always @(posedge CLOCK_50) begin
+        led_mode_s0 <= {1'b0, mode};
+        led_key_s0  <= note_key_state;
+        led_gk_s0   <= guide_key;
+        led_gk2_s0  <= guide_key2;
+        led_rst_s0  <= engine_rst_n;
+        led_mode_s1 <= led_mode_s0;
+        led_key_s1  <= led_key_s0;
+        led_gk_s1   <= led_gk_s0;
+        led_gk2_s1  <= led_gk2_s0;
+        led_rst_s1  <= led_rst_s0;
+    end
+
+    //======================================================================
     //  灯带（布局与原工程一致）
     //======================================================================
     // ★★★ 灯带前 6 颗（索引 0~5）是坏灯（实测：第 6 颗往后完全正常）
@@ -261,14 +296,15 @@ module add_top #(
         .DOT_EN      (0),
         .DIAG        (0)
     ) u_led (
-        // ★★ 灯带时钟改用【CLOCK_50 直连】，和验证正常的 led_align 工程完全一致
+        // ★★ 灯带时钟用【CLOCK_50 直连】，和验证正常的 led_align 工程完全一致
         //    （PLL 输出 clk_sys 虽然频率相同，但相位/抖动不同，怀疑是卡死的原因）
+        //    所有输入都经过上面的两拍同步，不再直接跨域
         .clk       (CLOCK_50),
-        .rst_n     (engine_rst_n),
-        .key_state (note_key_state),
-        .mode      ({1'b0, mode}),
-        .guide_key (guide_key),
-        .guide_key2(guide_key2),
+        .rst_n     (led_rst_s1),
+        .key_state (led_key_s1),
+        .mode      (led_mode_s1),
+        .guide_key (led_gk_s1),
+        .guide_key2(led_gk2_s1),
         .timbre    (1'b0),          // 恒定钢琴 → 第 1 颗白
         .oct       (3'sd0),         // 本工程无八度，八度条已删
         .dout      (DOUT)
