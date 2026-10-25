@@ -160,7 +160,6 @@ module add_voice8 #(
     reg  [17:0] amp_er;
     reg  signed [34:0] pr;
     reg  signed [23:0] acc;
-    reg  [31:0] e1n, ern;
 
     reg        pending, loading, ready;
     reg [6:0]  load_cnt;
@@ -187,7 +186,7 @@ module add_voice8 #(
             ph_n <= 32'd0; sw_r <= 32'd0; ds <= 18'sd0; fr <= 10'd0;
             sv0 <= 18'sd0; itp <= 29'sd0; sv <= 18'sd0;
             dec_raw <= 56'd0; dec1 <= 32'd0; amp_er <= 18'd0;
-            pr <= 35'sd0; acc <= 24'sd0; e1n <= 32'd0; ern <= 32'd0;
+            pr <= 35'sd0; acc <= 24'sd0;
             st_we <= 1'b0; st_wa <= 7'd0;
             st_wp <= 32'd0; st_w1 <= 32'd0; st_wr <= 32'd0;
             laddr <= 10'd0;
@@ -248,8 +247,16 @@ module add_voice8 #(
                 end
                 3'd6:  pr <= sv * $signed({1'b0, amp_er});
                 3'd7: begin
-                    e1n <= e1_q - dec1;
-                    ern <= ATK ? (er_q + {5'b0, dcdr}) : 32'hFFFF_FFFF;
+                    // ★★ 回写值必须用【当拍】的组合值：
+                    //    e1_q 在 s==7 就是本分量的值，dec1 在 s==5 已打拍，
+                    //    dcdr 是 er_q 的组合函数。
+                    //    【曾经的 bug】这里写成
+                    //        e1n <= e1_q - dec1;   ...   st_w1 <= e1n;
+                    //    e1n 是非阻塞赋值，与本拍 st_w1 同一时钟沿更新，
+                    //    所以 st_w1 采到的是【上一个分量】的 e1n，
+                    //    回写整整晚一个分量 → 每播一个样点幅度在槽位间错位 +1，
+                    //    分量幅度随机跳变 → 输出听起来是噪声（实测峰值顶到
+                    //    削顶、与理想波形相关系数 0.02）。
                     st_we <= 1'b1;
                     st_wa <= p;
                     if (loading) begin
@@ -259,8 +266,8 @@ module add_voice8 #(
                     end
                     else begin
                         st_wp <= ph_n;
-                        st_w1 <= e1n;
-                        st_wr <= ern;
+                        st_w1 <= e1_q - dec1;
+                        st_wr <= ATK ? (er_q + {5'b0, dcdr}) : 32'hFFFF_FFFF;
                     end
                 end
                 default: ;
