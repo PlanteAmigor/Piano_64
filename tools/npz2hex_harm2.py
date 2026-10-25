@@ -237,8 +237,10 @@ def main():
                 f.write('%08X\n' % int(b))
 
     # 每音信息（RTL 开机取一次）：4 字/音
-    #   w0 = {ab_base[15:0], npsi[15:8], K[7:0]}
-    #   w1 = env_base   w2 = psi_base   w3 = phi_base
+    #   ★ phi_base 必须在第 0 个字：前置第 3 拍就要用它算 Φ 地址，
+    #     排在第 4 个字的话数据到得太晚（踩过：只有第一个音对）
+    #   w0 = phi_base  w1 = {K[31:24], npsi[23:16], ab_base[15:0]}
+    #   w2 = env_base  w3 = psi_base
     p = os.path.join(a.outdir, '%s_info.hex' % a.prefix)
     with open(p, 'w') as f:
         for i, mi in enumerate(midis):
@@ -249,10 +251,10 @@ def main():
             assert bases['env_e'][i] == bases['env_o'][i]
             assert ab_b < 65536 and bases['env_e'][i] < 65536
             assert bases['psi_e'][i] < 65536 and bases['phi'][i] < 65536
+            f.write('%08X\n' % (bases['phi'][i] & 0xFFFF))
             f.write('%08X\n' % ((ab_b & 0xFFFF) | ((npsi & 0xFF) << 16) | ((K & 0xFF) << 24)))
             f.write('%08X\n' % (bases['env_e'][i] & 0xFFFF))
             f.write('%08X\n' % (bases['psi_e'][i] & 0xFFFF))
-            f.write('%08X\n' % (bases['phi'][i] & 0xFFFF))
     print('  info       %d 字（%d 音 × 4）= 每音 K/npsi + 4 个 bank 基址'
           % (4 * len(midis), len(midis)))
 

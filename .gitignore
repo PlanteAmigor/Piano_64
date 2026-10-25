@@ -34,3 +34,8 @@ sim/harm_sim_out.txt
 
 # 谐波表 v2（可由 tools/npz2hex_harm2.py 重新生成）
 sim/harm2/
+sim/harm2/*.vvp
+sim/harm2/*.vcd
+sim/harm2/*_sim_out.txt
+sim/eng_v*.txt
+sim/harm72_out.txt
