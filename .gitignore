@@ -39,3 +39,4 @@ sim/harm2/*.vcd
 sim/harm2/*_sim_out.txt
 sim/eng_v*.txt
 sim/harm72_out.txt
+out_*.txt
