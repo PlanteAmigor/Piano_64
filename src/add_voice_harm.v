@@ -394,14 +394,15 @@ module add_voice_harm #(
             end
             // ══ 输出 ═══════════════════════════════════════════════
             //  ★ 定标推导（p = env0·hAS 不做中间截断）：
+            //     hA 的 q 是 Q4.11（SC_A=4096，因为 suona 最大 A=6.83，Q3.13 会削顶）
+            //     hAS = hA×hSC/2^15 = A·scale·4096
             //     acc = Σ env0·hAS·sn0
-            //         = Σ (127·env_true/scale)·(A·scale·2^13)·(32767·sin)
-            //         = 127·2^13·32767 · Σ env_true·A·sin
-            //     Σ env_true·A·sin 就是满刻度 =1 的波形 ⇒
-            //         sample = 32767·signal = acc/(127·2^13) = acc / 1040384
-            //     2^20 = 1048576，与 1040384 差 0.79%（-0.07 dB），直接用 >>>20
+            //         = Σ (127·env_true/scale)·(A·scale·4096)·(32767·sin)
+            //         = 127·4096·32767 · Σ env_true·A·sin
+            //     ⇒ sample = 32767·signal = acc/(127·4096) = acc / 520192
+            //     2^19 = 524288，差 0.79%（-0.07 dB），直接>>>19
             ST_OUT: begin
-                sample <= sat16(acc >>> 20);
+                sample <= sat16(acc >>> 19);
                 sample_valid <= 1'b1;
                 acc    <= 64'sd0;
                 t_smp  <= t_smp + 20'd1;

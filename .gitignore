@@ -31,3 +31,6 @@ device.cfg
 sim/harm_tab/
 sim/*.vvp
 sim/harm_sim_out.txt
+
+# 谐波表 v2（可由 tools/npz2hex_harm2.py 重新生成）
+sim/harm2/

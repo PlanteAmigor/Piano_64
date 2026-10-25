@@ -92,7 +92,7 @@ def main():
     o_PSI = o_PHI + 2 * NT
     o_ENV = o_PSI + npsi * NT2
 
-    A = sx16(data[o_A:o_A + K]) / 8192.0
+    A = sx16(data[o_A:o_A + K]) / 4096.0     # A 是 Q4.11（±8.0）
     hPA = sx16(data[o_PA:o_PA + K]) / 65536.0
     DM = sx16(data[o_DM:o_DM + K]) / 1000.0
     SC = (data[o_SC:o_SC + K] & 0xFFFF).astype(np.float64) / 32768.0
