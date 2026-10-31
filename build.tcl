@@ -7,10 +7,13 @@ add_file src/add_top.v
 # ★ 128 分量引擎（当前使用）。旧的 64 分量版本 add_voice.v / add_engine.v
 #   保留在仓库里作为参考与回退方案，但不参与本次综合。
 add_file src/add_engine8.v
+add_file src/add_engine_harm.v
+add_file src/harm_buf.v
 add_file src/add_voice8.v
 add_file src/param_cache.v
 add_file src/param_dma.v
 add_file src/ddr_param_dma.v
+add_file src/suona_dma.v
 add_file src/mix_sum.v
 add_file src/add_param_rom.v
 add_file src/add_sine_lut.v

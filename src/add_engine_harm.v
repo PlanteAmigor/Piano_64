@@ -46,11 +46,22 @@ module add_engine_harm #(
     input  wire [NVOICE*7-1:0]     v_note,
     input  wire [NVOICE-1:0]       v_trig,
     input  wire [NVOICE-1:0]       v_gate,
+    input  wire [NVOICE*8-1:0]     v_vel,          // ★ 力度（只调音量）
     input  wire                    sample_tick,
 
     output wire signed [15:0]      sample_l,
     output wire signed [15:0]      sample_r,
-    output wire [NVOICE-1:0]       v_idle
+    output wire [NVOICE-1:0]       v_idle,
+
+    // ── 唢呐：DDR 按音取表 ──────────────────────────────────
+    input  wire                    clk100,         // DDR 用户域
+    input  wire                    rst100_n,
+    output wire [2:0]              app_cmd,
+    output wire                    app_en,
+    output wire [28:0]             app_addr,
+    input  wire                    app_rdy,
+    input  wire                    app_rd_data_valid,
+    input  wire [255:0]            app_rd_data
 );
 
     localparam integer AB_AW   = 11;
@@ -82,34 +93,101 @@ module add_engine_harm #(
     wire [15:0] rom_pi, rom_pe, rom_po;
     wire [7:0]  rom_ee, rom_eo;
 
-    generate
-        if (TIMBRE == 2) begin : g_dizi
-            harm_rom_dizi u_rom (
-                .clk(clk),
-                .abc_a(a_abc), .pi_a(a_pi),
-                .ab_d(rom_ab), .bc_d(rom_bc), .pi_d(rom_pi),
-                .pe_a(a_pe), .po_a(a_po), .pe_d(rom_pe), .po_d(rom_po),
-                .ee_a(a_ee), .eo_a(a_eo), .ee_d(rom_ee), .eo_d(rom_eo),
-                .ph_a(a_ph), .ph_d(rom_ph),
-                .u_a(a_u), .u_d(rom_u),
-                .sn_a(a_sn), .sn_d(rom_sn),
-                .inf_a(a_inf), .inf_d(rom_inf)
-            );
+    // ★ 改：ROM → 按音缓冲（suona_dma 从 DDR 搬入当前音）
+    wire        sd_ab_we, sd_bc_we, sd_pi_we, sd_ee_we, sd_eo_we, sd_pe_we, sd_po_we, sd_ph_we;
+    wire [5:0]  sd_ab_a, sd_bc_a, sd_pi_a;
+    wire [12:0] sd_ee_a, sd_eo_a;
+    wire [11:0] sd_pe_a, sd_po_a;
+    wire [9:0]  sd_ph_a;
+    wire [31:0] sd_ab_d, sd_bc_d, sd_ph_d;
+    wire [15:0] sd_pi_d, sd_pe_d, sd_po_d;
+    wire [7:0]  sd_ee_d, sd_eo_d;
+
+    harm_buf u_buf (
+        .clk(clk), .rst_n(rst_n),
+        .abc_a(a_abc), .pi_a(a_pi),
+        .ab_d(rom_ab), .bc_d(rom_bc), .pi_d(rom_pi),
+        .pe_a(a_pe), .po_a(a_po), .pe_d(rom_pe), .po_d(rom_po),
+        .ee_a(a_ee), .eo_a(a_eo), .ee_d(rom_ee), .eo_d(rom_eo),
+        .ph_a(a_ph), .ph_d(rom_ph),
+        .u_a(a_u),  .u_d(rom_u),
+        .sn_a(a_sn), .sn_d(rom_sn),
+        .inf_a(a_inf), .inf_d(rom_inf),
+        .wclk(clk100), .wrst_n(rst100_n),
+        .ab_we(sd_ab_we), .ab_a(sd_ab_a),  .ab_wd(sd_ab_d),
+        .bc_we(sd_bc_we), .bc_a(sd_bc_a),  .bc_wd(sd_bc_d),
+        .pi_we(sd_pi_we), .pi_a_w(sd_pi_a), .pi_wd(sd_pi_d),
+        .ee_we(sd_ee_we), .ee_a_w(sd_ee_a), .ee_wd(sd_ee_d),
+        .eo_we(sd_eo_we), .eo_a_w(sd_eo_a), .eo_wd(sd_eo_d),
+        .pe_we(sd_pe_we), .pe_a_w(sd_pe_a), .pe_wd(sd_pe_d),
+        .po_we(sd_po_we), .po_a_w(sd_po_a), .po_wd(sd_po_d),
+        .ph_we(sd_ph_we), .ph_a_w(sd_ph_a), .ph_wd(sd_ph_d)
+    );
+
+    // ── 按音取表（单声部：每次 note-on 都重新搬一份）──────────────
+    wire        sd_busy, sd_done;
+    reg         start_tog;              // clk 域翻转
+    reg  [1:0]  st_s2;                  // → clk100
+    wire        sd_start = st_s2[1];
+    reg  [6:0]  sd_note;
+
+    // 完成：clk100 域脉冲 → toggle → clk 域边沿
+    reg         done_tog_w;
+    reg  [1:0]  dt_s2;
+    reg         dt_prev;
+    wire        dma_done_p = dt_s2[1] ^ dt_prev;
+
+    // DMA 期间静音（表正在被覆盖，必须闭嘴）
+    reg  [1:0]  busy_s2;
+    reg         sd_pend;
+    wire        quiet = sd_pend | busy_s2[0] | busy_s2[1];
+
+    // 启动 toggle → clk100（2FF）
+    always @(posedge clk100) begin
+        if (!rst100_n) begin
+            st_s2      <= 2'd0;
+            done_tog_w <= 1'b0;
         end
-        else begin : g_suona
-            harm_rom_suona u_rom (
-                .clk(clk),
-                .abc_a(a_abc), .pi_a(a_pi),
-                .ab_d(rom_ab), .bc_d(rom_bc), .pi_d(rom_pi),
-                .pe_a(a_pe), .po_a(a_po), .pe_d(rom_pe), .po_d(rom_po),
-                .ee_a(a_ee), .eo_a(a_eo), .ee_d(rom_ee), .eo_d(rom_eo),
-                .ph_a(a_ph), .ph_d(rom_ph),
-                .u_a(a_u), .u_d(rom_u),
-                .sn_a(a_sn), .sn_d(rom_sn),
-                .inf_a(a_inf), .inf_d(rom_inf)
-            );
+        else begin
+            st_s2 <= {st_s2[0], start_tog};
+            if (sd_done) done_tog_w <= ~done_tog_w;
         end
-    endgenerate
+    end
+
+    // 完成 toggle / busy → clk（2FF + 边沿检测）
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            dt_s2   <= 2'd0;
+            dt_prev <= 1'b0;
+            busy_s2 <= 2'd0;
+        end
+        else begin
+            dt_s2   <= {dt_s2[0], done_tog_w};
+            dt_prev <= dt_s2[1];
+            busy_s2 <= {busy_s2[0], sd_busy};
+        end
+    end
+
+    suona_dma #(
+        .NOTE_LO   (NOTE_LO),
+        .SUONA_BASE(8769),
+        .DESC_OFF  (2)
+    ) u_sdma (
+        .clk(clk100), .rst_n(rst100_n),
+        .note(sd_note), .start(sd_start), .busy(sd_busy), .done(sd_done),
+        .ab_we(sd_ab_we), .ab_a(sd_ab_a), .ab_d(sd_ab_d),
+        .bc_we(sd_bc_we), .bc_a(sd_bc_a), .bc_d(sd_bc_d),
+        .pi_we(sd_pi_we), .pi_a(sd_pi_a), .pi_d(sd_pi_d),
+        .ee_we(sd_ee_we), .ee_a(sd_ee_a), .ee_d(sd_ee_d),
+        .eo_we(sd_eo_we), .eo_a(sd_eo_a), .eo_d(sd_eo_d),
+        .pe_we(sd_pe_we), .pe_a(sd_pe_a), .pe_d(sd_pe_d),
+        .po_we(sd_po_we), .po_a(sd_po_a), .po_d(sd_po_d),
+        .ph_we(sd_ph_we), .ph_a(sd_ph_a), .ph_d(sd_ph_d),
+        .app_cmd(app_cmd), .app_en(app_en), .app_addr(app_addr),
+        .app_rdy(app_rdy),
+        .app_rd_data_valid(app_rd_data_valid),
+        .app_rd_data(app_rd_data)
+    );
 
     // ════════════════════════════════════════════════════════════════
     //  每声部状态
@@ -410,16 +488,22 @@ module add_engine_harm #(
                 end
             end
 
-            // ── 触发（随时响应，放在后面 —— 同块内后写优先）────────
-            for (i = 0; i < NVOICE; i = i + 1) begin
-                if (v_trig[i]) begin
-                    v_act[i]  <= 1'b1;
-                    v_ts[i]   <= 20'd0;
-                    v_ua[i]   <= 32'd0;
-                    nidx_r[i] <= (v_note[i*7 +: 7] < NOTE_LO) ? 5'd0 :
-                                 (v_note[i*7 +: 7] > NOTE_HI) ? (NOTE_HI - NOTE_LO) :
-                                 (v_note[i*7 +: 7] - NOTE_LO);
-                end
+            // ── 触发链：note-on → 取表 → 表到位才起振 ──────────────
+            //   ★ 单声部：表只有一份，必须先停旧音、再覆盖表、再起新音。
+            //     所以这里只发 DMA 请求，v_act 由 dma_done_p 置位。
+            if (v_trig[0] && !sd_pend) begin
+                sd_note <= v_note[6:0];
+                start_tog <= ~start_tog;
+                sd_pend <= 1'b1;
+            end
+            if (dma_done_p) begin
+                sd_pend <= 1'b0;
+                v_act[0]  <= 1'b1;
+                v_ts[0]   <= 20'd0;
+                v_ua[0]   <= 32'd0;
+                nidx_r[0] <= (sd_note < NOTE_LO[6:0]) ? 5'd0 :
+                             (sd_note > NOTE_HI[6:0]) ? (NOTE_HI - NOTE_LO) :
+                             (sd_note - NOTE_LO[6:0]);
             end
 
             // ── 调度 ─────────────────────────────────────────────
@@ -442,15 +526,15 @@ module add_engine_harm #(
                         case (pp)
                         3'd1: begin
                                   pre_u0   <= rom_u;
-                                  v_fb[hv] <= rom_inf[14:0];      // info[4n+0] = phi_base
+                                  v_fb[hv] <= 32'd0;   // ★ 按音预取：phi 段内相对
                               end
                         3'd2: begin
                                   v_ua[hv] <= pre_u0 + (((rom_u - pre_u0) * v_ts[hv][3:0]) >> 4);
                                   v_k[hv]  <= rom_inf[31:24];     // info[4n+1]
-                                  v_ab[hv] <= rom_inf[15:0];
+                                  v_ab[hv] <= 0;       // ★ 按音预取：ab 段内相对
                               end
                         3'd3: begin
-                                  v_eb[hv]  <= rom_inf[15:0];     // info[4n+2] = env_base
+                                  v_eb[hv]  <= 16'd0;  // ★ 按音预取：env 段内相对
                                   v_px[hv]  <= cur_up[40:32];
                                   v_pfx[hv] <= cur_up[31:16];
                                   v_ep[hv]  <= cur_ep[39:32];
@@ -458,7 +542,7 @@ module add_engine_harm #(
                                   v_pp[hv]  <= cur_pp[40:32];
                                   v_pf2[hv] <= cur_pp[31:16];
                               end
-                        3'd4: v_pb[hv] <= rom_inf[15:0];          // info[4n+3] = psi_base
+                        3'd4: v_pb[hv] <= 16'd0;   // ★ 按音预取：psi 段内相对
                         3'd5: phi_a <= rom_ph;
                         3'd6: begin
                                   v_pf[hv] <= (phi_a + ((($signed(rom_ph) - $signed(phi_a))
@@ -486,7 +570,9 @@ module add_engine_harm #(
                 ST_DRAIN: begin
                     dr <= dr + 4'd1;
                     if (dr == 4'd5) begin
-                        smp <= sat16(mix);
+                        // ★ 力度只调音量；DMA 覆盖表期间强制静音
+                        smp <= quiet ? 16'sd0
+                             : sat16((mix * $signed({1'b0, v_vel[7:0]})) >>> 8);
                         st  <= ST_IDLE;
                     end
                 end

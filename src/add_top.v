@@ -233,8 +233,11 @@ module add_top #(
     // 8 个键音高范围由各乐器自己的映射决定：
     //   钢琴：60..72 (C4..C5)，表 21..108 → -36 .. +36（7 档）
     //   古筝：62..74 (D4..D5)，表 38..86  → -24 .. +12（4 档）
-    wire signed [7:0] tr_min = is_gz ? -8'sd24 : -8'sd36;
-    wire signed [7:0] tr_max = is_gz ?  8'sd12 :  8'sd36;
+    //   唢呐：8 键 69..81，表 69..96 → 0 .. +12（只有 2 档）
+    wire signed [7:0] tr_min = is_suona ?  8'sd0  :
+                               is_gz    ? -8'sd24 : -8'sd36;
+    wire signed [7:0] tr_max = is_suona ?  8'sd12 :
+                               is_gz    ?  8'sd12 :  8'sd36;
 
     reg signed [7:0] transpose;
 
@@ -402,15 +405,18 @@ module add_top #(
     //       enable 键 4(fa)、键 7(si) 屏蔽 —— 五声音阶里没有这两个音
     //       所以古筝实际发声键 = 1,2,3,5,6,8（6 个）
     //======================================================================
-    wire [6:0]  t_note_base = is_gz ? 7'd62 : 7'd60;      // 古筝 D4 / 钢琴 C4
+    //   唢呐：A4(69) 起，七声，8 键全开，移调 0 / +12
+    //         （音域只有 28 半音，五声会一档移调都做不了）
+    wire [6:0]  t_note_base = is_suona ? 7'd69 :
+                              is_gz    ? 7'd62 : 7'd60;   // 唢呐 A4 / 古筝 D4 / 钢琴 C4
 
     // ★ 4'hF = 无效步长哨兵（该键在本乐器音阶里不存在）
     wire [31:0] t_key_step  = is_gz
         ? {4'd12, 4'hF, 4'd9, 4'd7, 4'hF, 4'd4, 4'd2, 4'd0}   // 古筝 D 宫五声
-        : {4'd12, 4'd11, 4'd9, 4'd7, 4'd5, 4'd4, 4'd2, 4'd0}; // 钢琴 七声
+        : {4'd12, 4'd11, 4'd9, 4'd7, 4'd5, 4'd4, 4'd2, 4'd0}; // 钢琴/唢呐 七声
 
     // 键 4、键 7 在古筝下不发声（bit3 = 键4，bit6 = 键7）
-    wire [7:0]  t_key_en  = is_gz ? 8'b1011_0111 : 8'b1111_1111;
+    wire [7:0]  t_key_en  = is_gz ? 8'b1011_0111 : 8'b1111_1111;  // 唢呐 8 键全开
 
     note_alloc #(
         .NKEY     (8),
@@ -517,6 +523,72 @@ module add_top #(
         .app_rd_data_valid   (ddr_rd_valid),
         .app_rd_data         (ddr_rd_data)
     );
+
+    //======================================================================
+    //  唢呐引擎（单声部谐波合成，表按音从 DDR 预取）
+    //    · 单声部：任意声部触发都映射到它的 0 号声部，音高用同拍组合 mux
+    //    · 表在 DDR，note-on 时 suona_dma 搬 21 KB 到 BSRAM（约 200 us）
+    //======================================================================
+    wire signed [15:0] sua_l, sua_r;
+    wire [3:0]         sua_v_idle;
+    wire [2:0]         sua_app_cmd;
+    wire               sua_app_en;
+    wire [28:0]        sua_app_addr;
+
+    wire sua_trig = |v_trig;
+    wire sua_gate = |v_gate;
+
+    reg  [6:0] sua_note;
+    integer si;
+    always @(*) begin
+        sua_note = 7'd69;
+        for (si = 0; si < NVOICE; si = si + 1)
+            if (v_trig[si]) sua_note = eng_note[si*7 +: 7];
+    end
+
+    // ★ 引擎内部多处写死 4 声部（rot[2]、k_nz[2] 等），所以保持 NVOICE=4，
+    //   只用 0 号声部：v_trig 只有 bit0 会动，其余声部永不激活。
+    //   表缓冲是【共享的一份】，所以多留 3 个空声部不额外占 BSRAM。
+    add_engine_harm #(
+        .NVOICE    (4),
+        .NOTE_LO   (69),        // 唢呐表 A4..C7
+        .NOTE_HI   (96),
+        .TIMBRE    (3),
+        .MIX_SHIFT (0),
+        .SOFT      (1)
+    ) u_harm (
+        .clk        (clk_sys),
+        .rst_n      (engine_rst_n),
+        .v_note     ({21'd0, sua_note}),
+        .v_trig     ({3'b000, sua_trig}),
+        .v_gate     ({3'b000, sua_gate}),
+        .v_vel      ({{24{1'b0}}, v_vel[7:0]}),
+        .sample_tick(tick),
+        .sample_l   (sua_l),
+        .sample_r   (sua_r),
+        .v_idle     (sua_v_idle),
+
+        .clk100              (ddr_clk_x1),
+        .rst100_n            (ddr_init_done),
+        .app_cmd             (sua_app_cmd),
+        .app_en              (sua_app_en),
+        .app_addr            (sua_app_addr),
+        .app_rdy             (ddr_app_rdy),
+        .app_rd_data_valid   (ddr_rd_valid),
+        .app_rd_data         (ddr_rd_data)
+    );
+
+    wire is_suona = (timbre_r == 2'd2);
+
+    // ★ 必须打一拍再送进 sat_gain：
+    //   直接组合 mux 会把 u_piano/u_mix → u_tx/din 的路径拉长，
+    //   实测 SETUP -0.853 ns（CLK_SYS 唯一违例）。
+    //   音频流每样点一次，加一拍延迟完全无影响。
+    reg signed [15:0] mix_l_r, mix_r_r;
+    always @(posedge clk_sys) begin
+        mix_l_r <= is_suona ? sua_l : eng_l;
+        mix_r_r <= is_suona ? sua_r : eng_r;
+    end
 
     //======================================================================
     //  输出增益 ×8
@@ -683,8 +755,8 @@ module add_top #(
     pcm5102a_tx #(.DIV(16), .SLOTS(64)) u_tx (
         .clk        (clk_sys),
         .rst_n      (por_n),
-        .sample_l   (sat_gain(eng_l, timbre_r)),
-        .sample_r   (sat_gain(eng_r, timbre_r)),
+        .sample_l   (sat_gain(mix_l_r, timbre_r)),
+        .sample_r   (sat_gain(mix_r_r, timbre_r)),
         .sample_tick(tick),
         .bck        (AUD_BCK),
         .lrck       (AUD_LRCK),
@@ -820,11 +892,16 @@ module add_top #(
     //    note-on 时短时占用。所以直接用 ld_done 二选一即可，无需真仲裁器。
     //    写数据通道只有加载器使用，直接接过去（引擎只读）。
     //======================================================================
-    wire ddr_arb_eng = ld_done;
+    // 三路互斥：加载期间给 loader；加载后按音色给钢琴(含古筝)或唢呐
+    wire ddr_arb_piano = ld_done && !is_suona;
+    wire ddr_arb_suona = ld_done &&  is_suona;
 
-    assign ddr_app_cmd      = ddr_arb_eng ? eng_app_cmd  : ld_app_cmd;
-    assign ddr_app_en       = ddr_arb_eng ? eng_app_en   : ld_app_en;
-    assign ddr_app_addr     = ddr_arb_eng ? eng_app_addr : ld_app_addr;
+    assign ddr_app_cmd      = ddr_arb_suona ? sua_app_cmd  :
+                              ddr_arb_piano ? eng_app_cmd  : ld_app_cmd;
+    assign ddr_app_en       = ddr_arb_suona ? sua_app_en   :
+                              ddr_arb_piano ? eng_app_en   : ld_app_en;
+    assign ddr_app_addr     = ddr_arb_suona ? sua_app_addr :
+                              ddr_arb_piano ? eng_app_addr : ld_app_addr;
     assign ddr_app_wdf_data = ld_app_wdf_data;
     assign ddr_app_wdf_wren = ld_app_wdf_wren;
     assign ddr_app_wdf_end  = ld_app_wdf_end;

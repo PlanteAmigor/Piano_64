@@ -34,7 +34,8 @@ module suona_dma #(
     input  wire         rst_n,
 
     input  wire [6:0]   note,       // 要搬的音（MIDI）
-    input  wire         start,      // 单拍脉冲
+    input  wire         start,      // ★ 电平翻转（toggle）：内部边沿检测后启动
+                                    //   跨时钟域时用 2FF 同步一个 toggle 最稳
     output reg          busy,
     output reg          done,       // 单拍脉冲：全部搬完
 
@@ -121,6 +122,8 @@ module suona_dma #(
     reg [1:0]  desc_cnt;
     reg [28:0] cmd_addr;
     reg        en_r;
+    reg        st_prev;                 // start 的上一拍（边沿检测）
+    wire       start_p = start ^ st_prev;
 
     assign app_en   = en_r;
     assign app_addr = cmd_addr;
@@ -132,11 +135,12 @@ module suona_dma #(
             ee_we <= 0; eo_we <= 0; pe_we <= 0; po_we <= 0; ph_we <= 0;
             seg <= 4'd0; wptr <= 16'd0; beat_cnt <= 6'd0;
             seg_n <= 16'd0; desc_cnt <= 2'd0;
-            en_r <= 1'b0; cmd_addr <= 29'd0;
+            en_r <= 1'b0; cmd_addr <= 29'd0; st_prev <= 1'b0;
         end
         else begin
             done  <= 1'b0;
             en_r  <= 1'b0;
+            st_prev <= start;
             ab_we <= 0; bc_we <= 0; pi_we <= 0;
             ee_we <= 0; eo_we <= 0; pe_we <= 0; po_we <= 0; ph_we <= 0;
 
@@ -144,7 +148,7 @@ module suona_dma #(
                 //──────────────────────────────────────────────────
                 S_IDLE: begin
                     busy <= 1'b0;
-                    if (start) begin
+                    if (start_p) begin
                         busy <= 1'b1;
                         // 描述符字节偏移 = (SUONA_BASE+DESC_OFF)*32 + (note-NOTE_LO)*64
                         // app_addr = 字节 >> 2
