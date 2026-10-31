@@ -1,0 +1,36 @@
+//==========================================================================
+//  hdmi_test.cst —— HDMI 点亮测试（1280×720@60）
+//
+//  ★★ 写法完全照抄官方 hdmi_colorbar 与队友 ir4：
+//     · 差分口用【一个 2 位向量】做端口，IO_LOC 里写「P球,N球」两个球
+//     · 只给 P 端写 IO_LOC，N 端不给（工具自动配对）
+//     · IO_TYPE=LVCMOS33D（3.3V 差分 CMOS），DRIVE=8
+//
+//  —— TMDS 引脚（三重校验：P 都在 _A、N 都在 _B、球号两两相邻）——
+//      D0(蓝)  J14 / H14
+//      D1(绿)  J15 / H15
+//      D2(红)  K17 / J17
+//      CK      G15 / G16
+//
+//  ★ 注意：官方和 ir4 的 cst 里都【没有】DVI_DIR_SEL，
+//    说明这块板子该脚默认就是 TX，不用驱动。这里跟着去掉。
+//==========================================================================
+
+IO_LOC  "clk"    V22;
+IO_PORT "clk"    IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3;
+
+IO_LOC  "resetn" AB13;
+IO_PORT "resetn" IO_TYPE=LVCMOS33 PULL_MODE=UP   DRIVE=OFF BANK_VCCIO=3.3;
+
+// ---- TMDS 三路数据 + 时钟（差分对写法：IO_LOC 里给 P,N 两个球）----
+IO_LOC  "tmds_d_p_0[0]" J14,H14;
+IO_PORT "tmds_d_p_0[0]" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8;
+
+IO_LOC  "tmds_d_p_0[1]" J15,H15;
+IO_PORT "tmds_d_p_0[1]" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8;
+
+IO_LOC  "tmds_d_p_0[2]" K17,J17;
+IO_PORT "tmds_d_p_0[2]" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8;
+
+IO_LOC  "tmds_clk_p_0" G15,G16;
+IO_PORT "tmds_clk_p_0" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8;
