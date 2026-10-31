@@ -216,6 +216,8 @@ module add_top #(
     // ★ 当前音色是否古筝（与 add_engine8 的 .timbre(timbre_r[0]) 同一判据）
     //   按键映射、移调范围都按它选
     wire is_gz = timbre_r[0];
+    // ★ 唢呐（第 3 档）。必须定义在所有使用者之前。
+    wire is_suona = (timbre_r == 2'd2);
 
     //======================================================================
     //  ★ 移调（第 9 键 = 纯功能键，单手一个键完成）
@@ -535,9 +537,31 @@ module add_top #(
     wire               sua_app_en;
     wire [28:0]        sua_app_addr;
 
-    wire sua_trig = |v_trig;
-    wire sua_gate = |v_gate;
+    // ★★ 关键：只有唢呐音色下才允许触发取表 DMA！
+    //   之前写成 |v_trig，导致钢琴模式下按一次键，唢呐引擎也会去抢 DDR，
+    //   钢琴的取表被挤掉 → 切回钢琴也没声音（实测整机哑掉）。
+    wire sua_trig = is_suona && |v_trig;
 
+    // ★★ gate / 力度【不能】走 note_alloc 的声部！
+    //    note_alloc 是 8 声部轮转分配，同一个键每次可能落在不同声部；
+    //    而唢呐是单声部，用 |v_gate / v_vel[某声部] 会出两个毛病：
+    //      · 任一残留声部的 v_gate=1 → 松键也不停（实测第 8 键卡住）
+    //      · 力度取错声部         → 轻重反了（实测第 8 键）
+    //    钢琴/古筝不受影响：它们每个声部有自己的 v_gate[g]/v_vel[g]，
+    //    声部与按键是一一对应的，所以那边一直正常。
+    //    唢呐改成直接看【8 个音源键】，与声部分配彻底解耦。
+    wire sua_gate = is_suona && (|note_key_state);
+
+    // 按下沿 → 按【键号】锁存力度（不是声部号）
+    //   直接复用 note_key_press（= kd_state[7:0] & ~kd_state_d）
+    reg  [7:0] sua_vel;
+    integer sv;
+    always @(posedge clk_sys) begin
+        for (sv = 0; sv < 8; sv = sv + 1)
+            if (note_key_press[sv]) sua_vel <= note_key_vel[sv*8 +: 8];
+    end
+
+    // ★ 音高：组合 mux（必须和 v_trig 同拍有效，引擎在那一拍锁存 sd_note）
     reg  [6:0] sua_note;
     integer si;
     always @(*) begin
@@ -545,6 +569,7 @@ module add_top #(
         for (si = 0; si < NVOICE; si = si + 1)
             if (v_trig[si]) sua_note = eng_note[si*7 +: 7];
     end
+
 
     // ★ 引擎内部多处写死 4 声部（rot[2]、k_nz[2] 等），所以保持 NVOICE=4，
     //   只用 0 号声部：v_trig 只有 bit0 会动，其余声部永不激活。
@@ -554,7 +579,7 @@ module add_top #(
         .NOTE_LO   (69),        // 唢呐表 A4..C7
         .NOTE_HI   (96),
         .TIMBRE    (3),
-        .MIX_SHIFT (0),
+        .MIX_SHIFT (2),      // 唢呐满刻度远高于钢琴，先 ÷4
         .SOFT      (1)
     ) u_harm (
         .clk        (clk_sys),
@@ -562,7 +587,7 @@ module add_top #(
         .v_note     ({21'd0, sua_note}),
         .v_trig     ({3'b000, sua_trig}),
         .v_gate     ({3'b000, sua_gate}),
-        .v_vel      ({{24{1'b0}}, v_vel[7:0]}),
+        .v_vel      ({{24{1'b0}}, sua_vel}),
         .sample_tick(tick),
         .sample_l   (sua_l),
         .sample_r   (sua_r),
@@ -577,8 +602,6 @@ module add_top #(
         .app_rd_data_valid   (ddr_rd_valid),
         .app_rd_data         (ddr_rd_data)
     );
-
-    wire is_suona = (timbre_r == 2'd2);
 
     // ★ 必须打一拍再送进 sat_gain：
     //   直接组合 mux 会把 u_piano/u_mix → u_tx/din 的路径拉长，
@@ -625,7 +648,11 @@ module add_top #(
         input [1:0]         tb;       // 0=钢琴 1=古筝 2=唢呐
         reg   signed [31:0] y, ax, d, yy;
         begin
-            y = (tb == 2'd2) ? (x <<< 3) :      // 唢呐
+            // ★ 唢呐只 ×2：实测引擎输出满力度峰值约 10000，
+            //   原来 ×8 送成 80000，软限幅把它压成方波（压缩比 2.5:1），
+            //   听感是「嘟嘟」而且削顶后 RMS 更高、听着更响。
+            //   ×2 → 20000，在膝点 24000 以下，直通零失真。
+            y = (tb == 2'd2) ? (x <<< 1) :      // 唢呐 ×2
                 tb          ? (x <<< 4) :       // 古筝 ×16
                               (x <<< 3);        // 钢琴 ×8
             ax = (y < 0) ? -y : y;
@@ -641,6 +668,21 @@ module add_top #(
             sat_gain = y[31] ? -yy[15:0] : yy[15:0];
         end
     endfunction
+
+    // ★★ sat_gain 输出必须再打一拍！
+    //    组合送进 u_tx 时，路径是
+    //        mix_l_r → 增益选择 → 绝对值 → 膝点比较 → d×d 乘法 → 减法
+    //                → u_tx 内部移位寄存器 → din
+    //    实测阵列后 SETUP −0.239 ns（24.097 ns > 23.858 ns）。
+    //    d×d 是 16×16 乘法，综合出来直接顶在后面，而 mix_l_r 又是
+    //    音频引擎输出级扇出最大的寄存器，布线很长。
+    //    在 sat_gain 后面加一级寄存器，把乘法–比较与 u_tx 切开。
+    //    代价：整体延迟多一个样点（20.5 us），完全听不出来。
+    reg signed [15:0] out_l_r, out_r_r;
+    always @(posedge clk_sys) begin
+        out_l_r <= sat_gain(mix_l_r, timbre_r);
+        out_r_r <= sat_gain(mix_r_r, timbre_r);
+    end
 
     //======================================================================
     //  灯带控制信号跨时钟域同步：clk_sys → CLOCK_50
@@ -755,8 +797,8 @@ module add_top #(
     pcm5102a_tx #(.DIV(16), .SLOTS(64)) u_tx (
         .clk        (clk_sys),
         .rst_n      (por_n),
-        .sample_l   (sat_gain(mix_l_r, timbre_r)),
-        .sample_r   (sat_gain(mix_r_r, timbre_r)),
+        .sample_l   (out_l_r),
+        .sample_r   (out_r_r),
         .sample_tick(tick),
         .bck        (AUD_BCK),
         .lrck       (AUD_LRCK),

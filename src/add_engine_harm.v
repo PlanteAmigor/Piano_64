@@ -445,6 +445,11 @@ module add_engine_harm #(
                 v_pp[i] <= 9'd0;  v_pf2[i] <= 16'd0;
                 nidx_r[i] <= 5'd0;
             end
+            // ★ 取表控制信号必须复位！忘了写会让它们保持 X，
+            //   而 `if (v_trig[0] && !sd_pend)` 遇到 X 就永不成立
+            //   → 仿真里永远不启动 DMA、永远静音（硬件复位值是 0 所以能响）
+            sd_pend   <= 1'b0;
+            start_tog <= 1'b0;
         end
         else begin
             cnt <= (cnt == 10'd1023) ? 10'd0 : cnt + 10'd1;
@@ -482,7 +487,11 @@ module add_engine_harm #(
             if (cnt == 10'd0) begin
                 for (i = 0; i < NVOICE; i = i + 1) begin
                     if (v_act[i]) begin
-                        if (v_ts[i] + 20'd1 >= TMAX) v_act[i] <= 1'b0;
+                        // ★ 松键即停：唢呐是吹奏乐器，松口就断气。
+                        //   原来只靠 TMAX（3 s）硬切，松键后还会继续响 3 秒。
+                        //   停止后由下面的 smp 一阶衰减平滑收尾，不出爆音。
+                        if (!v_gate[i])                        v_act[i] <= 1'b0;
+                        else if (v_ts[i] + 20'd1 >= TMAX)      v_act[i] <= 1'b0;
                         v_ts[i] <= v_ts[i] + 20'd1;
                     end
                 end
@@ -535,8 +544,16 @@ module add_engine_harm #(
                               end
                         3'd3: begin
                                   v_eb[hv]  <= 16'd0;  // ★ 按音预取：env 段内相对
-                                  v_px[hv]  <= cur_up[40:32];
+                                  // ★★ 位宽必须够！cur_up = u×(NT−1) = u×599，
+                                  //    u→1 时到 599，需要 **10 位**（0..1023）。
+                                  //    原来写 [40:32] 只有 9 位（0..511），
+                                  //    u×599 = 512 那一刻索引从 511 回绕到 0
+                                  //    → Φ 曲线从头重放、相位突跳
+                                  //    → 音符最后 15%（t≈2.24 s 起）整段变成「嘟嘟」噪音。
+                                  //    u=0.85476 正好对应 t=109296 样点，与实测崩点一致。
+                                  v_px[hv]  <= cur_up[41:32];
                                   v_pfx[hv] <= cur_up[31:16];
+                                  //  NT3−1 = 149 → 8 位够；NT2−1 = 299 → 9 位够
                                   v_ep[hv]  <= cur_ep[39:32];
                                   v_ef[hv]  <= cur_ep[31:16];
                                   v_pp[hv]  <= cur_pp[40:32];
@@ -578,6 +595,26 @@ module add_engine_harm #(
                 end
                 default: ;
                 endcase
+            end
+
+            // ★★ 音符结束后平滑归零。
+            //    TMAX 到期（3 s）/ 松键都是硬切断：v_act 一清零引擎立刻停下，
+            //    而 smp 停在最后一个样点的电平上（随机直流），
+            //    送出去就是「噗」一下。这里用一阶衰减收尾。
+            //
+            //    ★ 两个坑（都踩过）：
+            //    1) 原来没加 cnt==0 门控 → 衰减跑在 50 MHz 上，
+            //       16 拍 = 0.32 us 就归零，实际等于「一个样点硬切」，还是有爆音。
+            //       必须按样点衰减。
+            //    2) 原来是 smp − (smp>>>4)，|smp| < 16 时 >>>4 = 0，
+            //       永远停在 ±15 不动 → 输出永久残留直流。
+            //       加绝对值下限直接清零。
+            //    1/64 每样点 ⇒ 时间常数 64 样点 ≈ 1.3 ms，降到听不见约 6 ms，
+            //    既没爆音又满足「松键即停」。
+            if (!any_act && smp != 16'sd0 && cnt == 10'd0) begin
+                if      (smp >  16'sd32) smp <= smp - (smp >>> 6);
+                else if (smp < -16'sd32) smp <= smp - (smp >>> 6);
+                else                     smp <= 16'sd0;
             end
 
             v_idle_r <= ~act_vec;

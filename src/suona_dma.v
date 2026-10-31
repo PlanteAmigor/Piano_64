@@ -124,6 +124,12 @@ module suona_dma #(
     reg        en_r;
     reg        st_prev;                 // start 的上一拍（边沿检测）
     wire       start_p = start ^ st_prev;
+    // ★ 超时保护：正常情况下一次读约 6 拍就回来。若 DDR 没响应
+    //   （地址越界、控制器异常），状态机会永远卡在 S_CMD/S_WAIT，
+    //   而引擎那边 sd_pend 不清 0 → quiet 一直为 1 → 永久静音。
+    //   超时后强制跳过本段，保证系统能自己恢复。
+    reg [13:0] tmo;
+    localparam [13:0] TMO_MAX = 14'd4000;
 
     assign app_en   = en_r;
     assign app_addr = cmd_addr;
@@ -135,7 +141,7 @@ module suona_dma #(
             ee_we <= 0; eo_we <= 0; pe_we <= 0; po_we <= 0; ph_we <= 0;
             seg <= 4'd0; wptr <= 16'd0; beat_cnt <= 6'd0;
             seg_n <= 16'd0; desc_cnt <= 2'd0;
-            en_r <= 1'b0; cmd_addr <= 29'd0; st_prev <= 1'b0;
+            en_r <= 1'b0; cmd_addr <= 29'd0; st_prev <= 1'b0; tmo <= 14'd0;
         end
         else begin
             done  <= 1'b0;
@@ -208,15 +214,32 @@ module suona_dma #(
                 end
 
                 //──────────────────────────────────────────────────
-                S_CMD: if (app_rdy) begin
-                    en_r <= 1'b1;
-                    st   <= S_WAIT;
+                S_CMD: begin
+                    if (app_rdy) begin
+                        en_r <= 1'b1;
+                        tmo  <= 14'd0;
+                        st   <= S_WAIT;
+                    end
+                    else if (tmo >= TMO_MAX) begin
+                        // DDR 不应答：放弃这一段，继续下一段
+                        seg <= seg + 4'd1;
+                        st  <= S_SEG;
+                    end
+                    else tmo <= tmo + 14'd1;
                 end
 
-                S_WAIT: if (app_rd_data_valid) begin
-                    beat     <= app_rd_data;
-                    beat_cnt <= 6'd0;
-                    st       <= S_WR;
+                S_WAIT: begin
+                    if (app_rd_data_valid) begin
+                        beat     <= app_rd_data;
+                        beat_cnt <= 6'd0;
+                        st       <= S_WR;
+                    end
+                    else if (tmo >= TMO_MAX) begin
+                        // 数据一直没回来：放弃本段（剩下的段也会超时，最终正常收尾）
+                        seg <= seg + 4'd1;
+                        st  <= S_SEG;
+                    end
+                    else tmo <= tmo + 14'd1;
                 end
 
                 //──────────────────────────────────────────────────

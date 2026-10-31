@@ -55,3 +55,7 @@ src/*.suona_try
 
 # ── DDR 例程的编译产物（只保留 ip/ 源码与 constr/）──────────────
 ddr_bringup/impl/
+
+# 仿真 dump（几 MB，不入库）
+harm_hw_dump.txt
+*.vcd
