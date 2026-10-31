@@ -108,6 +108,14 @@ def main():
     ap.add_argument('--pattern', default='harm_*_M*.npz')
     ap.add_argument('--prefix', required=True)
     ap.add_argument('--outdir', required=True)
+    # ★★ 逐音峰值归一化（笛子必须开，唄呐已经≈1.0可以不开）
+    #    模型重建信号 xh 的峰值就是「引擎满刻度」的倍数：
+    #      唄呐 28 音峰值中位 1.001、最大 1.151 → 已经是归一化的
+    #      笛子 25 音峰值中位 1.385、最大 3.198 → 直接上板会顶进软限幅
+    #        （ G4: mix 峰值 26193 ×2 = 52386 → 被压到 32192，1.6:1 压缩）
+    #    这里把每个音的 A 整体除以其峰值，和唄呐对齐。
+    ap.add_argument('--norm', action='store_true',
+                    help='逐音把 A 缩放到峰值=1.0（推荐用于 dizi）')
     a = ap.parse_args()
 
     files = sorted(glob.glob(os.path.join(a.dir, a.pattern)))
@@ -143,13 +151,20 @@ def main():
     data = {k: np.zeros(tot[k], dtype=np.uint64) for k in bins}
 
     # ── 第二遍：逐音填充 ──────────────────────────────────────────
-    print('%-6s %4s %5s %8s %10s %7s %7s' % ('MIDI', 'K', 'npsi', 'phi_max', 'a_max', 'psi_max', 'env_max'))
+    print('%-6s %4s %5s %8s %10s %7s %7s %8s' % ('MIDI', 'K', 'npsi', 'phi_max', 'a_max', 'psi_max', 'env_max', 'gain'))
     for i, mi in enumerate(midis):
         d = np.load(notes[mi], allow_pickle=True)
         K, npsi = meta[mi]
         c = np.asarray(d['c'], dtype=np.float64)
         am, bm = c[:K], c[K:2 * K]
         A = np.hypot(am, bm)
+        # ★ 峰值归一化：A 是线性幅度，整体缩一个因子不改变音色/相位
+        gain = 1.0
+        if a.norm:
+            xh = np.asarray(d['xh'], dtype=np.float64)
+            pk  = float(np.abs(xh).max())
+            gain = (1.0 / pk) if pk > 0 else 1.0
+            A = A * gain
         phi_c = np.arctan2(bm, am) / (2 * np.pi)
         dm = np.asarray(d['dm'], dtype=np.float64)
         tau_u = np.asarray(d['u'], dtype=np.float64)
@@ -218,8 +233,9 @@ def main():
         data['phi'][w:w + NT] = ph32
 
         psi_max = float(max((np.abs(phm[r] * mask[r]).max() for r in rows), default=0.0))
-        print('%-6d %4d %5d %8.1f %10.3f %7.3f %7.3f'
-              % (mi, K, npsi, np.abs(phi).max(), np.abs(A).max(), psi_max, np.abs(env).max()))
+        print('%-6d %4d %5d %8.1f %10.3f %7.3f %7.3f %8.3f'
+              % (mi, K, npsi, np.abs(phi).max(), np.abs(A).max(), psi_max,
+                 np.abs(env).max(), gain))
 
     # ── 写出 ──────────────────────────────────────────────────────
     os.makedirs(a.outdir, exist_ok=True)

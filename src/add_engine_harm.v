@@ -34,14 +34,20 @@
 
 module add_engine_harm #(
     parameter integer NVOICE    = 4,
-    parameter integer NOTE_LO   = 67,
-    parameter integer NOTE_HI   = 91,
-    parameter integer TIMBRE    = 2,        // 2 = 笛子  3 = 唢呐
     parameter integer MIX_SHIFT = 2,        // 输出再右移几位（4 声部取 2 = /4）
     parameter integer SOFT      = 1
 )(
     input  wire                    clk,
     input  wire                    rst_n,
+
+    // ★★ 音域 / info 基址 / 描述符基址全部改成【运行时端口】：
+    //    唢呐和笛子结构完全一样，只差“表放哪里 + 音域从哪到哪”。
+    //    共用同一个引擎实例（省 ~50 块 BSRAM，也省一条 DDR 仲裁），
+    //    切音色时只改这 4 个输入（反正切音色本就会清移调/停旧音）。
+    input  wire [6:0]              note_lo,        // 69 = 唢呐 A4 / 67 = 笛子 G4
+    input  wire [6:0]              note_hi,        // 96 / 91
+    input  wire [7:0]              inf_base,       // info 表字偏移：0 / 112
+    input  wire [28:0]             desc_base,      // 描述符 app 地址已减 note_lo*16
 
     input  wire [NVOICE*7-1:0]     v_note,
     input  wire [NVOICE-1:0]       v_trig,
@@ -68,7 +74,7 @@ module add_engine_harm #(
     localparam integer PSI_AW  = 16;
     localparam integer ENV_AW  = 16;
     localparam integer PHI_AW  = 15;
-    localparam integer INFO_AW = 7;
+    localparam integer INFO_AW = 8;         // 224 词：唢呐 0..111 / 笛子 112..211
 
     localparam integer NT  = 600;           // Φ 表点数
     localparam integer NT2 = 300;           // Ψ 表点数
@@ -169,11 +175,10 @@ module add_engine_harm #(
     end
 
     suona_dma #(
-        .NOTE_LO   (NOTE_LO),
-        .SUONA_BASE(8769),
         .DESC_OFF  (2)
     ) u_sdma (
         .clk(clk100), .rst_n(rst100_n),
+        .desc_base(desc_base),
         .note(sd_note), .start(sd_start), .busy(sd_busy), .done(sd_done),
         .ab_we(sd_ab_we), .ab_a(sd_ab_a), .ab_d(sd_ab_d),
         .bc_we(sd_bc_we), .bc_a(sd_bc_a), .bc_d(sd_bc_d),
@@ -383,10 +388,10 @@ module add_engine_harm #(
         a_ph  = {PHI_AW{1'b0}};
         a_u   = v_ts[hv][19:4];
         a_sn  = s2_sin_addr;
-        a_inf = {nidx_r[hv], 2'b00};
+        a_inf = inf_base + {nidx_r[hv], 2'b00};
         case (st)
         ST_PRE: begin
-            a_inf = {nidx_r[hv], 2'b00} + {5'd0, pp[1:0]};
+            a_inf = inf_base + {nidx_r[hv], 2'b00} + {6'd0, pp[1:0]};
             case (pp)
             3'd1: a_u = v_ts[hv][19:4] + 14'd1;
             3'd4: a_ph = v_fb[hv] + v_px[hv];
@@ -510,9 +515,9 @@ module add_engine_harm #(
                 v_act[0]  <= 1'b1;
                 v_ts[0]   <= 20'd0;
                 v_ua[0]   <= 32'd0;
-                nidx_r[0] <= (sd_note < NOTE_LO[6:0]) ? 5'd0 :
-                             (sd_note > NOTE_HI[6:0]) ? (NOTE_HI - NOTE_LO) :
-                             (sd_note - NOTE_LO[6:0]);
+                nidx_r[0] <= (sd_note < note_lo) ? 5'd0 :
+                             (sd_note > note_hi) ? (note_hi - note_lo) :
+                             (sd_note - note_lo);
             end
 
             // ── 调度 ─────────────────────────────────────────────

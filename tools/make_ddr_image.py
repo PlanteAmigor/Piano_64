@@ -162,13 +162,17 @@ def words_of(blob):
 # ══════════════════════════════════════════════════════════════════════════
 
 SUONA_MAGIC = b"SUON"
+DIZI_MAGIC  = b"DIZI"
 SUONA_NOTE_LO = 69              # A4
-# 与 harm_rom_suona 的 DEPTH 参数保持一致
-SU_AB_DEPTH   = 780
-SU_ENV_DEPTH  = 59204
-SU_PSI_DEPTH  = 57833
-SU_PHI_DEPTH  = 16800
-SU_INFO_DEPTH = 112
+DIZI_NOTE_LO  = 67              # G4
+
+# ★ 深度不再写死，改为【读 hex 的实际行数】。
+#   原来钉死的 SU_AB_DEPTH=780 比 suona_ab.hex 实际的 779 多 1，
+#   会把最后一个音的 ab_len 算成 K+1（多读 1 个填充 0）。
+#   用实际长度后每音的段长正好等于 K / K×ENV_E / (npsi+1)×PSI_E。
+def harm_depths(su):
+    return dict(ab=len(su["ab"]), env=len(su["ee"]), psi=len(su["pe"]),
+                phi=len(su["ph"]))
 
 
 def _pad32(off):
@@ -176,39 +180,17 @@ def _pad32(off):
     return (off + 31) & ~31
 
 
-def load_suona():
-    """读唢呐 8 个表 + info。返回 dict。"""
-    ab   = read_hex(os.path.join(ROOT, "suona_ab.hex"))
-    bc   = read_hex(os.path.join(ROOT, "suona_bc.hex"))
-    pi   = read_hex(os.path.join(ROOT, "suona_pi.hex"))
-    ee   = read_hex(os.path.join(ROOT, "suona_env_e.hex"))
-    eo   = read_hex(os.path.join(ROOT, "suona_env_o.hex"))
-    pe   = read_hex(os.path.join(ROOT, "suona_psi_e.hex"))
-    po   = read_hex(os.path.join(ROOT, "suona_psi_o.hex"))
-    ph   = read_hex(os.path.join(ROOT, "suona_phi.hex"))
-    info = read_hex(os.path.join(ROOT, "suona_info.hex"))
-
-    # 补齐到 DEPTH（hex 文件可能少一行，$readmemh 也会补 0）
-    def fit(a, n, name):
-        if len(a) > n:
-            raise SystemExit(f"{name}: 行数 {len(a)} 超过上限 {n}")
-        return a + [0] * (n - len(a))
-
-    ab = fit(ab, SU_AB_DEPTH, "suona_ab")
-    bc = fit(bc, SU_AB_DEPTH, "suona_bc")
-    pi = fit(pi, SU_AB_DEPTH, "suona_pi")
-    ee = fit(ee, SU_ENV_DEPTH, "suona_env_e")
-    eo = fit(eo, SU_ENV_DEPTH, "suona_env_o")
-    pe = fit(pe, SU_PSI_DEPTH, "suona_psi_e")
-    po = fit(po, SU_PSI_DEPTH, "suona_psi_o")
-    ph = fit(ph, SU_PHI_DEPTH, "suona_phi")
-    info = fit(info, SU_INFO_DEPTH, "suona_info")
-
-    return dict(ab=ab, bc=bc, pi=pi, ee=ee, eo=eo,
-                pe=pe, po=po, ph=ph, info=info)
+def load_harm(prefix):
+    """读音符类乐器的 9 个表。prefix ∈ {'suona','dizi'}。"""
+    def R(fn):
+        return read_hex(os.path.join(ROOT, f"{prefix}_{fn}.hex"))
+    return dict(ab=R("ab"), bc=R("bc"), pi=R("pi"),
+                ee=R("env_e"), eo=R("env_o"),
+                pe=R("psi_e"), po=R("psi_o"),
+                ph=R("phi"), info=R("info"))
 
 
-def suona_note_meta(su):
+def suona_note_meta(su, dep):
     """从 info 表解析每音元数据，并算出每段长度（用下一音 base 之差）。"""
     info = su["info"]
     n = len(info) // 4
@@ -225,11 +207,16 @@ def suona_note_meta(su):
             psi_len = (info[4 * (i + 1) + 3] & 0xFFFF) - psi_base
             phi_len = (info[4 * (i + 1) + 0] & 0x7FFF) - phi_base
         else:
-            ab_len  = SU_AB_DEPTH  - ab_base
-            env_len = SU_ENV_DEPTH - env_base
-            psi_len = SU_PSI_DEPTH - psi_base
-            phi_len = SU_PHI_DEPTH - phi_base
-        meta.append(dict(note=SUONA_NOTE_LO + i, K=K,
+            ab_len  = dep["ab"]  - ab_base
+            env_len = dep["env"] - env_base
+            psi_len = dep["psi"] - psi_base
+            phi_len = dep["phi"] - phi_base
+        # ★ 每音至少要能装下引擎会读的部分（RTL 照样长 K 行）
+        if ab_len < K:
+            raise SystemExit(f"note {i}: ab_len {ab_len} < K {K}")
+        if env_len < K * 76:
+            raise SystemExit(f"note {i}: env_len {env_len} < K*76 {K * 76}")
+        meta.append(dict(note=i, K=K,
                          ab_base=ab_base,  ab_len=ab_len,
                          env_base=env_base, env_len=env_len,
                          psi_base=psi_base, psi_len=psi_len,
@@ -240,8 +227,8 @@ def suona_note_meta(su):
 SU_SEGS = ["ab", "bc", "pi", "env_e", "env_o", "psi_e", "psi_o", "phi"]
 
 
-def pack_suona(su, base_word):
-    """把唢呐段打包成 32 字节对齐的字节流。
+def pack_suona(su, base_word, magic, note_lo, dep):
+    """把谐波类乐器（唢呐/笛子）的表打包成 32 字节对齐的字节流。
 
     ★★ 关键约束：每个音的每一段数据都必须 32 字节对齐。
        RTL 的 DDR 读口一次回来 256 位（32 字节），如果段起始不对齐，
@@ -253,7 +240,7 @@ def pack_suona(su, base_word):
       +64    n_inst 个描述符，每个 64 B
       +..    每音依次 8 段，段间 32 B 对齐
     """
-    meta = suona_note_meta(su)
+    meta = suona_note_meta(su, dep)
     n = len(meta)
     base_byte = base_word * 32
 
@@ -285,7 +272,7 @@ def pack_suona(su, base_word):
 
     # ── 段头 ───────────────────────────────────────────────────────
     struct.pack_into("<4sHHIIII", buf, 0,
-                     SUONA_MAGIC, n, SUONA_NOTE_LO,
+                     magic, n, note_lo,
                      hdr_bytes // 32,            # desc_off（word）
                      0, 0, 0)
     # word1：8 个表的基址（现在每音不同，这里只留第一个音的，RTL 不用）
@@ -355,12 +342,19 @@ def main():
 
     # ── 唢呐段：接在古筝表之后 ──────────────────────────────────────
     s_base = g_base + words_of(g_blob)
-    su = load_suona()
-    s_blob, s_meta = pack_suona(su, s_base)
+    su = load_harm("suona")
+    s_blob, s_meta = pack_suona(su, s_base, SUONA_MAGIC, SUONA_NOTE_LO,
+                                harm_depths(su))
 
-    total_words = s_base + words_of(s_blob)
+    # ── 笛子段：接在唢呐段之后 ──────────────────────────────────────
+    d_base = s_base + words_of(s_blob)
+    dz = load_harm("dizi")
+    d_blob, d_meta = pack_suona(dz, d_base, DIZI_MAGIC, DIZI_NOTE_LO,
+                                harm_depths(dz))
 
-    body = p_blob + g_blob + s_blob
+    total_words = d_base + words_of(d_blob)
+
+    body = p_blob + g_blob + s_blob + d_blob
 
     # 校验和：body 按 32 位小端累加
     chk = 0
@@ -392,10 +386,16 @@ def main():
     print(f"guzheng {g_n} 音  base_word={g_base:6d}  {words_of(g_blob):6d} word")
     print(f"suona   {len(s_meta)} 音  base_word={s_base:6d}  {words_of(s_blob):6d} word"
           f"  ({len(s_blob)/1024:.1f} KiB)")
-    print(f"        RTL 常量 SUONA_BASE 应填 {s_base}")
-    big = max(s_meta, key=lambda m: (m["ab_len"] * 10 + m["env_len"] + m["psi_len"] * 2 + m["phi_len"] * 4))
-    bb = big["ab_len"] * 10 + big["env_len"] * 2 + big["psi_len"] * 2 * 2 + big["phi_len"] * 4
-    print(f"        最大单音表 {bb/1024:.1f} KiB (note {big['note']}, K={big['K']})")
+    print(f"dizi    {len(d_meta)} 音  base_word={d_base:6d}  {words_of(d_blob):6d} word"
+          f"  ({len(d_blob)/1024:.1f} KiB)")
+    print(f"        RTL 常量 SUONA_BASE 应填 {s_base} / DIZI_BASE 应填 {d_base}")
+    for tag, meta in (("suona", s_meta), ("dizi", d_meta)):
+        nb = max(meta, key=lambda m: m["ab_len"] * 10 + m["env_len"]
+                 + m["psi_len"] * 2 + m["phi_len"] * 4)
+        bb = (nb["ab_len"] * 10 + nb["env_len"] * 2
+              + nb["psi_len"] * 2 * 2 + nb["phi_len"] * 4)
+        print(f"        {tag} 最大单音表 {bb/1024:.1f} KiB "
+              f"(第 {nb['note']} 个, K={nb['K']})")
     print(f"total   {total_words} word = {len(img)} B = {len(img)/1024:.1f} KiB")
     print(f"checksum 0x{chk:08X}")
     print(f"输出 {out_path}")

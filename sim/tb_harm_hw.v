@@ -72,15 +72,23 @@ module tb_harm_hw;
         v_vel  = {4{8'd200}};
     end
 
+    // ★ 音域 / info 基址 / 描述符基址现在是运行时端口（唢呐与笛子共用引擎）
+    //   唢呐：note_lo 69, note_hi 96, inf_base 0,   BASE_word 8769
+    //   笛子：note_lo 67, note_hi 91, inf_base 112, BASE_word 22176
+    //   desc_base = ((BASE_word + 2) << 3) − note_lo*16
+    localparam integer T_NOTE_LO = 69;
+    localparam integer T_NOTE_HI = 96;
+    localparam integer T_INF_BASE = 0;
+    localparam integer T_DESC_BASE = ((8769 + 2) << 3) - (69 * 16);
+
     add_engine_harm #(
         .NVOICE    (4),
-        .NOTE_LO   (69),
-        .NOTE_HI   (96),
-        .TIMBRE    (3),
         .MIX_SHIFT (2),
         .SOFT      (1)
     ) dut (
         .clk(clk), .rst_n(rst_n),
+        .note_lo(T_NOTE_LO[6:0]), .note_hi(T_NOTE_HI[6:0]),
+        .inf_base(T_INF_BASE[7:0]), .desc_base(T_DESC_BASE[28:0]),
         .v_note(v_note), .v_trig(v_trig), .v_gate(4'hF), .v_vel(v_vel),
         .sample_tick(1'b0),
         .sample_l(sample_l), .sample_r(sample_r),

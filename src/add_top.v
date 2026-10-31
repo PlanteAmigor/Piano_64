@@ -205,19 +205,23 @@ module add_top #(
     //======================================================================
     //  音色：0 = 钢琴（白灯）  1 = 古筝（青灯）
     //======================================================================
-    //  0 = 钢琴（白灯）  1 = 古筝（青灯）  2 = 唢呐（橙灯）
+    //  0 = 钢琴（白灯）  1 = 古筝（青灯）  2 = 唄呐（橙灯）  3 = 笛子（紫灯）
     reg [1:0] timbre_r;
 
     always @(posedge clk_sys) begin
         if (!engine_rst_n)          timbre_r <= 2'd0;
-        else if (timbre_toggle)     timbre_r <= (timbre_r == 2'd2) ? 2'd0 : timbre_r + 2'd1;
+        else if (timbre_toggle)     timbre_r <= (timbre_r == 2'd3) ? 2'd0 : timbre_r + 2'd1;
     end
 
-    // ★ 当前音色是否古筝（与 add_engine8 的 .timbre(timbre_r[0]) 同一判据）
-    //   按键映射、移调范围都按它选
-    wire is_gz = timbre_r[0];
-    // ★ 唢呐（第 3 档）。必须定义在所有使用者之前。
+    // ★ 古筝判定必须写【== 1】，不能再用 timbre_r[0]
+    //   ！3（笛子）的 bit0 也是 1，用 timbre_r[0] 会把笛子当成古筝
+    //   （按键映射、移调范围、modal 引擎选择全错）。
+    wire is_gz = (timbre_r == 2'd1);
+    // ★ 唄呐 / 笛子共用谐波引擎，只是表和音域不同
     wire is_suona = (timbre_r == 2'd2);
+    wire is_dizi  = (timbre_r == 2'd3);
+    // ★ 谐波类乐器（唄呐或笛子）：共用同一个 add_engine_harm 实例
+    wire is_harm  = is_suona | is_dizi;
 
     //======================================================================
     //  ★ 移调（第 9 键 = 纯功能键，单手一个键完成）
@@ -236,9 +240,10 @@ module add_top #(
     //   钢琴：60..72 (C4..C5)，表 21..108 → -36 .. +36（7 档）
     //   古筝：62..74 (D4..D5)，表 38..86  → -24 .. +12（4 档）
     //   唢呐：8 键 69..81，表 69..96 → 0 .. +12（只有 2 档）
-    wire signed [7:0] tr_min = is_suona ?  8'sd0  :
+    //   笛子：8 键 67..79，表 67..91 → 0 .. +12（同上）
+    wire signed [7:0] tr_min = is_harm  ?  8'sd0  :
                                is_gz    ? -8'sd24 : -8'sd36;
-    wire signed [7:0] tr_max = is_suona ?  8'sd12 :
+    wire signed [7:0] tr_max = is_harm  ?  8'sd12 :
                                is_gz    ?  8'sd12 :  8'sd36;
 
     reg signed [7:0] transpose;
@@ -409,8 +414,12 @@ module add_top #(
     //======================================================================
     //   唢呐：A4(69) 起，七声，8 键全开，移调 0 / +12
     //         （音域只有 28 半音，五声会一档移调都做不了）
+    //   笛子：G4(67) 起，G 大调七声（G A B C D E F# G），8 键全开，移调 0 / +12
+    //         音阶步长与钢琴/唄呐完全相同 {0,2,4,5,7,9,11,12}，
+    //         只是 note_base 换成 67，所以下面 t_key_step 不用改
     wire [6:0]  t_note_base = is_suona ? 7'd69 :
-                              is_gz    ? 7'd62 : 7'd60;   // 唢呐 A4 / 古筝 D4 / 钢琴 C4
+                              is_dizi  ? 7'd67 :
+                              is_gz    ? 7'd62 : 7'd60;   // 唄呐 A4 / 笛子 G4 / 古筝 D4 / 钢琴 C4
 
     // ★ 4'hF = 无效步长哨兵（该键在本乐器音阶里不存在）
     wire [31:0] t_key_step  = is_gz
@@ -418,7 +427,7 @@ module add_top #(
         : {4'd12, 4'd11, 4'd9, 4'd7, 4'd5, 4'd4, 4'd2, 4'd0}; // 钢琴/唢呐 七声
 
     // 键 4、键 7 在古筝下不发声（bit3 = 键4，bit6 = 键7）
-    wire [7:0]  t_key_en  = is_gz ? 8'b1011_0111 : 8'b1111_1111;  // 唢呐 8 键全开
+    wire [7:0]  t_key_en  = is_gz ? 8'b1011_0111 : 8'b1111_1111;  // 唄呐/笛子 8 键全开
 
     note_alloc #(
         .NKEY     (8),
@@ -505,7 +514,7 @@ module add_top #(
     ) u_piano (
         .clk        (clk_sys),
         .rst_n      (engine_rst_n),
-        .timbre     (timbre_r[0]),       // ★ modal 引擎：0=钢琴 1=古筝（唢呐时无效）
+        .timbre     (is_gz),             // ★ modal 引擎：1=古筝 0=钢琴（唄呐/笛子时无效）
         .v_note     (eng_note),
         .v_trig     (eng_trig),
         .v_gate     (eng_gate),
@@ -527,20 +536,44 @@ module add_top #(
     );
 
     //======================================================================
-    //  唢呐引擎（单声部谐波合成，表按音从 DDR 预取）
+    //  谐波引擎（唢呐 / 笛子共用，单声部）
     //    · 单声部：任意声部触发都映射到它的 0 号声部，音高用同拍组合 mux
-    //    · 表在 DDR，note-on 时 suona_dma 搬 21 KB 到 BSRAM（约 200 us）
+    //    · 表在 DDR，note-on 时 suona_dma 搬十几 KB 到 BSRAM（约 200 us）
+    //    · ★ 两个乐器【共用一个实例】：只改 4 个输入
+    //        note_lo / note_hi  ：音域（唢呐 69..96 / 笛子 67..91）
+    //        inf_base           ：info 表字偏移（0 / 112）
+    //        desc_base          ：描述符 app 地址基址（已扣掉 note_lo*16）
+    //      省下约 50 块 BSRAM，也省一条 DDR 仲裁。
     //======================================================================
+    //  镜像里的段基址（由 tools/make_ddr_image.py 打印）
+    localparam integer SUONA_BASE_W = 8769;
+    localparam integer DIZI_BASE_W  = 22176;
+    localparam integer DESC_OFF_W   = 2;
+
+    // desc_base = ((BASE+DESC_OFF) << 3) - note_lo*16
+    //   <<3       ：word = 32 字节 = 8 个 4 字节单位（app_addr 的单位）
+    //   note_lo*16：把绝对音号归一到段内序号（每音描述符 64 B = 16 个 app 单位）
+    localparam [28:0] SUONA_DESC = ((SUONA_BASE_W + DESC_OFF_W) << 3) - (69 * 16);
+    localparam [28:0] DIZI_DESC  = ((DIZI_BASE_W  + DESC_OFF_W) << 3) - (67 * 16);
+
+    localparam [7:0]  SUONA_INF  = 8'd0;     // info 0..111
+    localparam [7:0]  DIZI_INF   = 8'd112;   // info 112..211
+
+    wire [6:0]  harm_note_lo  = is_dizi ? 7'd67 : 7'd69;
+    wire [6:0]  harm_note_hi  = is_dizi ? 7'd91 : 7'd96;
+    wire [7:0]  harm_inf_base = is_dizi ? DIZI_INF : SUONA_INF;
+    wire [28:0] harm_desc     = is_dizi ? DIZI_DESC : SUONA_DESC;
+
     wire signed [15:0] sua_l, sua_r;
     wire [3:0]         sua_v_idle;
     wire [2:0]         sua_app_cmd;
     wire               sua_app_en;
     wire [28:0]        sua_app_addr;
 
-    // ★★ 关键：只有唢呐音色下才允许触发取表 DMA！
-    //   之前写成 |v_trig，导致钢琴模式下按一次键，唢呐引擎也会去抢 DDR，
+    // ★★ 关键：只有谐波类音色下才允许触发取表 DMA！
+    //   之前写成 |v_trig，导致钢琴模式下按一次键，唄呐引擎也会去抢 DDR，
     //   钢琴的取表被挤掉 → 切回钢琴也没声音（实测整机哑掉）。
-    wire sua_trig = is_suona && |v_trig;
+    wire sua_trig = is_harm && |v_trig;
 
     // ★★ gate / 力度【不能】走 note_alloc 的声部！
     //    note_alloc 是 8 声部轮转分配，同一个键每次可能落在不同声部；
@@ -550,7 +583,7 @@ module add_top #(
     //    钢琴/古筝不受影响：它们每个声部有自己的 v_gate[g]/v_vel[g]，
     //    声部与按键是一一对应的，所以那边一直正常。
     //    唢呐改成直接看【8 个音源键】，与声部分配彻底解耦。
-    wire sua_gate = is_suona && (|note_key_state);
+    wire sua_gate = is_harm && (|note_key_state);
 
     // 按下沿 → 按【键号】锁存力度（不是声部号）
     //   直接复用 note_key_press（= kd_state[7:0] & ~kd_state_d）
@@ -565,7 +598,7 @@ module add_top #(
     reg  [6:0] sua_note;
     integer si;
     always @(*) begin
-        sua_note = 7'd69;
+        sua_note = harm_note_lo;
         for (si = 0; si < NVOICE; si = si + 1)
             if (v_trig[si]) sua_note = eng_note[si*7 +: 7];
     end
@@ -576,14 +609,16 @@ module add_top #(
     //   表缓冲是【共享的一份】，所以多留 3 个空声部不额外占 BSRAM。
     add_engine_harm #(
         .NVOICE    (4),
-        .NOTE_LO   (69),        // 唢呐表 A4..C7
-        .NOTE_HI   (96),
-        .TIMBRE    (3),
-        .MIX_SHIFT (2),      // 唢呐满刻度远高于钢琴，先 ÷4
+        .MIX_SHIFT (2),      // 谐波引擎满刻度远高于钢琴，先 ÷4
         .SOFT      (1)
     ) u_harm (
         .clk        (clk_sys),
         .rst_n      (engine_rst_n),
+        // ★ 双乐器：音域 / info 段 / 描述符段全部运行时可切
+        .note_lo    (harm_note_lo),
+        .note_hi    (harm_note_hi),
+        .inf_base   (harm_inf_base),
+        .desc_base  (harm_desc),
         .v_note     ({21'd0, sua_note}),
         .v_trig     ({3'b000, sua_trig}),
         .v_gate     ({3'b000, sua_gate}),
@@ -609,8 +644,8 @@ module add_top #(
     //   音频流每样点一次，加一拍延迟完全无影响。
     reg signed [15:0] mix_l_r, mix_r_r;
     always @(posedge clk_sys) begin
-        mix_l_r <= is_suona ? sua_l : eng_l;
-        mix_r_r <= is_suona ? sua_r : eng_r;
+        mix_l_r <= is_harm ? sua_l : eng_l;
+        mix_r_r <= is_harm ? sua_r : eng_r;
     end
 
     //======================================================================
@@ -648,11 +683,12 @@ module add_top #(
         input [1:0]         tb;       // 0=钢琴 1=古筝 2=唢呐
         reg   signed [31:0] y, ax, d, yy;
         begin
-            // ★ 唢呐只 ×2：实测引擎输出满力度峰值约 10000，
+            // ★ 唄呐/笛子只 ×2：实测唄呐引擎输出满力度峰值约 10000，
             //   原来 ×8 送成 80000，软限幅把它压成方波（压缩比 2.5:1），
             //   听感是「嘟嘟」而且削顶后 RMS 更高、听着更响。
             //   ×2 → 20000，在膝点 24000 以下，直通零失真。
-            y = (tb == 2'd2) ? (x <<< 1) :      // 唢呐 ×2
+            //   笛子 max a 只有 4.48（唄呐 6.83），先同样 ×2，上板听完再调。
+            y = ((tb == 2'd2) || (tb == 2'd3)) ? (x <<< 1) :   // 唄呐/笛子 ×2
                 tb          ? (x <<< 4) :       // 古筝 ×16
                               (x <<< 3);        // 钢琴 ×8
             ax = (y < 0) ? -y : y;
@@ -935,8 +971,8 @@ module add_top #(
     //    写数据通道只有加载器使用，直接接过去（引擎只读）。
     //======================================================================
     // 三路互斥：加载期间给 loader；加载后按音色给钢琴(含古筝)或唢呐
-    wire ddr_arb_piano = ld_done && !is_suona;
-    wire ddr_arb_suona = ld_done &&  is_suona;
+    wire ddr_arb_piano = ld_done && !is_harm;
+    wire ddr_arb_suona = ld_done &&  is_harm;
 
     assign ddr_app_cmd      = ddr_arb_suona ? sua_app_cmd  :
                               ddr_arb_piano ? eng_app_cmd  : ld_app_cmd;

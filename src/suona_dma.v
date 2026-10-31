@@ -26,12 +26,16 @@
 `default_nettype none
 
 module suona_dma #(
-    parameter integer NOTE_LO    = 69,      // 镜像里唢呐最低音
-    parameter integer SUONA_BASE = 8769,    // 唢呐段起始 word
     parameter integer DESC_OFF   = 2        // 描述符表在段内的 word 偏移
 )(
     input  wire         clk,        // clk_x1（100 MHz，DDR 用户域）
     input  wire         rst_n,
+
+    // ★ 段基址改成【运行时端口】：唢呐与笛子是镜像里两个独立的小段，
+    //   各自有自己的段头+描述符表。上层按音色选一个传进来。
+    //   取值 = ((BASE_word + DESC_OFF) << 3) - (note_lo * 16)
+    //   （<<3：word=32 字节=8 个 4 字节单位；note_lo*16：把音号归一到段内序号）
+    input  wire [28:0]  desc_base,
 
     input  wire [6:0]   note,       // 要搬的音（MIDI）
     input  wire         start,      // ★ 电平翻转（toggle）：内部边沿检测后启动
@@ -156,11 +160,10 @@ module suona_dma #(
                     busy <= 1'b0;
                     if (start_p) begin
                         busy <= 1'b1;
-                        // 描述符字节偏移 = (SUONA_BASE+DESC_OFF)*32 + (note-NOTE_LO)*64
-                        // app_addr = 字节 >> 2
-                        cmd_addr <= ((SUONA_BASE + DESC_OFF) << 3)
-                                  + {{22{1'b0}}, note, 4'b0000}
-                                  - ((NOTE_LO * 16));
+                        // 描述符 app 地址 = desc_base + note*16
+                        //   （desc_base 已扣掉 note_lo*16，上层算好）
+                        cmd_addr <= desc_base
+                                  + {{18{1'b0}}, note, 4'b0000};
                         desc_cnt <= 2'd0;
                         st <= S_DESC;
                     end

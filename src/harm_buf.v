@@ -49,9 +49,8 @@ module harm_buf #(
     input  wire [9:0]            sn_a,
     output reg  [31:0]           sn_d,
 
-    input  wire [6:0]            inf_a,
+    input  wire [7:0]            inf_a,
     output reg  [31:0]           inf_d,
-
     // ── 写口（来自 suona_dma，clk_x1 域）──────────────────────────
     input  wire                  wclk,
     input  wire                  wrst_n,
@@ -94,12 +93,18 @@ module harm_buf #(
     // ── 3 个常驻表 ─────────────────────────────────────────────────
     reg [31:0] m_u   [0:16383];
     reg [31:0] m_sn  [0:1023];
-    reg [31:0] m_inf [0:111];
+    // ★ info 表扩容到 224 词：
+    //    0   .. 111  唢呐 28 音 × 4 词（原表刚好用满）
+    //    112 .. 211  笛子 25 音 × 4 词
+    //    212 .. 223  保留
+    //   引擎用 inf_base（0 / 112）选段，同一时刻只有一个乐器在响。
+    reg [31:0] m_inf [0:223];
 
     initial begin
         $readmemh("harm_u.hex",     m_u);
         $readmemh("add_sine.hex",   m_sn);
-        $readmemh("suona_info.hex", m_inf);
+        $readmemh("suona_info.hex", m_inf);            // 写到 0..111
+        $readmemh("dizi_info.hex",  m_inf, 112, 211);  // 写到 112..211
     end
 
     // ── 写（clk_x1 域）──────────────────────────────────────────────
@@ -126,7 +131,7 @@ module harm_buf #(
         ph_d  <= m_ph[ph_a[9:0]];
         u_d   <= m_u[u_a];
         sn_d  <= m_sn[sn_a];
-        inf_d <= m_inf[inf_a[6:0]];
+        inf_d <= m_inf[inf_a[7:0]];
     end
 
 endmodule

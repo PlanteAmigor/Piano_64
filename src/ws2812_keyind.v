@@ -144,12 +144,13 @@ module ws2812_keyind #(
                 endcase
             end
             else if (j == TIMBRE_LED_C) begin
-                // ── 音色灯（第 1 颗）：钢琴=白  古筝=青  唢呐=橙 ──
+                // ── 音色灯（第 1 颗）：钢琴=白  古筝=青  唢呐=橙  笛子=紫 ──
                 //    白 = G+R+B 全亮
                 //    青 = G+B（R 关）
                 case (tb)
                     2'd1:    led_grb = { 8'h7F, 8'd0,   8'h7F  };   // 古筝：青（G+B）
                     2'd2:    led_grb = { 8'h2A, 8'h7F,  8'd0    };   // 唢呐：橙（G+R）
+                    2'd3:    led_grb = { 8'd0,   8'h7F,  8'h7F  };   // 笛子：紫（R+B）
                     default: led_grb = { 8'h7F, 8'h7F,  8'h7F  };   // 钢琴：白
                 endcase
             end
