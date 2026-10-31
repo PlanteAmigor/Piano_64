@@ -10,19 +10,23 @@ make_ddr_image.py —— 生成 P64.BIN（DDR 上电镜像，由 SD 卡灌入 DD
 
 【DDR 布局（单位 = 256 bit = 32 字节 = 1 个 DDR 用户口地址）】
     word 0                    32 B  文件头
-    word PIANO_BASE ..        钢琴表  88 音 × 48 word
-    word GZ_BASE    ..        古筝表  49 音 × 48 word
+    word PIANO_BASE ..        钢琴表  88 音 × 64 word
+    word GZ_BASE    ..        古筝表  49 音 × 64 word
     （后面给唢呐谐波表预留）
 
-    每音 48 word 的排布是【平面 / planar】，不是交错：
-        bank0: 128 × 4 B = 512 B = 16 word   ← 分量 0 的 a_k（或 d0）
-        bank1: 128 × 4 B = 512 B = 16 word   ← 分量 0 的 d1
-        bank2: 128 × 4 B = 512 B = 16 word   ← 分量 0 的 d2
+    ★ 格式 v2（当前）：按分量交错，每 256 位字装 2 个完整分量，
+      每分量 16 字节 {d0, d1, d2, 0}。所以每音 = 128/2 = 64 字。
+      钢琴 1 .. 5632，古筝 5633 .. 8768，total_words = 8769。
 
-    ★ 为什么平面而不是 12 字节交错？
-      12 字节一行和 32 字节一拍的最小公倍数是 96 字节 = 3 拍 = 8 行。
-      交错布局做 DMA 需要跨拍拼字节、位宽不整除，极易出错。
-      平面布局每个 bank 正好 512 B = 16 拍整，零浪费、零拼接。
+    ⚠️ 历史教训（v1，已废弃）：v1 用「平面 / planar」布局，每音 48 字，
+      即 bank0 的 128 个 d0（16 字）、bank1 的 128 个 d1（16 字）、
+      bank2 的 128 个 d2（16 字）分三块放。
+      代价：RTL 取一个音的 128 个分量要跨 3 个不相邻区、按 16 字跳转，
+      极其繁琐易错。
+      ★ 如果 SD 卡上留着 v1 的 P64.BIN 而 RTL 按 v2 读，症状是：
+        钢琴音高音色全乱（读到别的音）、古筝完全没声（读到空白区）。
+        串口 HT 会显示 000019B1（6577）而不是 00002241（8769）。
+        看到这个数字就先怀疑 SD 卡文件是旧的。
 
 【文件头（32 字节，全部小端）】
     偏移  长度  内容
@@ -132,8 +136,8 @@ def main():
     piano, p_n = load_3bank("add_param", PIANO_NOTE_LO, PIANO_NOTE_HI, "piano")
     gz,    g_n = load_3bank("gz_param",  GZ_NOTE_LO,    GZ_NOTE_HI,    "guzheng")
 
-    p_blob = pack_instrument(piano, p_n)     # 88*48 = 4224 word = 135168 B
-    g_blob = pack_instrument(gz, g_n)        # 49*48 = 2352 word =  75264 B
+    p_blob = pack_instrument(piano, p_n)     # 88*64 = 5632 word = 180224 B
+    g_blob = pack_instrument(gz, g_n)        # 49*64 = 3136 word = 100352 B
 
     p_base = 1
     g_base = p_base + words_of(p_blob)
