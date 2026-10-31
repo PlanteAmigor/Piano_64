@@ -68,17 +68,17 @@ module harm_rom_dizi #(
     reg [31:0] m_inf [0:INFO_DEPTH-1];
 
     initial begin
-        $readmemh("dizi_ab.hex",   m_ab);
-        $readmemh("dizi_bc.hex",   m_bc);
-        $readmemh("dizi_pi.hex",   m_pi);
-        $readmemh("dizi_psi_e.hex", m_pe);
-        $readmemh("dizi_psi_o.hex", m_po);
-        $readmemh("dizi_env_e.hex", m_ee);
-        $readmemh("dizi_env_o.hex", m_eo);
-        $readmemh("dizi_phi.hex",  m_ph);
+        $readmemh("suona_ab.hex",   m_ab);
+        $readmemh("suona_bc.hex",   m_bc);
+        $readmemh("suona_pi.hex",   m_pi);
+        $readmemh("suona_psi_e.hex", m_pe);
+        $readmemh("suona_psi_o.hex", m_po);
+        $readmemh("suona_env_e.hex", m_ee);
+        $readmemh("suona_env_o.hex", m_eo);
+        $readmemh("suona_phi.hex",  m_ph);
         $readmemh("harm_u.hex",    m_u);
         $readmemh("add_sine.hex",  m_sn);
-        $readmemh("dizi_info.hex", m_inf);
+        $readmemh("suona_info.hex", m_inf);
     end
 
     always @(posedge clk) begin

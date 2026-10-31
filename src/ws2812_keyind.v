@@ -41,7 +41,7 @@ module ws2812_keyind #(
     input  wire [2:0]      mode,           // 1/2/3/4（3 位，4 才装得下）
     input  wire [2:0]      guide_key,      // 当前该按的键
     input  wire [2:0]      guide_key2,     // 下下个音（半亮预告）
-    input  wire            timbre,         // 0 = 钢琴, 1 = 古筝
+    input  wire [1:0]      timbre,         // 0=钢琴 1=古筝 2=唢呐
     input  wire signed [2:0] oct,          // 八度位置 -2..+2
     output wire            dout
 );
@@ -124,7 +124,7 @@ module ws2812_keyind #(
         input [4:0] g1;        // 当前音的灯
         input [4:0] g2;        // 下下个音的灯
         input [2:0] md;
-        input       tb;        // 音色
+        input [1:0] tb;        // 音色
         input signed [2:0] oc; // 八度
         input       DG;        // 诊断模式
         reg   [5:0] rel;
@@ -144,13 +144,14 @@ module ws2812_keyind #(
                 endcase
             end
             else if (j == TIMBRE_LED_C) begin
-                // ── 音色灯（第 1 颗）：钢琴=白  古筝=青 ──
+                // ── 音色灯（第 1 颗）：钢琴=白  古筝=青  唢呐=橙 ──
                 //    白 = G+R+B 全亮
                 //    青 = G+B（R 关）
-                if (tb)
-                    led_grb = { 8'h7F, 8'd0,   8'h7F  };        // 古筝：青
-                else
-                    led_grb = { 8'h7F, 8'h7F,  8'h7F  };        // 钢琴：白
+                case (tb)
+                    2'd1:    led_grb = { 8'h7F, 8'd0,   8'h7F  };   // 古筝：青（G+B）
+                    2'd2:    led_grb = { 8'h2A, 8'h7F,  8'd0    };   // 唢呐：橙（G+R）
+                    default: led_grb = { 8'h7F, 8'h7F,  8'h7F  };   // 钢琴：白
+                endcase
             end
             // ★ 本工程没有八度功能 → 原八度指示条（第 12~16 颗）整段删掉，
             //   这些索引会落进下面的 else 分支，因为 rel 为负而保持不亮。

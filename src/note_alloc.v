@@ -30,18 +30,50 @@ module note_alloc #(
     input  wire                     clk,
     input  wire                     rst_n,
     input  wire [NKEY-1:0]          key_state,      // 1 = 按下
+    input  wire [NKEY*8-1:0]        key_vel,        // ★ 每键力度增益 2..254
     input  wire [NVOICE-1:0]        v_idle,         // 来自 add_voice
 
     output reg  [NVOICE*7-1:0]      v_note,         // 每个声部的 MIDI 音号
     output reg  [NVOICE-1:0]        v_trig,         // note-on 脉冲
-    output reg  [NVOICE-1:0]        v_gate          // 1 = 按住
+    output reg  [NVOICE-1:0]        v_gate,         // 1 = 按住
+    output reg  [NVOICE*8-1:0]      v_vel           // ★ 每声部力度增益
 );
 
     localparam integer  IW       = $clog2(NKEY);
+    // ★ 声部索引位宽：原来是写死的 [1:0]，只能覆盖 4 个声部。
+    //   NVOICE=8 时 rr 只能取 0~3 → 声部 4~7 永远轮不到（轮询指针卡住）。
+    localparam integer  VW       = (NVOICE <= 1) ? 1 : $clog2(NVOICE);
     localparam [IW-1:0] KEY_FREE = {IW{1'b1}};
-    localparam [1:0]    RR_MAX   = NVOICE - 1;
+    localparam [VW-1:0] RR_MAX   = NVOICE - 1;
 
     reg [IW-1:0]     v_key [0:NVOICE-1];
+    // ★★ 余音保护期（治"快速拨一下爆音"）────────────────────────
+    //  症状：猛快速拨一下按键就爆音（旧代码也有，不是 8 声部引入的）。
+    //  机理：松键后声部【立刻】被标成 FREE，但 R_REL 要 0.3 s 才把 e1
+    //        衰到 0。这时再按任意键 → is_free 优先级最高 → 抢到这个声部
+    //        → 装载新音 → 正在响的余音被【一刀切断】→ 爆音。
+    //  对策：松键后启动 0.34 s 计时，期间该声部【不可被抢占】。
+    //        8 个声部足够，快速拨几下不会耗尽。
+    //  ★★ 位宽陷阱（2026-10-30 踩过）：0.34 s @50MHz = 17,000,000 拍，
+    //     需要 **25 位**（2^24 = 16,777,216 不够！）。写成 [23:0] 会被截断
+    //     成 222,784 拍 = 4.5 ms，保护期等于没生效 → 猛击照样抢占 → 爆音。
+    localparam [24:0] REL_TICKS = 25'd17_000_000;   // 0.34 s @50MHz
+    reg [24:0]       rel_t [0:NVOICE-1];
+    reg [NVOICE-1:0] rel_hold;
+
+    // ★★ 同一键的最小重触发间隔（治"猛击时急速抖动多次触发"）──
+    //  现象：像猛击钢琴键那样快速大力敲一下，就会爆音。
+    //  机理：机械冲击的抖动可能让同一个键在极短时间内被多次 note-on，
+    //        每一次都从满幅重新起音、和前一次的余音叠加 → 听感是"爆"。
+    //  对策：每个键一个 40 ms 锁定窗，窗内同一键的再次触发直接忽略。
+    //        40 ms = 25 次/秒，比钢琴最快的重复击键（约 15 次/秒）还快，
+    //        不影响正常演奏。
+    //  ★ 位宽：40 ms @50MHz = 2,000,000 拍，需要 22 位（2^21=2,097,152 不够
+    //    会溢出到 3 倍以上，2^22=4,194,304 才够）—— 这里已经算过了。
+    // ★ 位宽：120 ms @50MHz = 6,000,000 拍，需要 **23 位**
+    //   （2^22 = 4,194,304 不够！原来 40 ms 用 22 位就够了，改大后必须加宽）
+    localparam [22:0] RELOCK = 23'd6_000_000;       // 120 ms @50MHz
+    reg [22:0] key_lock [0:NKEY-1];
     // ★★ handled 是【每个按键】一位，所以必须是 NKEY 位，不是 NVOICE 位！
     //    写成 [NVOICE-1:0] 的话，`handled[scan]` 在 scan ≥ NVOICE 时就越界了：
     //    读出来是 x、写进去被丢掉 → 【KEY[4..7] 永远分配不到声部】。
@@ -49,9 +81,9 @@ module note_alloc #(
     //    这个 bug 躲过了之前的测试，因为那些测试只用了 KEY[0..2]。
     reg [NKEY-1:0]   handled;
     reg [IW-1:0]     scan;
-    reg [1:0]        rr;
+    reg [VW-1:0]     rr;
 
-    integer v;
+    integer v, k;
 
     function [NVOICE-1:0] pick;                 // 取最低的置位位（独热）
         input [NVOICE-1:0] x;
@@ -72,9 +104,16 @@ module note_alloc #(
     endgenerate
     wire [NVOICE-1:0] rr_hot  = ({{(NVOICE-1){1'b0}}, 1'b1} << rr);
 
-    wire [NVOICE-1:0] cand     = (|is_free)   ? is_free   :
-                                 (|(~v_idle)) ? (~v_idle) :
-                                                 rr_hot;
+    // ★ 保护期内的声部不参与分配
+    wire [NVOICE-1:0] free_ok = is_free & ~rel_hold;
+    wire [NVOICE-1:0] idle_ok = v_idle  & ~rel_hold;
+
+    // ★★ 全忙时【丢音，绝不抢占】—— 宁可少响一个音，也绝不出爆音
+    //    抢占比丢音难听得多：正在响的余音会被一刀切断（阶跃）→ 爆音。
+    //    有 8 个声部 + 0.34 s 保护期，正常演奏根本碰不到这个分支。
+    wire [NVOICE-1:0] cand     = (|free_ok)   ? free_ok   :
+                                 (|idle_ok)   ? idle_ok   :
+                                                {NVOICE{1'b0}};
     wire [NVOICE-1:0] vsel_oh  = pick(cand);
 
     wire [3:0] step     = KEY_STEP[ (scan*4) +: 4 ];
@@ -84,35 +123,67 @@ module note_alloc #(
         if (!rst_n) begin
             handled <= {NKEY{1'b0}};
             scan    <= {IW{1'b0}};
-            rr      <= 2'd0;
+            rr      <= {VW{1'b0}};
             v_trig  <= {NVOICE{1'b0}};
             v_gate  <= {NVOICE{1'b0}};
             v_note  <= {NVOICE{7'd60}};
-            for (v = 0; v < NVOICE; v = v + 1) v_key[v] <= KEY_FREE;
+            v_vel   <= {NVOICE{8'd128}};
+            rel_hold <= {NVOICE{1'b0}};
+            for (v = 0; v < NVOICE; v = v + 1) begin
+                v_key[v] <= KEY_FREE;
+                rel_t[v] <= 25'd0;
+            end
+            for (k = 0; k < NKEY; k = k + 1) key_lock[k] <= 23'd0;
         end
         else begin
             v_trig <= {NVOICE{1'b0}};
 
-            // ── 松键：gate 拉低，声部标记为空闲（余音继续自然衰减）──
+            // ── 力度跟随：把当前按住的那个键的力度同步给声部 ───────
+            //    ★ 注意时序：分配发生在 ARMED（前触点一闭合、0 延迟），
+            //      而真正力度要等后触点确认（几 ms 后）才出来。
+            //      所以这里必须【持续跟随】，不能只在分配那一拍拷贝。
+            //      add_voice8 的 ramp 会向 vel_gain 收敛，力度一出来就生效。
+            for (v = 0; v < NVOICE; v = v + 1)
+                if (v_key[v] != KEY_FREE)
+                    v_vel[v*8 +: 8] <= key_vel[ v_key[v]*8 +: 8 ];
+
+            // ── 每键锁定窗倒计时 ────────────────────────────────────
+            for (k = 0; k < NKEY; k = k + 1)
+                if (key_lock[k] != 23'd0) key_lock[k] <= key_lock[k] - 23'd1;
+
+            // ── 松键：gate 拉低 + 启动余音保护期 ───────────────────
             for (v = 0; v < NVOICE; v = v + 1) begin
                 if ((v_key[v] != KEY_FREE) && !key_state[ v_key[v] ]) begin
-                    v_gate[v] <= 1'b0;
-                    v_key[v]  <= KEY_FREE;
+                    v_gate[v]   <= 1'b0;
+                    v_key[v]    <= KEY_FREE;
+                    rel_hold[v] <= 1'b1;          // ★ 余音未散，暂不可抢
+                    rel_t[v]    <= REL_TICKS;
+                end
+                else if (rel_hold[v]) begin
+                    if (rel_t[v] <= 25'd1) begin
+                        rel_hold[v] <= 1'b0;      // 保护期结束，可以分配了
+                        rel_t[v]    <= 25'd0;
+                    end
+                    else
+                        rel_t[v] <= rel_t[v] - 25'd1;
                 end
             end
 
             // ── 轮询按键：每个时钟看一个键 ─────────────────────────
-            if (key_state[scan] && !handled[scan]) begin
-                handled[scan] <= 1'b1;
+            if (key_state[scan] && !handled[scan] &&
+                (key_lock[scan] == 23'd0) && (|cand)) begin
+                handled[scan]  <= 1'b1;
+                key_lock[scan] <= RELOCK;       // ★ 40 ms 内同一键不再触发
                 for (v = 0; v < NVOICE; v = v + 1) begin
                     if (vsel_oh[v]) begin
                         v_note[v*7 +: 7] <= new_note;
                         v_key[v]         <= scan;
                         v_trig[v]        <= 1'b1;
                         v_gate[v]        <= 1'b1;
+                        v_vel[v*8 +: 8]  <= key_vel[scan*8 +: 8];
                     end
                 end
-                rr <= (rr == RR_MAX) ? 2'd0 : rr + 2'd1;
+                rr <= (rr == RR_MAX) ? {VW{1'b0}} : rr + 1'b1;
             end
             if (!key_state[scan]) handled[scan] <= 1'b0;
 

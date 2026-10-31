@@ -68,12 +68,45 @@ module key_scan #(
                     key_state[g] <= 1'b0;
                 end
                 else if (IMMEDIATE) begin
-                    // ── 立即触发 + 消隐（低延迟，推荐）────────────────
-                    if (blank != {CW{1'b0}})
-                        blank <= blank - 1'b1;       // 消隐窗内：忽略一切边沿
-                    else if (raw != key_state[g]) begin
-                        key_state[g] <= raw;         // ★ 立刻生效（0 延迟）
-                        blank        <= DEBOUNCE[CW-1:0];
+                    // ── ★ 非对称消抖（低延迟 + 防抬起抖动）──────────────
+                    //    按下（raw 0→1）：【立即】生效，0 延迟（演奏手感）
+                    //    抬起（raw 1→0）：必须稳定 DEBOUNCE 拍才认
+                    //
+                    //    为什么抬起要延时：微动开关【抬起】时的触点抖动比按下
+                    //    更脏，实测会连出好几个 0/1 跳变。原来的做法是"边沿立即
+                    //    生效 + 之后 DEBOUNCE 拍消隐"，如果抖动跨过消隐窗末尾
+                    //    就会漏过去 → 多次 note-off/note-on → 爆音。
+                    //    抬起慢 20 ms 完全无感（余音本来就在衰减），但抖动
+                    //    被彻底挡掉。
+                    if (raw != key_state[g]) begin
+                        if (raw) begin
+                            // ── 抬起：稳定 DEBOUNCE 拍才认 ─────────────
+                            if (cnt >= DEBOUNCE[CW-1:0]) begin
+                                cnt          <= {CW{1'b0}};
+                                key_state[g] <= 1'b1;
+                            end
+                            else
+                                cnt <= cnt + 1'b1;
+                        end
+                        else begin
+                            // ── 按下：立即认，但【消隐窗内不重复触发】──
+                            //  ★★ 消隐窗是治"猛按爆音"的关键：
+                            //     猛按时机械冲击会抖出一长串跳变，如果每个
+                            //     下降沿都当真按下，key_state 就会反复 1/0，
+                            //     note_alloc 的 handled 被反复清零 → 同一个键
+                            //     被分配到好几个声部、每个都从满幅重新起音
+                            //     → 幅度叠加 → 爆音。
+                            cnt <= {CW{1'b0}};    // 抖动回落，清抬起计时
+                            if (blank == {CW{1'b0}}) begin
+                                key_state[g] <= 1'b0;
+                                blank        <= DEBOUNCE[CW-1:0];
+                            end
+                        end
+                    end
+                    else begin
+                        cnt <= {CW{1'b0}};        // 电平稳定，计数归零
+                        if (blank != {CW{1'b0}})
+                            blank <= blank - 1'b1;
                     end
                 end
                 else begin

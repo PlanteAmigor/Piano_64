@@ -52,19 +52,18 @@ module add_voice8 #(
     input  wire                trig,
     input  wire                gate,
 
-    // ── 共用参数 ROM 接口 ──────────────────────────────────────────
+    // ── 本声部的参数 cache 接口（每声部独占一份，读延迟 1 拍）──────
     input  wire [31:0]         rd0,          // bank0 = inc
     input  wire [31:0]         rd1,          // bank1 = R1
     input  wire [31:0]         rd2,          // bank2 = {a16, phi8}
-    output wire [ROM_AW-1:0]   rom_addr,
-    output wire                rom_req,
+    input  wire [6:0]          note_off,     // 保留（旧接口，现由 DMA 使用）
+    input  wire [7:0]          vel_gain,     // ★ 力度增益 2..254（来自双触点 Δt）
+    output wire [6:0]          rom_addr,     // ★ 改成“分量号 p”：cache 里就是本音的数据
 
     output reg  signed [15:0]  sample,       // 本声部在本样点的和（保持到下一个样点）
     output reg                 idle
 );
 
-    localparam [6:0] NLO = NOTE_LO[6:0];
-    localparam [6:0] NHI = NOTE_HI[6:0];
     localparam [6:0] P_LAST = NPART - 1;
     // 相位错开量 = 每分量拍数 / 声部数 = (1024/NPART)/NVOICE
     localparam integer PH_SHIFT = (1024 / NPART) / NVOICE;
@@ -84,9 +83,10 @@ module add_voice8 #(
     // ════════════════════════════════════════════════════════════════
     //  ROM 请求：s==0 时索要本分量的参数
     // ════════════════════════════════════════════════════════════════
-    wire [6:0] note_c = (note < NLO) ? NLO : (note > NHI) ? NHI : note;
-    assign rom_addr = { (note_c - NLO), p };
-    assign rom_req  = (s == 3'd0);
+    // ★★ 架构变更（2026-10-31）：每声部有自己的 cache，地址就是分量号 p。
+    //    不再需要 {note_off, p} 拼全局地址，也不再需要 rom_req 多路器
+    //    （各声部同相位同时读也不会抢口，PH_SHIFT 约束消失）。
+    assign rom_addr = p;
 
     // ════════════════════════════════════════════════════════════════
     //  正弦表（每声部一份）
@@ -161,7 +161,19 @@ module add_voice8 #(
     reg  signed [23:0] acc;
 
     reg        pending, loading, ready;
+    reg        fading;                     // ★ 1 = 正在为抢占做淡出
     reg [6:0]  load_cnt;
+
+    // ★★ note-on 淡入（attack ramp）───────────────────────────────
+    //  问题：装载时 st_w1 <= {a16, 16'd0} 是【硬跳变】——不管声部当时
+    //        e1 是多少，起音一律从满幅开始。快速连按时，新音从满幅起音
+    //        和前一次的余音叠加 → 幅度阶跃 → 爆音（实测"10 出 1"）。
+    //  对策：装载完成后的前 256 个样点，输出幅度乘 0..255/256 线性上升。
+    //        256 样点 @48828 Hz = 5.24 ms，听不到延迟，但能彻底消除阶跃。
+    //  参考：jt5232_eg.v（MSM5232，JOTEGO）也是靠"包络值连续不重置"
+    //        避免 click，只是它用 RC 指数，这里用更快的线性斜坡。
+    //  注意：淡入不影响触发延迟（note-on 到第一个到样点的延迟不变）
+    reg [7:0]  ramp;
 
     localparam [31:0] R_REL = 32'd293000;      // 松键：固定快释放（0.30 s）
     reg               gate_r;
@@ -192,6 +204,7 @@ module add_voice8 #(
             sample <= 16'sd0;
             pending <= 1'b0; loading <= 1'b0; load_cnt <= 7'd0;
             clr <= 1'b1; ready <= 1'b0; idle <= 1'b1;
+            ramp <= 8'd0; fading <= 1'b0;
         end
         else begin
             st_we <= 1'b0;
@@ -199,12 +212,24 @@ module add_voice8 #(
             if (clr && (cnt == 10'd1023)) clr <= 1'b0;
 
             // ── note-on：等样点边界再装载 ─────────────────────────
-            if (trig) pending <= 1'b1;
+            //    ★★ 高优先：如果本声部【正在响】（ready=1），不能直接装载。
+            //      直接装载会让 sample 从当前值跳到 0 → 阶跃 → 爆音。
+            //      所以先进入 fading，用 1.7 ms 淡到 0，再装载。
+            //      这就是"快速连弹/猛击不爆音"的关键 —— 任何情况下 sample 连续。
+            if (trig && !loading && !fading) pending <= 1'b1;
 
-            if (pending && (cnt == 10'd0)) begin
+            // 正在响的声部收到 note-on → 先淡出
+            if (pending && ready && !loading && !fading && (cnt == 10'd0))
+                fading <= 1'b1;
+
+            // 空闲声部收到 note-on → 直接装载
+            if (pending && !ready && !loading && !fading && (cnt == 10'd0)) begin
                 pending  <= 1'b0;
                 loading  <= 1'b1;
                 load_cnt <= 7'd0;
+            end
+            else if (pending && ready && !loading && !fading) begin
+                // 已在 fading，保持 pending，由输出级在淡出完成时接手
             end
             else if (loading && (s == 3'd7)) begin
                 if (load_cnt == P_LAST) begin
@@ -279,7 +304,34 @@ module add_voice8 #(
 
             if (cnt == 10'd1023) begin
                 // 最后一个分量的 pr 在本拍（s=7）刚好有效，直接并进输出
-                sample <= (loading || !ready) ? 16'sd0 : sat16(acc + pr_s);
+                if (loading || !ready) begin
+                    sample <= 16'sd0;
+                    ramp   <= 8'd0;                 // 装载中/未就绪：淡入重新开始
+                end
+                else if (fading) begin
+                    // ★ 抢占淡出：1.7 ms 降到 0，然后才开始装载
+                    sample <= sat16r(acc + pr_s, ramp);
+                    if (ramp <= 8'd3) begin
+                        ramp     <= 8'd0;
+                        fading   <= 1'b0;
+                        pending  <= 1'b0;
+                        loading  <= 1'b1;           // 接到装载流程
+                        load_cnt <= 7'd0;
+                    end
+                    else
+                        ramp <= ramp - 8'd3;
+                end
+                else begin
+                    // ★ 力度控制淡入终值：ramp 向 vel_gain 收敛
+                    //   淡入 +2（2.6 ms），超过目标则 -1 缓慢下降
+                    //   （ARMED 先用 128，后触点确认后更新为真实力度，
+                    //    轻按会在几 ms 内降到目标值，听感是轻微渐弱，不爆音）
+                    if (ramp < vel_gain)
+                        ramp <= ramp + 8'd2;
+                    else if (ramp > vel_gain)
+                        ramp <= ramp - 8'd1;
+                    sample <= sat16r(acc + pr_s, ramp);
+                end
                 acc    <= 24'sd0;
             end
             else if ((s == 3'd7) && !loading && ready)
@@ -294,6 +346,17 @@ module add_voice8 #(
             if      (x >  24'sd32767) sat16 =  16'sd32767;
             else if (x < -24'sd32768) sat16 = -16'sd32768;
             else                      sat16 = x[15:0];
+        end
+    endfunction
+
+    // 带淡入增益的饱和：先把 24 位和乘 0..255 再右移 8 位，再饱和到 16 位
+    function signed [15:0] sat16r; input signed [23:0] x; input [7:0] g;
+        reg signed [31:0] y;
+        begin
+            y = (x * $signed({1'b0, g})) >>> 8;
+            if      (y >  32'sd32767) sat16r =  16'sd32767;
+            else if (y < -32'sd32768) sat16r = -16'sd32768;
+            else                      sat16r =  y[15:0];
         end
     endfunction
 
