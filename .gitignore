@@ -40,3 +40,18 @@ sim/harm2/*_sim_out.txt
 sim/eng_v*.txt
 sim/harm72_out.txt
 out_*.txt
+
+# ── Python ──────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+
+# ── 手工备份 / 试验残留（不是源码，保留在磁盘上但不入版本库）─────
+src.bak_timbre/
+src/*.bak
+src/*.old
+src/*.suona_try
+*.orig
+*.rej
+
+# ── DDR 例程的编译产物（只保留 ip/ 源码与 constr/）──────────────
+ddr_bringup/impl/

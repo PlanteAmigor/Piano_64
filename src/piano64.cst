@@ -34,14 +34,105 @@ IO_PORT "RESET_n"  IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
 //        set_option -use_cpu_as_gpio  1
 //        set_option -use_sspi_as_gpio 1
 //
-IO_LOC  "AUD_LRCK" P16;
+IO_LOC  "AUD_LRCK" C13;
 IO_PORT "AUD_LRCK" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
 
-IO_LOC  "AUD_DIN"  R18;
+IO_LOC  "AUD_DIN"  A13;
 IO_PORT "AUD_DIN"  IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
 
-IO_LOC  "AUD_BCK"  V17;
+IO_LOC  "AUD_BCK"  B15;
 IO_PORT "AUD_BCK"  IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+
+//==========================================================================
+//  ★★★ 18 键力度键盘（J13，2026-10-30 定案）★★★
+//--------------------------------------------------------------------------
+//  键盘板 20 个按键 = 2 排 × 9 + 上方 2 个独立键
+//
+//  两排"一前一后"配对成 9 组：
+//        [前排] 先闭合 ──Δt──> [后排] 后闭合
+//        Δt 越小 = 力度越大（模拟真钢琴双触点测速）
+//
+//        组 0..7  → 8 个音键 → 8 声部（八路必定不同音）
+//        组 8     → 切换音高（该组 2 个键都是功能键）
+//        上方 2 键 → 备用功能键（模式/音色切换）
+//
+//  端口命名：
+//        KEY_R1 [0..8]   第 1 排（PCB 图上排）
+//        KEY_R2 [0..8]   第 2 排（PCB 图下排）
+//        KEY_AUX[0..1]   上方两个独立键
+//
+//  ★★ 哪一排是"先按下"的那一排，必须上电实测确认 ★★
+//      RTL 里用参数 FRONT_ROW 切换（0=R1 先，1=R2 先），
+//      不需要改这里。测法：慢慢按一个键，看哪一个先闭合。
+//
+//  ★ 每键必须独立球号，禁止矩阵扫描 —— 矩阵会丢失单键前后触点的
+//    微秒级时间差，力度就测不出来了
+//  ★ 全部 PULL_MODE=UP（默认悬空、按下接地），采样走高速路径
+//  ★ 已确认这 20 个球与 DDR3（Y1-Y9/AA1-AA8/AB1-AB8）无冲突
+//--------------------------------------------------------------------------
+//  配对表（从左到右）：
+//    组  第1排 位号/球号/J13脚      第2排 位号/球号/J13脚
+//     0   U24 D14  26              U30 F16  32
+//     1   U23 D15  25              U29 E17  31
+//     2   U22 A18  24              U28 F13  30
+//     3   U21 A19  23              U27 F14  29
+//     4   U20 D17  22              U26 E16  28
+//     5   U19 C17  21              U25 D16  27
+//     6   U33 C20  35              U36 E19  38
+//     7   U32 F15  34              U35 D19  37
+//     8   U31 F19  33  ← 切音高   U34 D20  36
+//==========================================================================
+
+//--------------------- 第 1 排 (9 个) -------------------------------------
+IO_LOC  "KEY_R1[0]" D14;   // U24  J13-26
+IO_PORT "KEY_R1[0]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R1[1]" D15;   // U23  J13-25
+IO_PORT "KEY_R1[1]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R1[2]" A18;   // U22  J13-24
+IO_PORT "KEY_R1[2]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R1[3]" A19;   // U21  J13-23
+IO_PORT "KEY_R1[3]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R1[4]" D17;   // U20  J13-22
+IO_PORT "KEY_R1[4]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R1[5]" C17;   // U19  J13-21
+IO_PORT "KEY_R1[5]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R1[6]" C20;   // U33  J13-35
+IO_PORT "KEY_R1[6]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R1[7]" F15;   // U32  J13-34
+IO_PORT "KEY_R1[7]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R1[8]" F19;   // U31  J13-33   切音高
+IO_PORT "KEY_R1[8]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+
+//--------------------- 第 2 排 (9 个) -------------------------------------
+IO_LOC  "KEY_R2[0]" F16;   // U30  J13-32
+IO_PORT "KEY_R2[0]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R2[1]" E17;   // U29  J13-31
+IO_PORT "KEY_R2[1]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R2[2]" F13;   // U28  J13-30   ★ 路径经 R68 (0Ω)
+IO_PORT "KEY_R2[2]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R2[3]" F14;   // U27  J13-29   ★ 路径经 R70 (0Ω)
+IO_PORT "KEY_R2[3]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R2[4]" E16;   // U26  J13-28
+IO_PORT "KEY_R2[4]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R2[5]" D16;   // U25  J13-27
+IO_PORT "KEY_R2[5]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R2[6]" E19;   // U36  J13-38
+IO_PORT "KEY_R2[6]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R2[7]" D19;   // U35  J13-37
+IO_PORT "KEY_R2[7]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_R2[8]" D20;   // U34  J13-36   切音高
+IO_PORT "KEY_R2[8]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+
+//--------------------- 上方两个独立键 -------------------------------------
+IO_LOC  "KEY_AUX[0]" C18;  // U38  J13-40
+IO_PORT "KEY_AUX[0]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+IO_LOC  "KEY_AUX[1]" C19;  // U37  J13-39
+IO_PORT "KEY_AUX[1]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+
+//==========================================================================
+//  ↓↓↓ 以下为旧 PMOD1 按键 + P14 模式键（新键盘板接入后应删除）↓↓↓
+//  保留仅为让当前 RTL 仍能综合；改 add_top 端口时一并去掉。
+//==========================================================================
 
 //=================== 6 个按键开关 (J14 脚 21~26) ===================
 //  从左到右：26 → 25 → 24 → 23 → 22 → 21 → 映射到 KEY[0]..KEY[5]
@@ -81,5 +172,190 @@ IO_PORT "KEY[6]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
 //   再接到 J24 aRGB 灯带接口和板载 WS2812B-2020(U15)。
 //   之前接的 T21（J14 脚 4）是裸 PMOD 引脚，只有 3.3V、无串阻，
 //   而灯带 5V 供电时 VIH=0.7×5=3.5V → 3.3V 不达标 → 数据位随机判错。
-IO_LOC  "DOUT" T21;
+IO_LOC  "DOUT" C14;
 IO_PORT "DOUT" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+
+//==========================================================================
+//  TF 卡（1-bit SD 模式）+ 调试串口  （2026-10-31 加入，SD→DDR 加载用）
+//--------------------------------------------------------------------------
+//  引脚全部取自 sd_bringup（已上板验证 SD→BSRAM md5 全对）。
+//  ★ 都在 BANK5（IOB），VCCIO=3.3，与 DDR3 的 BANK6/BANK7（1.5V）无冲突。
+//  ★ SD_DAT1~3（W15 等）在 1-bit 模式下不驱动，不约束即可
+//    （综合器 Unused_Pin=As_input_tri_stated_with_pull_up 正好符合 SD 要求）。
+//==========================================================================
+IO_LOC  "SD_CLK"  V15;
+IO_PORT "SD_CLK"  IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=3.3;
+
+IO_LOC  "SD_CMD"  Y16;
+IO_PORT "SD_CMD"  IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8 BANK_VCCIO=3.3;
+
+IO_LOC  "SD_DAT0" AA15;
+IO_PORT "SD_DAT0" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+
+//  串口 TX → 板载调试器 → /dev/ttyUSB2（sd_bringup 已验证）
+IO_LOC  "UART_TX" U15;
+IO_PORT "UART_TX" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8 BANK_VCCIO=3.3;
+
+//==========================================================================
+//  ★★★ DDR3 1 GiB 物理引脚（原 src/ddr/ddr3_1v4_hs.cst）★★★
+//--------------------------------------------------------------------------
+//  【必须合并到本文件】—— gw_sh 只认 `add_file` 列表里的【最后一个 .cst】
+//  作为物理约束文件，前面的会被静默忽略（日志里只会出现一行
+//  "Reading constraint file: .../ddr3_1v4_hs.cst"）。
+//  后果：本文件的 CLOCK_50 / RESET_n / I2S / 键盘 / 灯带 全部失约束，
+//        PnR 自动乱放（实测 CLOCK_50 被丢到 Y11 → 时钟不接晶振 → 全设计死掉：
+//        没声、灯带不亮）。
+//  所以 src/ddr/ddr3_1v4_hs.cst 仅作备份留档，build.tcl 里【不再 add_file】。
+//==========================================================================
+IO_LOC  "ddr_bank[2]"   M6;
+IO_PORT "ddr_bank[2]"   IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_bank[1]"   P2;
+IO_PORT "ddr_bank[1]"   IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_bank[0]"   P5;
+IO_PORT "ddr_bank[0]"   IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+
+IO_LOC  "ddr_addr[14]"  D1;
+IO_PORT "ddr_addr[14]"  IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_addr[13]"  K1;
+IO_PORT "ddr_addr[13]"  IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_addr[12]"  K4;
+IO_PORT "ddr_addr[12]"  IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_addr[11]"  H3;
+IO_PORT "ddr_addr[11]"  IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_addr[10]"  L1;
+IO_PORT "ddr_addr[10]"  IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_addr[9]"   H5;
+IO_PORT "ddr_addr[9]"   IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_addr[8]"   J5;
+IO_PORT "ddr_addr[8]"   IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_addr[7]"   J1;
+IO_PORT "ddr_addr[7]"   IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_addr[6]"   G3;
+IO_PORT "ddr_addr[6]"   IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_addr[5]"   H2;
+IO_PORT "ddr_addr[5]"   IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_addr[4]"   J2;
+IO_PORT "ddr_addr[4]"   IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_addr[3]"   J4;
+IO_PORT "ddr_addr[3]"   IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_addr[2]"   G2;
+IO_PORT "ddr_addr[2]"   IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_addr[1]"   K2;
+IO_PORT "ddr_addr[1]"   IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_addr[0]"   M1;
+IO_PORT "ddr_addr[0]"   IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+
+IO_LOC  "ddr_odt"       M2;
+IO_PORT "ddr_odt"       IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_cke"       K6;
+IO_PORT "ddr_cke"       IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_we"        M5;
+IO_PORT "ddr_we"        IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_cas"       L4;
+IO_PORT "ddr_cas"       IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_ras"       L5;
+IO_PORT "ddr_ras"       IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_cs"        P4;
+IO_PORT "ddr_cs"        IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_reset_n"   L6;
+IO_PORT "ddr_reset_n"   IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_ck"        L3,K3;
+IO_PORT "ddr_ck"        IO_TYPE=SSTL15D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dm[3]"     W1;
+IO_PORT "ddr_dm[3]"     IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dm[2]"     T6;
+IO_PORT "ddr_dm[2]"     IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dm[1]"     V7;
+IO_PORT "ddr_dm[1]"     IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dm[0]"     AA4;
+IO_PORT "ddr_dm[0]"     IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+
+IO_LOC  "ddr_dq[31]"    Y2;
+IO_PORT "ddr_dq[31]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[30]"    U1;
+IO_PORT "ddr_dq[30]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[29]"    V2;
+IO_PORT "ddr_dq[29]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[28]"    U2;
+IO_PORT "ddr_dq[28]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[27]"    U3;
+IO_PORT "ddr_dq[27]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[26]"    T1;
+IO_PORT "ddr_dq[26]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[25]"    Y1;
+IO_PORT "ddr_dq[25]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[24]"    W2;
+IO_PORT "ddr_dq[24]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[23]"    T5;
+IO_PORT "ddr_dq[23]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[22]"    V5;
+IO_PORT "ddr_dq[22]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[21]"    T4;
+IO_PORT "ddr_dq[21]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[20]"    Y6;
+IO_PORT "ddr_dq[20]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[19]"    R4;
+IO_PORT "ddr_dq[19]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[18]"    U6;
+IO_PORT "ddr_dq[18]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[17]"    R6;
+IO_PORT "ddr_dq[17]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[16]"    U5;
+IO_PORT "ddr_dq[16]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[15]"    Y9;
+IO_PORT "ddr_dq[15]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[14]"    AB6;
+IO_PORT "ddr_dq[14]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[13]"    W9;
+IO_PORT "ddr_dq[13]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[12]"    AB8;
+IO_PORT "ddr_dq[12]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[11]"    Y7;
+IO_PORT "ddr_dq[11]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[10]"    AB7;
+IO_PORT "ddr_dq[10]"    IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[9]"     Y8;
+IO_PORT "ddr_dq[9]"     IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[8]"     AA8;
+IO_PORT "ddr_dq[8]"     IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[7]"     AB1;
+IO_PORT "ddr_dq[7]"     IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[6]"     AB5;
+IO_PORT "ddr_dq[6]"     IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[5]"     AB2;
+IO_PORT "ddr_dq[5]"     IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[4]"     AA1;
+IO_PORT "ddr_dq[4]"     IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[3]"     V4;
+IO_PORT "ddr_dq[3]"     IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[2]"     AA5;
+IO_PORT "ddr_dq[2]"     IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[1]"     AB3;
+IO_PORT "ddr_dq[1]"     IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dq[0]"     Y4;
+IO_PORT "ddr_dq[0]"     IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+
+IO_LOC  "ddr_dqs[3]"    R3,R2;
+IO_PORT "ddr_dqs[3]"    IO_TYPE=SSTL15D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dqs[2]"    W6,W5;
+IO_PORT "ddr_dqs[2]"    IO_TYPE=SSTL15D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dqs[1]"    V9,V8;
+IO_PORT "ddr_dqs[1]"    IO_TYPE=SSTL15D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+IO_LOC  "ddr_dqs[0]"    Y3,AA3;
+IO_PORT "ddr_dqs[0]"    IO_TYPE=SSTL15D PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+
+// ── DDR IP 内部物理位置（DLL 与分频器必须钉死）──
+INS_LOC "u_ddr/u_ddr3/gw3_top/u_ddr_phy_top/u_dll" DDRDLLM_BL;
+INS_LOC "u_ddr/u_ddr3/gw3_top/u_ddr_phy_top/fclkdiv" LEFTSIDE[4];
+// ★ 供应商 .cst 里第三条：memory_clk 的 PLL 必须放在 DDR 旁边的 PLL_L[0]。
+//   不加这条 → init_calib_complete 永远为 0
+//   （实测横幅 P64 C=0 L=1 P=1 R=1：PLL 锁了、复位放了，就是校准不完成）。
+//
+//   ★★ 对象名为什么是 "u_ddr/PLL_inst" 而不是完整的 4 层路径 ★★
+//  源码层次是：ddr_wrap u_ddr → Gowin_PLL_DDR u_pll → Gowin_PLL_MOD_DDR u_pll
+//              → PLL 原语 PLL_inst
+//   但 Gowin 综合会把自己的 RTL 打平（加密的 DDR IP 内部层次才保留），
+//   所以 PnR 里能看到的对象是 u_ddr/PLL_inst。
+//   实测 u_ddr/u_pll/u_pll/PLL_inst 和 u_ddr/u_pll/PLL_inst 都报
+//   ERROR (CT1135) Can't find object —— 只有这个能过。
+INS_LOC "u_ddr/u_pll/u_pll_0/PLL_inst" PLL_L[0];
