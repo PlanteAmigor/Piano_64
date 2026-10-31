@@ -237,99 +237,111 @@ def suona_note_meta(su):
     return meta
 
 
+SU_SEGS = ["ab", "bc", "pi", "env_e", "env_o", "psi_e", "psi_o", "phi"]
+
+
 def pack_suona(su, base_word):
     """把唢呐段打包成 32 字节对齐的字节流。
 
-    参数 base_word = 本段起始的【绝对 word 索引】，
-    描述符里记的字节偏移都基于它计算（相对整个 P64.BIN 起点）。
+    ★★ 关键约束：每个音的每一段数据都必须 32 字节对齐。
+       RTL 的 DDR 读口一次回来 256 位（32 字节），如果段起始不对齐，
+       读到的 beat 就整体错位（实测 ab_base*4 导致数据右移 3 个元素）。
+       代价是每段最多浪费 31 字节，28 音 × 8 段 ≈ 7 KB，可忽略。
+
+    段内布局：
+      +0     段头 2 word
+      +64    n_inst 个描述符，每个 64 B
+      +..    每音依次 8 段，段间 32 B 对齐
     """
     meta = suona_note_meta(su)
     n = len(meta)
     base_byte = base_word * 32
 
-    # ── 先排布：段头 2 word，描述符 n×2 word，之后 8 段表 ────────────
-    hdr_words = 2
-    desc_words = n * 2
-    data_off = _pad32((hdr_words + desc_words) * 32)
+    hdr_bytes  = 64
+    desc_bytes = n * 64
+    cur = _pad32(hdr_bytes + desc_bytes)
 
-    ab_off = data_off
-    data_off += _pad32(SU_AB_DEPTH * 4)
-    bc_off = data_off
-    data_off += _pad32(SU_AB_DEPTH * 4)
-    pi_off = data_off
-    data_off += _pad32(SU_AB_DEPTH * 2)
-    ee_off = data_off
-    data_off += _pad32(SU_ENV_DEPTH * 1)
-    eo_off = data_off
-    data_off += _pad32(SU_ENV_DEPTH * 1)
-    pe_off = data_off
-    data_off += _pad32(SU_PSI_DEPTH * 2)
-    po_off = data_off
-    data_off += _pad32(SU_PSI_DEPTH * 2)
-    ph_off = data_off
-    data_off += _pad32(SU_PHI_DEPTH * 4)
-    total = _pad32(data_off)
+    # ── 第一遍：算每音每段的绝对字节偏移 ────────────────────────────
+    plan = []
+    for m in meta:
+        lens = {
+            "ab":    m["ab_len"] * 4,
+            "bc":    m["ab_len"] * 4,
+            "pi":    m["ab_len"] * 2,
+            "env_e": m["env_len"],
+            "env_o": m["env_len"],
+            "psi_e": m["psi_len"] * 2,
+            "psi_o": m["psi_len"] * 2,
+            "phi":   m["phi_len"] * 4,
+        }
+        e = {}
+        for k in SU_SEGS:
+            e[k] = base_byte + cur
+            cur = _pad32(cur + lens[k])
+        plan.append(e)
+    total = _pad32(cur)
 
     buf = bytearray(total)
 
     # ── 段头 ───────────────────────────────────────────────────────
     struct.pack_into("<4sHHIIII", buf, 0,
                      SUONA_MAGIC, n, SUONA_NOTE_LO,
-                     hdr_words,                  # desc_off（word）
+                     hdr_bytes // 32,            # desc_off（word）
                      0, 0, 0)
-    # 段头 word1：8 个表的绝对字节偏移
-    struct.pack_into("<IIIIIIII", buf, 32,
-                     base_byte + ab_off, base_byte + bc_off,
-                     base_byte + pi_off,
-                     base_byte + ee_off, base_byte + eo_off,
-                     base_byte + pe_off, base_byte + po_off,
-                     base_byte + ph_off)
+    # word1：8 个表的基址（现在每音不同，这里只留第一个音的，RTL 不用）
+    struct.pack_into("<8I", buf, 32,
+                     plan[0]["ab"], plan[0]["bc"], plan[0]["pi"],
+                     plan[0]["env_e"], plan[0]["env_o"],
+                     plan[0]["psi_e"], plan[0]["psi_o"], plan[0]["phi"])
 
-    # ── 描述符 ─────────────────────────────────────────────────────
-    for i, m in enumerate(meta):
-        o = hdr_words * 32 + i * 64
-        struct.pack_into("<12I", buf, o,
-                         m["K"],
-                         base_byte + ab_off  + m["ab_base"]  * 4,
-                         base_byte + bc_off  + m["ab_base"]  * 4,
-                         base_byte + pi_off  + m["ab_base"]  * 2,
-                         base_byte + ee_off  + m["env_base"] * 1,
-                         base_byte + eo_off  + m["env_base"] * 1,
-                         m["env_len"] * 1,
-                         base_byte + pe_off  + m["psi_base"] * 2,
-                         base_byte + po_off  + m["psi_base"] * 2,
-                         m["psi_len"] * 2,
-                         base_byte + ph_off  + m["phi_base"] * 4,
-                         m["phi_len"] * 4)
+    # ── 描述符（字段顺序必须与 suona_dma.v 的 S_DW 一致：7 + 5）─────
+    for i, (m, e) in enumerate(zip(meta, plan)):
+        o = hdr_bytes + i * 64
+        struct.pack_into("<8I", buf, o,
+                         m["K"], e["ab"], e["bc"], e["pi"],
+                         e["env_e"], e["env_o"], m["env_len"], 0)
+        struct.pack_into("<5I", buf, o + 32,
+                         e["psi_e"], e["psi_o"], m["psi_len"] * 2,
+                         e["phi"],   m["phi_len"] * 4)
 
     # ── 表数据 ─────────────────────────────────────────────────────
-    def put_u32(dst, arr):
+    def put32(at, arr):
         for i, v in enumerate(arr):
-            struct.pack_into("<I", buf, dst + i * 4, v & 0xFFFFFFFF)
+            struct.pack_into("<I", buf, at + i * 4, v & 0xFFFFFFFF)
 
-    def put_u16(dst, arr):
+    def put16(at, arr):
         for i, v in enumerate(arr):
-            struct.pack_into("<H", buf, dst + i * 2, v & 0xFFFF)
+            struct.pack_into("<H", buf, at + i * 2, v & 0xFFFF)
 
-    def put_u8(dst, arr):
+    def put8(at, arr):
         for i, v in enumerate(arr):
-            buf[dst + i] = v & 0xFF
+            buf[at + i] = v & 0xFF
 
-    put_u32(ab_off, su["ab"])
-    put_u32(bc_off, su["bc"])
-    put_u16(pi_off, su["pi"])
-    put_u8 (ee_off, su["ee"])
-    put_u8 (eo_off, su["eo"])
-    put_u16(pe_off, su["pe"])
-    put_u16(po_off, su["po"])
-    put_u32(ph_off, su["ph"])
+    # ★ plan 里存的是【绝对文件字节偏移】（给描述符用），
+    #   而 buf 只是 suona 段自己，所以写入时要减掉 base_byte。
+    for m, e in zip(meta, plan):
+        ab0, abl = m["ab_base"],  m["ab_len"]
+        eb0, ebl = m["env_base"], m["env_len"]
+        pb0, pbl = m["psi_base"], m["psi_len"]
+        fb0, fbl = m["phi_base"], m["phi_len"]
+        o_ab  = e["ab"]    - base_byte
+        o_bc  = e["bc"]    - base_byte
+        o_pi  = e["pi"]    - base_byte
+        o_ee  = e["env_e"] - base_byte
+        o_eo  = e["env_o"] - base_byte
+        o_pe  = e["psi_e"] - base_byte
+        o_po  = e["psi_o"] - base_byte
+        o_ph  = e["phi"]   - base_byte
+        put32(o_ab, su["ab"][ab0:ab0 + abl])
+        put32(o_bc, su["bc"][ab0:ab0 + abl])
+        put16(o_pi, su["pi"][ab0:ab0 + abl])
+        put8 (o_ee, su["ee"][eb0:eb0 + ebl])
+        put8 (o_eo, su["eo"][eb0:eb0 + ebl])
+        put16(o_pe, su["pe"][pb0:pb0 + pbl])
+        put16(o_po, su["po"][pb0:pb0 + pbl])
+        put32(o_ph, su["ph"][fb0:fb0 + fbl])
 
-    # 自检：每音的表都在段内
-    for m in meta:
-        for key, elem in (("ab", 4), ("psi", 2), ("phi", 4)):
-            pass
     return bytes(buf), meta
-
 
 def main():
     piano, p_n = load_3bank("add_param", PIANO_NOTE_LO, PIANO_NOTE_HI, "piano")
