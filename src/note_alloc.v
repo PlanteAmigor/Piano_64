@@ -15,22 +15,35 @@
 //      一次机械按下会抖出几十个边沿。不消抖的话一次按键会把 4 个声部
 //      瞬间全抢光，听起来像噪声。消抖在 key_scan.v 里做（8 ms）。
 //
-//  ── 按键布局（改这一行就能换音阶，别的模块一律不动）─────────────
-//      KEY_STEP：每个键相对 NOTE_BASE 的半音偏移，4bit/键（0..15）
-//      默认 = 0,2,4,5,7,9,11,12 → 大调音阶 do re mi fa sol la si do
+//  ── 按键布局────────────────────────────────────────────────
+//      ★ 每个乐器有自己的【起点 + 音阶 + 可用键】，由 add_top 按 timbre 选择：
+//        钢琴：note_base=60(C4)，key_step=0,2,4,5,7,9,11,12，8 键全可用
+//        古筝：note_base=62(D4)，key_step=0,2,4,F,7,9,F,12（D 宫五声），
+//              键 4(fa) / 键 7(si) 屏蔽 —— 五声音阶里没有这两个音
+//      4'hF = 无效步长哨兵，该键永不发声（与 key_enable 双重保险）
 //==========================================================================
 `default_nettype none
 
 module note_alloc #(
     parameter integer NKEY      = 8,
-    parameter integer NVOICE    = 4,
-    parameter integer NOTE_BASE = 60,               // C4 = MIDI 60
-    parameter [NKEY*4-1:0] KEY_STEP = {4'd12, 4'd11, 4'd9, 4'd7, 4'd5, 4'd4, 4'd2, 4'd0}
+    parameter integer NVOICE    = 4
 )(
     input  wire                     clk,
     input  wire                     rst_n,
-    input  wire [NKEY-1:0]          key_state,      // 1 = 按下
+    input  wire [NKEY-1:0]          key_state,      // 1 = 按下（物理）
+    // ★ 本乐器可发声的键（1 = 有对应音，0 = 本乐器音阶里没这个音）
+    //   例：古筝 D 宫五声无 fa / si → 键 4、键 7 屏蔽，不占声部、不发声
+    input  wire [NKEY-1:0]          key_enable,
+    // ★ 音高映射（由 add_top 按 timbre 选）：
+    //   note_base = 本乐器 8 键的起始 MIDI 音号
+    //   key_step  = 每个键相对 note_base 的半音偏移，4 bit/键
+    input  wire [6:0]               note_base,
+    input  wire [NKEY*4-1:0]        key_step,
     input  wire [NKEY*8-1:0]        key_vel,        // ★ 每键力度增益 2..254
+    // ★ 移调（半音，有符号）。0 = 不移调。
+    //   由 add_top 按「第 9 键 + 轻击/重击第 1 键」产生，已按音域 clamp 过，
+    //   所以这里直接相加不会越界。
+    input  wire signed [7:0]        transpose,
     input  wire [NVOICE-1:0]        v_idle,         // 来自 add_voice
 
     output reg  [NVOICE*7-1:0]      v_note,         // 每个声部的 MIDI 音号
@@ -116,8 +129,24 @@ module note_alloc #(
                                                 {NVOICE{1'b0}};
     wire [NVOICE-1:0] vsel_oh  = pick(cand);
 
-    wire [3:0] step     = KEY_STEP[ (scan*4) +: 4 ];
-    wire [6:0] new_note = NOTE_BASE[6:0] + {3'b000, step};
+    wire [3:0] step     = key_step[ (scan*4) +: 4 ];
+    // ★ 4'hF = 无效步长哨兵：该键在本乐器音阶里不存在
+    wire       step_ok  = (step != 4'hF);
+
+    // ★ 移调就加在这一处：之后 v_note 就是真实音高，
+    //   add_engine8 的 v_note_off 自动跟着变，音色表自动选对，不用另做处理。
+    wire signed [8:0] note_raw = $signed({2'b00, note_base})
+                               + $signed({5'b00000, step})
+                               + $signed({{1{transpose[7]}}, transpose});
+    // 双保险：万一移调值越界也只钳到合法 MIDI 范围，绝不回绕
+    wire [6:0] new_note = (note_raw < 9'sd0)   ? 7'd0   :
+                          (note_raw > 9'sd127) ? 7'd127 :
+                                                 note_raw[6:0];
+
+    // ★ 只有「本乐器有这个音」的键才参与分配（音阶里没有的键按下也不响应）
+    //   ★ 注意：不能把 step_ok 并进来！step_ok 属于【当前扫描的那一个键】，
+    //     写进 ks 会把其它键一起屏蔽掉。step_ok 只在轮询处单独用。
+    wire [NKEY-1:0] ks = key_state & key_enable;
 
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -153,7 +182,7 @@ module note_alloc #(
 
             // ── 松键：gate 拉低 + 启动余音保护期 ───────────────────
             for (v = 0; v < NVOICE; v = v + 1) begin
-                if ((v_key[v] != KEY_FREE) && !key_state[ v_key[v] ]) begin
+                if ((v_key[v] != KEY_FREE) && !ks[ v_key[v] ]) begin
                     v_gate[v]   <= 1'b0;
                     v_key[v]    <= KEY_FREE;
                     rel_hold[v] <= 1'b1;          // ★ 余音未散，暂不可抢
@@ -170,7 +199,8 @@ module note_alloc #(
             end
 
             // ── 轮询按键：每个时钟看一个键 ─────────────────────────
-            if (key_state[scan] && !handled[scan] &&
+            //   ★ 用 ks（已屏蔽本乐器不存在的音）而不是原始 key_state
+            if (ks[scan] && step_ok && !handled[scan] &&
                 (key_lock[scan] == 23'd0) && (|cand)) begin
                 handled[scan]  <= 1'b1;
                 key_lock[scan] <= RELOCK;       // ★ 40 ms 内同一键不再触发
@@ -185,7 +215,7 @@ module note_alloc #(
                 end
                 rr <= (rr == RR_MAX) ? {VW{1'b0}} : rr + 1'b1;
             end
-            if (!key_state[scan]) handled[scan] <= 1'b0;
+            if (!ks[scan]) handled[scan] <= 1'b0;
 
             scan <= scan + { {(IW-1){1'b0}}, 1'b1 };
         end

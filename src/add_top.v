@@ -145,7 +145,11 @@ module add_top #(
     );
 
     // 音源：前 8 个键（C4..C5 一个八度）
+    // ★ 第 9 键是【纯功能键】——不在 7:0 里，本来就不会发声，不用额外屏蔽
+    wire        shift_on = kd_state[8];     // 仅用于诊断显示
+
     wire [7:0]  note_key_state = kd_state[7:0];
+
     reg  [7:0]  kd_state_d;
     always @(posedge clk_sys) kd_state_d <= kd_state[7:0];
     wire [7:0]  note_key_press = kd_state[7:0] & ~kd_state_d;
@@ -207,6 +211,84 @@ module add_top #(
     always @(posedge clk_sys) begin
         if (!engine_rst_n)          timbre_r <= 2'd0;
         else if (timbre_toggle)     timbre_r <= (timbre_r == 2'd2) ? 2'd0 : timbre_r + 2'd1;
+    end
+
+    // ★ 当前音色是否古筝（与 add_engine8 的 .timbre(timbre_r[0]) 同一判据）
+    //   按键映射、移调范围都按它选
+    wire is_gz = timbre_r[0];
+
+    //======================================================================
+    //  ★ 移调（第 9 键 = 纯功能键，单手一个键完成）
+    //     轻击第 9 键（只有前触点闭合，力度小）→ 整体 +1 八度
+    //     重击第 9 键（前后触点都闭合，力度大）→ 整体 -1 八度
+    //     ★ 方向直接取 key_dual 已经算好的第 9 键力度 kd_vel[71:64]，
+    //       与演奏用力完全同一套判定，不新加门限：
+    //         轻击走 FALLBACK → vel = 48
+    //         重击 → vel_from(Δt) 落在 2..254 的高段
+    //       以 128 为界（正好是 vel_from 里 Δt≈15 ms 的位置）。
+    //     到音域边界停住、不循环；切换音色清零回 0。
+    //======================================================================
+    localparam signed [7:0] TR_STEP = 8'sd12;
+
+    // 8 个键音高范围由各乐器自己的映射决定：
+    //   钢琴：60..72 (C4..C5)，表 21..108 → -36 .. +36（7 档）
+    //   古筝：62..74 (D4..D5)，表 38..86  → -24 .. +12（4 档）
+    wire signed [7:0] tr_min = is_gz ? -8'sd24 : -8'sd36;
+    wire signed [7:0] tr_max = is_gz ?  8'sd12 :  8'sd36;
+
+    reg signed [7:0] transpose;
+
+    reg        kd9_d, tr_armed, tr_hold;
+    reg [21:0] tr_tmr;
+
+    // 60 ms @50MHz：等 key_dual 把第 9 键的力度确定下来（其 T_CONFIRM = 50 ms）
+    localparam [21:0] TR_WAIT = 22'd3_000_000;
+
+    always @(posedge clk_sys) begin
+        if (!engine_rst_n) begin
+            transpose <= 8'sd0;
+            kd9_d     <= 1'b0;
+            tr_armed  <= 1'b0;
+            tr_hold   <= 1'b0;
+            tr_tmr    <= 22'd0;
+        end
+        else begin
+            kd9_d <= kd_state[8];
+
+            // 切换音色 → 清零（音域不同，旧档位可能已越界）
+            if (timbre_toggle)
+                transpose <= 8'sd0;
+
+            // 第 9 键松开 → 允许下一次移调
+            if (!kd_state[8])
+                tr_hold <= 1'b0;
+
+            // 第 9 键新按下沿
+            if (kd_state[8] && !kd9_d && !tr_armed && !tr_hold) begin
+                tr_armed <= 1'b1;
+                tr_tmr   <= TR_WAIT;
+            end
+            else if (tr_armed) begin
+                if (tr_tmr != 22'd0) begin
+                    tr_tmr <= tr_tmr - 22'd1;
+                end
+                else begin
+                    // 力度已确定：大 = 重击 → -12；小 = 轻击 → +12
+                    tr_armed <= 1'b0;
+                    tr_hold  <= 1'b1;
+                    if (kd_vel[71:64] >= 8'd128) begin
+                        // 到下限就停住，不回绕
+                        transpose <= (transpose - TR_STEP < tr_min)
+                                   ? tr_min : transpose - TR_STEP;
+                    end
+                    else begin
+                        // 到上限就停住，不回绕
+                        transpose <= (transpose + TR_STEP > tr_max)
+                                   ? tr_max : transpose + TR_STEP;
+                    end
+                end
+            end
+        end
     end
 
     //======================================================================
@@ -305,17 +387,44 @@ module add_top #(
     end
     wire [7:0] vel_bar = (8'd1 << dbg_vel[7:5]) - 8'd1;
 
+    //======================================================================
+    //  ★ 每个乐器独立的按键映射（键名位置固定，但音高与可用键不同）
+    //
+    //     键号：  1    2    3    4     5    6    7    8
+    //     键名： do   re   mi   fa    sol  la   si   do'
+    //
+    //     钢琴（C 大调七声）：
+    //       step   0    2    4    5     7    9    11   12   → C4 D4 E4 F4 G4 A4 B4 C5
+    //       enable 8 键全开
+    //
+    //     古筝（D 宫五声，宫商角徵羽）：
+    //       step   0    2    4    F     7    9    F    12   → D4 E4 F#4 -- A4 B4 -- D5
+    //       enable 键 4(fa)、键 7(si) 屏蔽 —— 五声音阶里没有这两个音
+    //       所以古筝实际发声键 = 1,2,3,5,6,8（6 个）
+    //======================================================================
+    wire [6:0]  t_note_base = is_gz ? 7'd62 : 7'd60;      // 古筝 D4 / 钢琴 C4
+
+    // ★ 4'hF = 无效步长哨兵（该键在本乐器音阶里不存在）
+    wire [31:0] t_key_step  = is_gz
+        ? {4'd12, 4'hF, 4'd9, 4'd7, 4'hF, 4'd4, 4'd2, 4'd0}   // 古筝 D 宫五声
+        : {4'd12, 4'd11, 4'd9, 4'd7, 4'd5, 4'd4, 4'd2, 4'd0}; // 钢琴 七声
+
+    // 键 4、键 7 在古筝下不发声（bit3 = 键4，bit6 = 键7）
+    wire [7:0]  t_key_en  = is_gz ? 8'b1011_0111 : 8'b1111_1111;
+
     note_alloc #(
         .NKEY     (8),
-        .NVOICE   (NVOICE),
-        .NOTE_BASE(60),
-        .KEY_STEP ({4'd12, 4'd11, 4'd9, 4'd7, 4'd5, 4'd4, 4'd2, 4'd0})
+        .NVOICE   (NVOICE)
     ) u_alloc (
         .clk      (clk_sys),
         .rst_n    (engine_rst_n),
-        
+
         .key_state(note_key_state),
+        .key_enable(t_key_en),
+        .note_base (t_note_base),
+        .key_step  (t_key_step),
         .key_vel  (note_key_vel),
+        .transpose(transpose),
         .v_idle   (v_idle),
         .v_note   (k_note),
         .v_trig   (v_trig),

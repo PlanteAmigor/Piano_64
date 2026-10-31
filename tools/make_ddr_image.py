@@ -132,6 +132,205 @@ def words_of(blob):
     return len(blob) // 32
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  唢呐（谐波类乐器）
+#
+#  和钢琴/古筝不同，唢呐表不是"一直驻留"，而是【按音预取】：
+#  note-on 时把该音需要的 8 段表从 DDR 搬进 BSRAM，最大 12 KB。
+#  所以镜像里必须能让 RTL 用描述符直接定位每段。
+#
+#  段内布局（以 SUONA_BASE word 为 0，全部 32 字节对齐）：
+#     word 0     段头 word0: magic "SUON" | n_inst | note_lo | desc_off | 预留
+#     word 1     段头 word1: 8 个表基址（字节偏移，绝对）
+#     word 2..   n_inst 个描述符，每个 2 word（64 B），字段见 DESC_FIELDS
+#     之后       8 段表数据
+#
+#  描述符（每音 64 B，全部小端 u32）：
+#     0  K          谐波数（ab/bc/pi 的行数）
+#     1  ab_off     字节偏移（绝对）
+#     2  bc_off
+#     3  pi_off
+#     4  env_e_off
+#     5  env_o_off
+#     6  env_len    字节（e/o 相同）
+#     7  psi_e_off
+#     8  psi_o_off
+#     9  psi_len    字节（e/o 相同）
+#    10  phi_off
+#    11  phi_len    字节
+#    12..15 保留 0
+# ══════════════════════════════════════════════════════════════════════════
+
+SUONA_MAGIC = b"SUON"
+SUONA_NOTE_LO = 69              # A4
+# 与 harm_rom_suona 的 DEPTH 参数保持一致
+SU_AB_DEPTH   = 780
+SU_ENV_DEPTH  = 59204
+SU_PSI_DEPTH  = 57833
+SU_PHI_DEPTH  = 16800
+SU_INFO_DEPTH = 112
+
+
+def _pad32(off):
+    """向上取整到 32 字节边界。"""
+    return (off + 31) & ~31
+
+
+def load_suona():
+    """读唢呐 8 个表 + info。返回 dict。"""
+    ab   = read_hex(os.path.join(ROOT, "suona_ab.hex"))
+    bc   = read_hex(os.path.join(ROOT, "suona_bc.hex"))
+    pi   = read_hex(os.path.join(ROOT, "suona_pi.hex"))
+    ee   = read_hex(os.path.join(ROOT, "suona_env_e.hex"))
+    eo   = read_hex(os.path.join(ROOT, "suona_env_o.hex"))
+    pe   = read_hex(os.path.join(ROOT, "suona_psi_e.hex"))
+    po   = read_hex(os.path.join(ROOT, "suona_psi_o.hex"))
+    ph   = read_hex(os.path.join(ROOT, "suona_phi.hex"))
+    info = read_hex(os.path.join(ROOT, "suona_info.hex"))
+
+    # 补齐到 DEPTH（hex 文件可能少一行，$readmemh 也会补 0）
+    def fit(a, n, name):
+        if len(a) > n:
+            raise SystemExit(f"{name}: 行数 {len(a)} 超过上限 {n}")
+        return a + [0] * (n - len(a))
+
+    ab = fit(ab, SU_AB_DEPTH, "suona_ab")
+    bc = fit(bc, SU_AB_DEPTH, "suona_bc")
+    pi = fit(pi, SU_AB_DEPTH, "suona_pi")
+    ee = fit(ee, SU_ENV_DEPTH, "suona_env_e")
+    eo = fit(eo, SU_ENV_DEPTH, "suona_env_o")
+    pe = fit(pe, SU_PSI_DEPTH, "suona_psi_e")
+    po = fit(po, SU_PSI_DEPTH, "suona_psi_o")
+    ph = fit(ph, SU_PHI_DEPTH, "suona_phi")
+    info = fit(info, SU_INFO_DEPTH, "suona_info")
+
+    return dict(ab=ab, bc=bc, pi=pi, ee=ee, eo=eo,
+                pe=pe, po=po, ph=ph, info=info)
+
+
+def suona_note_meta(su):
+    """从 info 表解析每音元数据，并算出每段长度（用下一音 base 之差）。"""
+    info = su["info"]
+    n = len(info) // 4
+    meta = []
+    for i in range(n):
+        phi_base = info[4 * i + 0] & 0x7FFF
+        K        = (info[4 * i + 1] >> 24) & 0xFF
+        ab_base  = info[4 * i + 1] & 0xFFFF
+        env_base = info[4 * i + 2] & 0xFFFF
+        psi_base = info[4 * i + 3] & 0xFFFF
+        if i + 1 < n:
+            ab_len  = (info[4 * (i + 1) + 1] & 0xFFFF) - ab_base
+            env_len = (info[4 * (i + 1) + 2] & 0xFFFF) - env_base
+            psi_len = (info[4 * (i + 1) + 3] & 0xFFFF) - psi_base
+            phi_len = (info[4 * (i + 1) + 0] & 0x7FFF) - phi_base
+        else:
+            ab_len  = SU_AB_DEPTH  - ab_base
+            env_len = SU_ENV_DEPTH - env_base
+            psi_len = SU_PSI_DEPTH - psi_base
+            phi_len = SU_PHI_DEPTH - phi_base
+        meta.append(dict(note=SUONA_NOTE_LO + i, K=K,
+                         ab_base=ab_base,  ab_len=ab_len,
+                         env_base=env_base, env_len=env_len,
+                         psi_base=psi_base, psi_len=psi_len,
+                         phi_base=phi_base, phi_len=phi_len))
+    return meta
+
+
+def pack_suona(su, base_word):
+    """把唢呐段打包成 32 字节对齐的字节流。
+
+    参数 base_word = 本段起始的【绝对 word 索引】，
+    描述符里记的字节偏移都基于它计算（相对整个 P64.BIN 起点）。
+    """
+    meta = suona_note_meta(su)
+    n = len(meta)
+    base_byte = base_word * 32
+
+    # ── 先排布：段头 2 word，描述符 n×2 word，之后 8 段表 ────────────
+    hdr_words = 2
+    desc_words = n * 2
+    data_off = _pad32((hdr_words + desc_words) * 32)
+
+    ab_off = data_off
+    data_off += _pad32(SU_AB_DEPTH * 4)
+    bc_off = data_off
+    data_off += _pad32(SU_AB_DEPTH * 4)
+    pi_off = data_off
+    data_off += _pad32(SU_AB_DEPTH * 2)
+    ee_off = data_off
+    data_off += _pad32(SU_ENV_DEPTH * 1)
+    eo_off = data_off
+    data_off += _pad32(SU_ENV_DEPTH * 1)
+    pe_off = data_off
+    data_off += _pad32(SU_PSI_DEPTH * 2)
+    po_off = data_off
+    data_off += _pad32(SU_PSI_DEPTH * 2)
+    ph_off = data_off
+    data_off += _pad32(SU_PHI_DEPTH * 4)
+    total = _pad32(data_off)
+
+    buf = bytearray(total)
+
+    # ── 段头 ───────────────────────────────────────────────────────
+    struct.pack_into("<4sHHIIII", buf, 0,
+                     SUONA_MAGIC, n, SUONA_NOTE_LO,
+                     hdr_words,                  # desc_off（word）
+                     0, 0, 0)
+    # 段头 word1：8 个表的绝对字节偏移
+    struct.pack_into("<IIIIIIII", buf, 32,
+                     base_byte + ab_off, base_byte + bc_off,
+                     base_byte + pi_off,
+                     base_byte + ee_off, base_byte + eo_off,
+                     base_byte + pe_off, base_byte + po_off,
+                     base_byte + ph_off)
+
+    # ── 描述符 ─────────────────────────────────────────────────────
+    for i, m in enumerate(meta):
+        o = hdr_words * 32 + i * 64
+        struct.pack_into("<12I", buf, o,
+                         m["K"],
+                         base_byte + ab_off  + m["ab_base"]  * 4,
+                         base_byte + bc_off  + m["ab_base"]  * 4,
+                         base_byte + pi_off  + m["ab_base"]  * 2,
+                         base_byte + ee_off  + m["env_base"] * 1,
+                         base_byte + eo_off  + m["env_base"] * 1,
+                         m["env_len"] * 1,
+                         base_byte + pe_off  + m["psi_base"] * 2,
+                         base_byte + po_off  + m["psi_base"] * 2,
+                         m["psi_len"] * 2,
+                         base_byte + ph_off  + m["phi_base"] * 4,
+                         m["phi_len"] * 4)
+
+    # ── 表数据 ─────────────────────────────────────────────────────
+    def put_u32(dst, arr):
+        for i, v in enumerate(arr):
+            struct.pack_into("<I", buf, dst + i * 4, v & 0xFFFFFFFF)
+
+    def put_u16(dst, arr):
+        for i, v in enumerate(arr):
+            struct.pack_into("<H", buf, dst + i * 2, v & 0xFFFF)
+
+    def put_u8(dst, arr):
+        for i, v in enumerate(arr):
+            buf[dst + i] = v & 0xFF
+
+    put_u32(ab_off, su["ab"])
+    put_u32(bc_off, su["bc"])
+    put_u16(pi_off, su["pi"])
+    put_u8 (ee_off, su["ee"])
+    put_u8 (eo_off, su["eo"])
+    put_u16(pe_off, su["pe"])
+    put_u16(po_off, su["po"])
+    put_u32(ph_off, su["ph"])
+
+    # 自检：每音的表都在段内
+    for m in meta:
+        for key, elem in (("ab", 4), ("psi", 2), ("phi", 4)):
+            pass
+    return bytes(buf), meta
+
+
 def main():
     piano, p_n = load_3bank("add_param", PIANO_NOTE_LO, PIANO_NOTE_HI, "piano")
     gz,    g_n = load_3bank("gz_param",  GZ_NOTE_LO,    GZ_NOTE_HI,    "guzheng")
@@ -141,9 +340,15 @@ def main():
 
     p_base = 1
     g_base = p_base + words_of(p_blob)
-    total_words = g_base + words_of(g_blob)
 
-    body = p_blob + g_blob
+    # ── 唢呐段：接在古筝表之后 ──────────────────────────────────────
+    s_base = g_base + words_of(g_blob)
+    su = load_suona()
+    s_blob, s_meta = pack_suona(su, s_base)
+
+    total_words = s_base + words_of(s_blob)
+
+    body = p_blob + g_blob + s_blob
 
     # 校验和：body 按 32 位小端累加
     chk = 0
@@ -173,6 +378,12 @@ def main():
 
     print(f"piano   {p_n} 音  base_word={p_base:6d}  {words_of(p_blob):6d} word")
     print(f"guzheng {g_n} 音  base_word={g_base:6d}  {words_of(g_blob):6d} word")
+    print(f"suona   {len(s_meta)} 音  base_word={s_base:6d}  {words_of(s_blob):6d} word"
+          f"  ({len(s_blob)/1024:.1f} KiB)")
+    print(f"        RTL 常量 SUONA_BASE 应填 {s_base}")
+    big = max(s_meta, key=lambda m: (m["ab_len"] * 10 + m["env_len"] + m["psi_len"] * 2 + m["phi_len"] * 4))
+    bb = big["ab_len"] * 10 + big["env_len"] * 2 + big["psi_len"] * 2 * 2 + big["phi_len"] * 4
+    print(f"        最大单音表 {bb/1024:.1f} KiB (note {big['note']}, K={big['K']})")
     print(f"total   {total_words} word = {len(img)} B = {len(img)/1024:.1f} KiB")
     print(f"checksum 0x{chk:08X}")
     print(f"输出 {out_path}")
