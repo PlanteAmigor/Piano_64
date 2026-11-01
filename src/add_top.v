@@ -84,7 +84,13 @@ module add_top #(
     //    （1024 个 clk_sys 周期 = 20.5 us）；渲染侧用 clk_p 打两拍同步
     //    SCOPE_TOG、靠翻转沿抓一次数据，不存在多位撕裂。
     output wire signed [15:0] SCOPE_SMP,
-    output wire               SCOPE_TOG
+    output wire               SCOPE_TOG,
+
+    // ── note-on 触发（给相位图做单次捕获用）──────────────────────
+    //    任意声部被触发就翻转一次；渲染侧打两拍检测翻转沿。
+    //    用翻转而不是脉冲：clk_sys 的单拍脉冲只有 20 ns，
+    //    跨到 75 MHz 域有概率被整个漏掉。
+    output reg                SCOPE_TRG
 );
 
     localparam integer NVOICE    = 8;      // ★ 4 → 8：只改这个参数（PH_SHIFT = 8/8 = 1 仍成立）
@@ -1004,6 +1010,12 @@ module add_top #(
 
     assign SCOPE_SMP = scope_smp;
     assign SCOPE_TOG = scope_tog;
+
+    // note-on 触发：comp_clr 就是「任意声部被触发」的单拍脉冲
+    always @(posedge clk_sys) begin
+        if (!por_n)         SCOPE_TRG <= 1'b0;
+        else if (comp_clr)  SCOPE_TRG <= ~SCOPE_TRG;
+    end
 
     //======================================================================
     //  灯带控制信号跨时钟域同步：clk_sys → CLOCK_50

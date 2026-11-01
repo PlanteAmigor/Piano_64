@@ -12,6 +12,8 @@
 module tb_ui3;
 
     parameter integer PAGE = 0;          // 0=主页面 1=测试 2=教学
+    parameter integer AMP  = 10000;      // 李萨如激励幅度（满幅约 16000）
+    parameter real    TAU  = 0.0;        // 衰减时间常数（秒），0 = 不衰减
 
     reg clk = 1'b0;
     always #6.667 clk = ~clk;            // 75 MHz
@@ -23,6 +25,7 @@ module tb_ui3;
     wire [15:0]  UI_INFO;
     wire signed [15:0] SCOPE_SMP;
     wire               SCOPE_TOG;
+    reg                scope_trg = 1'b0;
 
     // 柱高给一个递增的测试图样，方便核对柱高换算
     genvar gi;
@@ -47,6 +50,7 @@ module tb_ui3;
     // 李萨如激励：基频 + 三次谐波，模拟带谐波的乐器波形
     //   每 32768 个 clk 一个样点（相当于 75MHz/48828 ≈ 1536，这里慢一点看得清）
     real    ph1;
+    real    env;
     reg  signed [15:0] scope_smp;
     reg                scope_tog = 1'b0;
     integer            sc_cnt = 0;
@@ -56,15 +60,21 @@ module tb_ui3;
         if (sc_cnt >= 1536) begin
             sc_cnt    <= 0;
             ph1       <= ph1 + 0.0334;          // 基频≈262 Hz（相对 48828）
-            scope_smp <= 16'sd10000 * $sin(ph1)
-                       + 16'sd4000  * $sin(3.0 * ph1)
-                       + 16'sd2000  * $sin(5.0 * ph1);
+            env        = (TAU > 0.0) ? $exp(-($realtime * 1.0e-9) / TAU) : 1.0;
+            scope_smp <= $rtoi(AMP * env) * $sin(ph1)
+                       + $rtoi(AMP * env * 0.40) * $sin(3.0 * ph1)
+                       + $rtoi(AMP * env * 0.20) * $sin(5.0 * ph1);
             scope_tog <= ~scope_tog;
         end
     end
 
     assign SCOPE_SMP = scope_smp;
     assign SCOPE_TOG = scope_tog;
+
+    // 模拟一个 note-on：单次捕获从这里开始，200 ms 后冻结
+    initial begin
+        #50_000 scope_trg = 1'b1;
+    end
 
     // 音色/效果器也取个固定值：古筝 + REVERB + +12 半音
     //   ★ 位图：[15:8] transpose  [7:6] 预留  [5:4] fx  [3:2] timbre  [1:0] mode
@@ -79,13 +89,15 @@ module tb_ui3;
         .COMP_AMP(COMP_AMP),
         .SCOPE_SMP(SCOPE_SMP),
         .SCOPE_TOG(SCOPE_TOG),
+        .SCOPE_TRG(scope_trg),
         .tmds_clk_n_0(), .tmds_clk_p_0(),
         .tmds_d_n_0(),   .tmds_d_p_0()
     );
 
     // ── 抓可见像素（vis_d3 高 = 这一拍 rgb_r 就是一个可见像素）────────
-    //    ★ 前 4 帧跳过：上电时 page_show 从 0 淡出到目标页，过渡帧里
-    //      版面/柱高/亮度是混合状态，不能用来判图。
+    //    ★ 前 8 帧跳过：上电时 page_show 从 0 淡出到目标页，过渡帧里
+    //      版面/柱高/亮度是混合状态；另外单次捕获要累积到第 8 帧
+    //      （≈150 ms）才能画出完整的相位图。
     integer fout;
     integer ox = 0, oy = 0;
     integer frames = 0;
@@ -107,7 +119,7 @@ module tb_ui3;
             ox <= 0; oy <= 0; frames <= 0;
         end
         else if (dut.vis_d3) begin
-            if (frames >= 4)
+            if (frames >= 8)
                 $fwrite(fout, "%0d %0d %0d\n",
                         dut.rgb_r[23:16], dut.rgb_r[15:8], dut.rgb_r[7:0]);
 
@@ -122,7 +134,7 @@ module tb_ui3;
                 ox     <= 0;
                 oy     <= 0;
                 frames <= frames + 1;
-                if (frames >= 4) begin
+                if (frames >= 8) begin
                     $fwrite(fout, "\n");
                     $fclose(fout);
                     $display("tb_ui3: 输出 P%0d 完成（第 %0d 帧）", PAGE, frames);
@@ -134,7 +146,7 @@ module tb_ui3;
 
     initial begin
         #1000 resetn = 1'b1;
-        #150_000_000;                      // 超时保护（5 帧 ≈ 83 ms）
+        #400_000_000;                      // 超时保护（9 帧 ≈ 150 ms）
         $display("tb_ui3: TIMEOUT");
         $fclose(fout);
         $finish;

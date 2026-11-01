@@ -60,6 +60,8 @@ module hdmi_ui3_top (
     // ── 李萨如（相位图）取样：SCOPE_TOG 每样点翻转一次 ──────────────
     input  wire signed [15:0] SCOPE_SMP,
     input  wire               SCOPE_TOG,
+    // ── note-on 触发（每次按键触发翻转一次）────────────────────────
+    input  wire               SCOPE_TRG,
 
     output wire       tmds_clk_n_0,
     output wire       tmds_clk_p_0,
@@ -126,63 +128,235 @@ module hdmi_ui3_top (
     wire signed [7:0] tr       = info_s1[15:8];
 
     // ══════════════════════════════════════════════════════════════
-    //  李萨如（相位图）取样：clk_sys → clk_p
+    //  李萨如（相位图）：取样 + AGC + 单次捕获
     //
-    //    发端（add_top）每样点锁一次 SCOPE_SMP 并翻转 SCOPE_TOG。
-    //    这里把 SCOPE_TOG 打两拍后检测翻转沿产生单拍 plot；
-    //    SCOPE_SMP 在两次翻转之间稳定 1024 个 clk_sys 周期（20.5 us），
-    //    远大于两拍 clk_p（26.7 ns），所以直接在 plot 那拍采样即可。
+    //  1) 取样：发端（add_top）每样点锁一次 SCOPE_SMP 并翻转 SCOPE_TOG。
+    //     这里把 SCOPE_TOG 打两拍后检测翻转沿产生单拍 plot；
+    //     SCOPE_SMP 在两次翻转之间稳定 1024 个 clk_sys 周期（20.5 us），
+    //     远大于两拍 clk_p（26.7 ns），所以直接在 plot 那拍采样即可。
+    //
+    //  2) AGC：峰值跟随（瞬时攻击 / 慢衰减）→ 归一化增益。
+    //     解决两个问题：
+    //       · 轻力度时图只有窗口的 1/8 大 → 现在一律撑满
+    //       · 音符衰减过程中同一个椭圆被画成一串同心环 → 现在半径恒定
+    //         （这是钢琴/古筝"模糊"的真正原因，不是分辨率不够）
+    //
+    //  3) 单次捕获：SCOPE_TRG（note-on）→ 清零 → 画 200 ms → 冻结。
+    //     每个音只画一张干净、稳定、满幅的相位图。
     // ══════════════════════════════════════════════════════════════
     reg scope_t0, scope_t1, scope_t2;
+    reg trg_t0,   trg_t1,   trg_t2;
+
     always @(posedge clk_p) begin
         if (!rst_n) begin
-            scope_t0 <= 1'b0;
-            scope_t1 <= 1'b0;
-            scope_t2 <= 1'b0;
+            scope_t0 <= 1'b0; scope_t1 <= 1'b0; scope_t2 <= 1'b0;
+            trg_t0   <= 1'b0; trg_t1   <= 1'b0; trg_t2   <= 1'b0;
         end
         else begin
             scope_t0 <= SCOPE_TOG;
             scope_t1 <= scope_t0;
             scope_t2 <= scope_t1;
+            trg_t0   <= SCOPE_TRG;
+            trg_t1   <= trg_t0;
+            trg_t2   <= trg_t1;
         end
     end
-    wire plot = scope_t1 ^ scope_t2;
+    wire plot   = scope_t1 ^ scope_t2;      // 单拍：新样点
+    wire noteon = trg_t1   ^ trg_t2;        // 单拍：新的 note-on
 
-    reg signed [15:0] smp_q;
+    // ── 样点延迟线（相位图 y 轴取 Δ=24 样点前的自身）──────────────
+    //    不能用 L/R 做 XY —— 本工程是单声道，左右完全一样 → 一条直线。
+    //
+    //    ★ 必须注意：综合器会把「移位 + 只有末端被读 + 读出直接进寄存器」
+    //      识别成 SRL/RAM，如果这条链上还有复位逻辑，就会报
+    //         ERROR (PA2122) Not support WRITE_MODE = 2'b10
+    //      所以延迟链不带复位，初值用 initial 给（FPGA 上电即 0）。
+    (* syn_ramstyle = "registers" *)
+    reg signed [16*25-1:0] dly;
+    initial dly = {(16*25){1'b0}};
+
     always @(posedge clk_p) begin
-        if (!rst_n)   smp_q <= 16'sd0;
-        else if (plot) smp_q <= SCOPE_SMP;
+        if (plot) dly <= {dly[16*24-1:0], SCOPE_SMP};
+    end
+    wire signed [15:0] smp_q = dly[15:0];            // 当前样点
+    wire signed [15:0] smp_d = dly[16*24 +: 16];     // 24 个样点之前
+
+    // ── AGC 峰值跟随 ────────────────────────────────────────────
+    //    AGC_DEC = 4：满幅 32768 每样点降 4 → 8192 样点 ≈ 168 ms
+    //    比最低音周期（3.8 ms）慢得多，不会把椭圆本身画歪；
+    //    又比一个音的衰减快得多，所以半径能一直保持恒定。
+    localparam [15:0] AGC_DEC = 16'd4;
+
+    wire [15:0] ax = smp_q[15] ? (~smp_q + 16'd1) : smp_q;
+    wire [15:0] ay = smp_d[15] ? (~smp_d + 16'd1) : smp_d;
+
+    reg [15:0] pk;
+    always @(posedge clk_p) begin
+        if (!rst_n)       pk <= 16'd0;
+        else if (noteon)  pk <= 16'd0;          // 新音：重新起峰
+        else if (plot) begin
+            if (ax >= pk)          pk <= ax;
+            else if (pk > AGC_DEC) pk <= pk - AGC_DEC;
+            else                   pk <= 16'd0;
+        end
     end
 
-    // 延迟线 Δ=24 样点（≈0.49 ms）：y 轴取延迟后的样点，与 x 构成相位图。
-    // 不能用 L/R 做 XY —— 本工程是单声道，左右完全一样，会画成一条直线。
-    reg signed [15:0] dl [0:23];
-    integer li;
+    // ── 增益 = 2^-sh × Cq ───────────────────────────────────────
+    //    sh 把峰值挪到 8 位范围（峰 >> sh 落在 128..255），
+    //    Cq 再把剩下的 1~2 倍误差补平，于是峰值恒等于 ≈104（半窗）。
+    //    ★ 只用移位会得到一个 2 倍的锯齿：pk 每衰减一半，图就从"满"
+    //      跳回"半"，形成 ~90 Hz 的呼吸感。Cq 就是为了消掉它。
+    //
+    //    Cq = round(104 × 256 / p8)，按 p8 的高 5 位查表（32 项）
+    function [7:0] agc_gain;
+        input [4:0] i;
+        begin
+            case (i)
+            5'd16:   agc_gain = 8'd202;
+            5'd17:   agc_gain = 8'd190;
+            5'd18:   agc_gain = 8'd180;
+            5'd19:   agc_gain = 8'd171;
+            5'd20:   agc_gain = 8'd162;
+            5'd21:   agc_gain = 8'd155;
+            5'd22:   agc_gain = 8'd148;
+            5'd23:   agc_gain = 8'd142;
+            5'd24:   agc_gain = 8'd136;
+            5'd25:   agc_gain = 8'd131;
+            5'd26:   agc_gain = 8'd126;
+            5'd27:   agc_gain = 8'd121;
+            5'd28:   agc_gain = 8'd117;
+            5'd29:   agc_gain = 8'd113;
+            5'd30:   agc_gain = 8'd109;
+            5'd31:   agc_gain = 8'd106;
+            default: agc_gain = 8'd208;   // p8 < 128：小信号，给最大增益
+            endcase
+        end
+    endfunction
+
+    reg [3:0] pk_k;
+    always @(*) begin
+        if      (pk[15]) pk_k = 4'd15;
+        else if (pk[14]) pk_k = 4'd14;
+        else if (pk[13]) pk_k = 4'd13;
+        else if (pk[12]) pk_k = 4'd12;
+        else if (pk[11]) pk_k = 4'd11;
+        else if (pk[10]) pk_k = 4'd10;
+        else if (pk[9])  pk_k = 4'd9;
+        else if (pk[8])  pk_k = 4'd8;
+        else if (pk[7])  pk_k = 4'd7;
+        else if (pk[6])  pk_k = 4'd6;
+        else if (pk[5])  pk_k = 4'd5;
+        else if (pk[4])  pk_k = 4'd4;
+        else if (pk[3])  pk_k = 4'd3;
+        else if (pk[2])  pk_k = 4'd2;
+        else if (pk[1])  pk_k = 4'd1;
+        else             pk_k = 4'd0;
+    end
+
+    // ── AGC 计算：拆成 5 级流水 ──────────────────────────────────
+    //
+    //   ★ 一条组合链写下来是 15.2 ns（要求 13.33 ns @75 MHz），
+    //     在 clk_pix 上产生 17 个 setup 违例。所以拆成 5 级：
+    //        pl1  |x|、|y|、符号、峰值 MSB 位置
+    //        pl2  移位量 + 增益查表
+    //        pl3  归一化到 8 位
+    //        pl4  乘增益 + 限幅 + 符号 → 位图坐标
+    //        pl5  送位图打点
+    //     每级只在各自那拍更新，总延迟 5 拍 ≈ 67 ns，
+    //     对 48.8 kHz 的样点率完全无影响。
+
+    reg pl1, pl2, pl3, pl4, pl5;
     always @(posedge clk_p) begin
         if (!rst_n) begin
-            for (li = 0; li < 24; li = li + 1) dl[li] <= 16'sd0;
+            pl1 <= 1'b0; pl2 <= 1'b0; pl3 <= 1'b0; pl4 <= 1'b0; pl5 <= 1'b0;
         end
-        else if (plot) begin
-            for (li = 23; li > 0; li = li - 1) dl[li] <= dl[li-1];
-            dl[0] <= smp_q;
+        else begin
+            pl1 <= liss_plot;
+            pl2 <= pl1;  pl3 <= pl2;  pl4 <= pl3;  pl5 <= pl4;
         end
     end
-    wire signed [15:0] smp_d = dl[23];
 
-    // 样点 → 位图坐标（0..255）
-    //   ★ 增益取 27/16 = 1.6875：典型满幅（软限幅后峰值 ≈16000，
-    //     s[15:8]=62）映射到 ±104，图形占满整个盒子；
-    //     再大就会出界，所以后面加限幅到 ±104。
-    //     原来取 13/16，图只占盒子一半，看起来很小。
-    //   ±104 的东西让坐标落在 24..231，而显示窗口取位图中心 22..233。
-    wire signed [12:0] g_x = ($signed(smp_q[15:8]) * 27) >>> 4;
-    wire signed [12:0] g_y = ($signed(smp_d[15:8]) * 27) >>> 4;
-    wire signed [8:0]  cl_x = (g_x >  13'sd104) ?  9'sd104 :
-                              (g_x < -13'sd104) ? -9'sd104 : g_x[8:0];
-    wire signed [8:0]  cl_y = (g_y >  13'sd104) ?  9'sd104 :
-                              (g_y < -13'sd104) ? -9'sd104 : g_y[8:0];
-    wire [7:0] px_pt = 8'd128 + cl_x;
-    wire [7:0] py_pt = 8'd128 + cl_y;
+    // 1 级
+    reg [15:0] ux_r, uy_r;
+    reg        nx_r, ny_r;
+    reg [3:0]  pk_k_r;
+    always @(posedge clk_p) begin
+        if (pl1) begin
+            ux_r   <= ax;
+            uy_r   <= ay;
+            nx_r   <= smp_q[15];
+            ny_r   <= smp_d[15];
+            pk_k_r <= pk_k;
+        end
+    end
+
+    // 2 级
+    wire [3:0]  sh_c = (pk_k_r > 4'd7) ? (pk_k_r - 4'd7) : 4'd0;
+    wire [15:0] p8_c = pk >> sh_c;              // 128..255（pk>=128 时）
+    reg  [3:0]  sh_r;
+    reg  [7:0]  g_r;
+    always @(posedge clk_p) begin
+        if (pl2) begin
+            sh_r <= sh_c;
+            g_r  <= agc_gain(p8_c[7:3]);
+        end
+    end
+
+    // 3 级
+    reg [7:0] vx_r, vy_r;
+    always @(posedge clk_p) begin
+        if (pl3) begin
+            vx_r <= ux_r >> sh_r;
+            vy_r <= uy_r >> sh_r;
+        end
+    end
+
+    // 4 级：乘增益 + 限幅 + 回符号
+    //   ★ 8×8 乘法必须先把操作数扩展到 16 位，否则 Verilog 按操作数最大
+    //     位宽（8 位）算，结果直接截断。
+    wire [15:0] mx_c = ({8'd0, vx_r} * {8'd0, g_r}) >> 8;
+    wire [15:0] my_c = ({8'd0, vy_r} * {8'd0, g_r}) >> 8;
+    wire [7:0]  cx_c = (mx_c[7:0] > 8'd104) ? 8'd104 : mx_c[7:0];
+    wire [7:0]  cy_c = (my_c[7:0] > 8'd104) ? 8'd104 : my_c[7:0];
+    wire [7:0]  pxc  = nx_r ? (8'd128 - cx_c) : (8'd128 + cx_c);
+    wire [7:0]  pyc  = ny_r ? (8'd128 - cy_c) : (8'd128 + cy_c);
+
+    // ── 单次捕获窗口 ────────────────────────────────────────────
+    //    200 ms @ 48828 Hz = 9766 个样点
+    localparam [15:0] CAP_LEN = 16'd9765;
+
+    reg        cap_run;
+    reg [15:0] cap_cnt;
+    always @(posedge clk_p) begin
+        if (!rst_n) begin
+            cap_run <= 1'b0;
+            cap_cnt <= 16'd0;
+        end
+        else if (noteon) begin
+            cap_run <= 1'b1;
+            cap_cnt <= 16'd0;
+        end
+        else if (cap_run && plot) begin
+            if (cap_cnt >= CAP_LEN) cap_run <= 1'b0;
+            else                    cap_cnt <= cap_cnt + 16'd1;
+        end
+    end
+
+    // pk==0（刚复位/刚触发）时增益未建立，这一拍不打点，避免画出边界角点
+    wire liss_plot = plot && cap_run && (pk != 16'd0);
+
+    // 第 5 级：坐标送位图
+    reg [7:0] px_pt, py_pt;
+    always @(posedge clk_p) begin
+        if (!rst_n) begin
+            px_pt   <= 8'd128;
+            py_pt   <= 8'd128;
+        end
+        else if (pl5) begin
+            px_pt   <= pxc;
+            py_pt   <= pyc;
+        end
+    end
 
     // ══════════════════════════════════════════════════════════════
     //  切页淡入淡出：12 ms 淡出（15→0）→ 黑场换页 → 12 ms 淡入（0→15）
@@ -267,16 +441,16 @@ module hdmi_ui3_top (
     wire v_vis = (vcnt >= V_START) && (vcnt < V_START + V_VIS);
     wire vis   = h_vis && v_vis;
 
-    // 李萨如位图每帧清一次（4096 字 @75 MHz = 55 us，场消隐 30 行 ≈ 667 us）
-    // 放在场首第 2 行，避开有效显示区。
-    // ★ 每 3 帧才清一次（约 20 Hz）：单帧只有 ~800 个样点，相位图又在缓慢
-    //   进动，清得太勤会看到一串散点。累积 3 帧 ≈ 2400 点后轨迹才连贯。
-    reg [1:0] fclr_div;
+    // 位图清零：只由 note-on 驱动（单次捕获的前提）
+    //   ★ 原来是每 3 帧清一次（配合连续刷新）。现在改成"一个音一张图"，
+    //     画面冻结后不再变化，也不需要周期清屏。
+    //   boot_cnt==8 是上电后的一次性清屏，防止 BSRAM 上电初值未定。
+    reg [3:0] boot_cnt;
     always @(posedge clk_p) begin
-        if (!rst_n)                          fclr_div <= 2'd0;
-        else if (vcnt == 12'd2 && hcnt == 12'd0) fclr_div <= fclr_div + 2'd1;
+        if (!rst_n)                 boot_cnt <= 4'd0;
+        else if (boot_cnt != 4'd15) boot_cnt <= boot_cnt + 4'd1;
     end
-    wire frame_clr = (fclr_div == 2'd0) && (vcnt == 12'd2) && (hcnt == 12'd1);
+    wire liss_clr = noteon || (boot_cnt == 4'd8);
 
     // 同步脉冲位置按 CEA-861：跟在【前沿】之后
     wire hsync = ~((hcnt >= H_FP) && (hcnt < H_FP + H_SYNC));
@@ -562,10 +736,10 @@ module hdmi_ui3_top (
     ui_liss_ram u_liss (
         .clk    (clk_p),
         .rst_n  (rst_n),
-        .plot   (plot),
+        .plot   (pl5),              // 坐标已对齐，且由捕获窗口门控
         .plot_x (px_pt),
         .plot_y (py_pt),
-        .clr_en (frame_clr),
+        .clr_en (liss_clr),
         .clr_done(),
         .raddr  (liss_raddr),
         .rdata  (liss_rdata)
