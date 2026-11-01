@@ -62,11 +62,19 @@ module hdmi_ui3_top (
 
     // ══════════════════════════════════════════════════════════════
     //  时钟与复位
+    //  ★ SIM_UI3 仅用于离线出图（tb 直接喂 clk，绕过 PLL 与 DVI 原语），
+    //    build_full.tcl 从不定义它，不影响综合。
     // ══════════════════════════════════════════════════════════════
+`ifdef SIM_UI3
+    wire pll_lock = 1'b1;
+    wire clk_p    = clk;
+    wire clk_p5   = clk;
+`else
     wire pll_lock, clk_p, clk_p5;
     Gowin_PLL_720P u_pll (
         .lock(pll_lock), .clkout0(clk_p), .clkout1(clk_p5), .clkin(clk)
     );
+`endif
 
     reg [3:0] por = 4'd0;
     always @(posedge clk_p) begin
@@ -192,7 +200,10 @@ module hdmi_ui3_top (
 
     wire [7:0] tcol = cx[10:3];
     wire [2:0] tbit = cx[2:0];
-    wire [5:0] tln  = cy[8:4];
+    // ★★ 必须取 cy[9:4]（6 位，0..44）。写成 cy[8:4] 只有 5 位、最大 31，
+    //    超过 py=519 之后行号回绕，第 0/4 行会被重复画到下面去
+    //    （实测 y=520 处又出现一次 "PIANO64 MAIN"）。
+    wire [5:0] tln  = cy[9:4];
     wire [3:0] tgy  = cy[3:0];
 
     // 柱子列选：列距 32、柱宽 24、起点 x=16
@@ -389,7 +400,7 @@ module hdmi_ui3_top (
 
     wire [9:0] bh_a = {2'b00, bh} + {3'b000, bh[7:3]} +
                       {4'b0000, bh[7:4]} + {6'b000000, bh[7:6]};
-    wire [9:0] bh_b = {1'b0, bh, 1'b0} + {2'b00, bh[7:1]} + {2'b00, bh[7:1]};
+    wire [9:0] bh_b = {1'b0, bh, 1'b0} + {2'b00, bh[7:1]};
 
     wire [9:0] bhpx_sel = (page_show == 2'd1) ? bh_b : bh_a;
 
@@ -537,6 +548,7 @@ module hdmi_ui3_top (
     // ══════════════════════════════════════════════════════════════
     //  DVI 输出
     // ══════════════════════════════════════════════════════════════
+`ifndef SIM_UI3
     dvi_tx_top u_dvi (
         .pixel_clock   (clk_p),
         .ddr_bit_clock (clk_p5),
@@ -550,6 +562,7 @@ module hdmi_ui3_top (
         .tmds_d1       ({tmds_d_p_0[1], tmds_d_n_0[1]}),
         .tmds_d2       ({tmds_d_p_0[2], tmds_d_n_0[2]})
     );
+`endif
 
     // BANDS_TICK 只用于说明数据静止窗口，渲染侧不做门控，这里显式忽略
     /* verilator lint_off UNUSED */
