@@ -207,28 +207,30 @@ module hdmi_ui3_top (
     //    ★ 只用移位会得到一个 2 倍的锯齿：pk 每衰减一半，图就从"满"
     //      跳回"半"，形成 ~90 Hz 的呼吸感。Cq 就是为了消掉它。
     //
-    //    Cq = round(104 × 256 / p8)，按 p8 的高 5 位查表（32 项）
+    //    Cq = round(96 × 256 / p8)，按 p8 的高 5 位查表（32 项）
+    //    ★ 目标 96（不是 104）：留出 8 px 边距，图形不贴框边，
+    //      也避免 AGC 量化误差导致轻微削顶。
     function [7:0] agc_gain;
         input [4:0] i;
         begin
             case (i)
-            5'd16:   agc_gain = 8'd202;
-            5'd17:   agc_gain = 8'd190;
-            5'd18:   agc_gain = 8'd180;
-            5'd19:   agc_gain = 8'd171;
-            5'd20:   agc_gain = 8'd162;
-            5'd21:   agc_gain = 8'd155;
-            5'd22:   agc_gain = 8'd148;
-            5'd23:   agc_gain = 8'd142;
-            5'd24:   agc_gain = 8'd136;
-            5'd25:   agc_gain = 8'd131;
-            5'd26:   agc_gain = 8'd126;
-            5'd27:   agc_gain = 8'd121;
-            5'd28:   agc_gain = 8'd117;
-            5'd29:   agc_gain = 8'd113;
-            5'd30:   agc_gain = 8'd109;
-            5'd31:   agc_gain = 8'd106;
-            default: agc_gain = 8'd208;   // p8 < 128：小信号，给最大增益
+            5'd16:   agc_gain = 8'd186;
+            5'd17:   agc_gain = 8'd176;
+            5'd18:   agc_gain = 8'd166;
+            5'd19:   agc_gain = 8'd158;
+            5'd20:   agc_gain = 8'd150;
+            5'd21:   agc_gain = 8'd143;
+            5'd22:   agc_gain = 8'd137;
+            5'd23:   agc_gain = 8'd131;
+            5'd24:   agc_gain = 8'd125;
+            5'd25:   agc_gain = 8'd120;
+            5'd26:   agc_gain = 8'd116;
+            5'd27:   agc_gain = 8'd112;
+            5'd28:   agc_gain = 8'd108;
+            5'd29:   agc_gain = 8'd104;
+            5'd30:   agc_gain = 8'd101;
+            5'd31:   agc_gain = 8'd98;
+            default: agc_gain = 8'd192;   // p8 < 128：小信号，给最大增益
             endcase
         end
     endfunction
@@ -316,34 +318,37 @@ module hdmi_ui3_top (
     //     位宽（8 位）算，结果直接截断。
     wire [15:0] mx_c = ({8'd0, vx_r} * {8'd0, g_r}) >> 8;
     wire [15:0] my_c = ({8'd0, vy_r} * {8'd0, g_r}) >> 8;
-    wire [7:0]  cx_c = (mx_c[7:0] > 8'd104) ? 8'd104 : mx_c[7:0];
-    wire [7:0]  cy_c = (my_c[7:0] > 8'd104) ? 8'd104 : my_c[7:0];
+    wire [7:0]  cx_c = (mx_c[7:0] > 8'd96) ? 8'd96 : mx_c[7:0];
+    wire [7:0]  cy_c = (my_c[7:0] > 8'd96) ? 8'd96 : my_c[7:0];
     wire [7:0]  pxc  = nx_r ? (8'd128 - cx_c) : (8'd128 + cx_c);
     wire [7:0]  pyc  = ny_r ? (8'd128 - cy_c) : (8'd128 + cy_c);
 
-    // ── 单次捕获窗口 ────────────────────────────────────────────
-    //    200 ms @ 48828 Hz = 9766 个样点
-    localparam [15:0] CAP_LEN = 16'd9765;
+    // ── 触发后静默 10 ms，等 AGC 收敛 ───────────────────────────
+    //    note-on 那一拍 pk 被清 0，紧接着的第一个样点往往接近过零（很小），
+    //    于是增益被放到最大 → 后面几个样点直接钳到 ±96 → 画出一坨垃圾。
+    //    等 10 ms（500 个样点）pk 已经跟住包络，再开始画就干净了。
+    //    ★ 不再有"捕获 200 ms 后冻结"—— 帧存靠荧光衰减持续刷新。
+    localparam [15:0] SETTLE_LEN = 16'd500;     // 10 ms @ 48828 Hz
 
-    reg        cap_run;
-    reg [15:0] cap_cnt;
+    reg [15:0] settle_cnt;
+    reg        settle_ok;
     always @(posedge clk_p) begin
         if (!rst_n) begin
-            cap_run <= 1'b0;
-            cap_cnt <= 16'd0;
+            settle_cnt <= 16'd0;
+            settle_ok  <= 1'b1;                  // 上电不阻塞
         end
         else if (noteon) begin
-            cap_run <= 1'b1;
-            cap_cnt <= 16'd0;
+            settle_cnt <= 16'd0;
+            settle_ok  <= 1'b0;
         end
-        else if (cap_run && plot) begin
-            if (cap_cnt >= CAP_LEN) cap_run <= 1'b0;
-            else                    cap_cnt <= cap_cnt + 16'd1;
+        else if (!settle_ok && plot) begin
+            if (settle_cnt >= SETTLE_LEN) settle_ok <= 1'b1;
+            else                          settle_cnt <= settle_cnt + 16'd1;
         end
     end
 
     // pk==0（刚复位/刚触发）时增益未建立，这一拍不打点，避免画出边界角点
-    wire liss_plot = plot && cap_run && (pk != 16'd0);
+    wire liss_plot = plot && settle_ok && (pk != 16'd0);
 
     // 第 5 级：坐标送位图
     reg [7:0] px_pt, py_pt;
@@ -441,16 +446,18 @@ module hdmi_ui3_top (
     wire v_vis = (vcnt >= V_START) && (vcnt < V_START + V_VIS);
     wire vis   = h_vis && v_vis;
 
-    // 位图清零：只由 note-on 驱动（单次捕获的前提）
-    //   ★ 原来是每 3 帧清一次（配合连续刷新）。现在改成"一个音一张图"，
-    //     画面冻结后不再变化，也不需要周期清屏。
-    //   boot_cnt==8 是上电后的一次性清屏，防止 BSRAM 上电初值未定。
+    // ── 帧存维护：上电全清一次 + 每帧荧光衰减 ────────────────
+    //   ★ 不再周期全清。衰减 = 每帧整屏强度 -1，于是：
+    //       最长余辉 15 帧（60 Hz 下 250 ms），就是记忆空档
+    //       瞬态垃圾只有 1 级亮度，一两个周期内就看不见了
+    //   衰减扇描 16384 字 × 2 拍 = 437 us，放在场消隐里（消隐 4.4 ms）
     reg [3:0] boot_cnt;
     always @(posedge clk_p) begin
         if (!rst_n)                 boot_cnt <= 4'd0;
         else if (boot_cnt != 4'd15) boot_cnt <= boot_cnt + 4'd1;
     end
-    wire liss_clr = noteon || (boot_cnt == 4'd8);
+    wire liss_clr   = (boot_cnt == 4'd8);
+    wire liss_decay = (vcnt == 12'd1) && (hcnt == 12'd0);
 
     // 同步脉冲位置按 CEA-861：跟在【前沿】之后
     wire hsync = ~((hcnt >= H_FP) && (hcnt < H_FP + H_SYNC));
@@ -718,10 +725,10 @@ module hdmi_ui3_top (
     wire [9:0]  gaddr = {char1, 4'd0} + {6'd0, tgy1};
 
     // ══════════════════════════════════════════════════════════════
-    //  李萨如位图读口（256×256，一个 word = 一行里的 16 像素）
-    //    raddr = row*16 + (x>>4)，bit = x&15
+    //  李萨如帧存读口（256×256，4 bit/像素）
+    //    addr = row*64 + (x>>2)，nibble = x&3
     //    显示窗口 = 盒子 (1060..1271, 60..271) = 212×212，
-    //    取位图中心区 22..233（因为打点只用 24..231，见上面的 13/16 增益）
+    //    取位图中心区 22..233（因为打点范围是 32..224，见 AGC 目标 96）
     // ══════════════════════════════════════════════════════════════
     wire [12:0] lpx = {1'b0, px1} - 13'd1060;
     wire [12:0] lpy = {1'b0, py1} - 13'd60;
@@ -729,20 +736,22 @@ module hdmi_ui3_top (
                            (lpx < 13'd212) && (lpy < 13'd212);
     wire [8:0]  lbx = lpx[8:0] + 9'd22;      // 位图 x 0..233
     wire [8:0]  lby = lpy[8:0] + 9'd22;      // 位图 y 0..233
-    wire [11:0] liss_raddr = liss_in1 ? ({lby[7:0], 4'd0} + {6'd0, lbx[7:4]})
-                                      : 12'd0;
+    wire [13:0] liss_raddr = liss_in1 ? ({6'd0, lby[7:0], 6'd0} +
+                                        {8'd0, lbx[7:2]}) : 14'd0;
     wire [15:0] liss_rdata;
 
     ui_liss_ram u_liss (
-        .clk    (clk_p),
-        .rst_n  (rst_n),
-        .plot   (pl5),              // 坐标已对齐，且由捕获窗口门控
-        .plot_x (px_pt),
-        .plot_y (py_pt),
-        .clr_en (liss_clr),
-        .clr_done(),
-        .raddr  (liss_raddr),
-        .rdata  (liss_rdata)
+        .clk       (clk_p),
+        .rst_n     (rst_n),
+        .plot      (pl5),           // 坐标已对齐，且由 settle 门控
+        .plot_x    (px_pt),
+        .plot_y    (py_pt),
+        .clr_en    (liss_clr),
+        .clr_done  (),
+        .decay_req (liss_decay),
+        .decay_busy(),
+        .raddr     (liss_raddr),
+        .rdata     (liss_rdata)
     );
 
     // ══════════════════════════════════════════════════════════════
@@ -771,7 +780,7 @@ module hdmi_ui3_top (
     reg        csel2;
     reg [7:0]  camp2;
     reg        liss_in2;
-    reg [3:0]  liss_bit2;
+    reg [1:0]  liss_bit2;
 
     always @(posedge clk_p) begin
         px2     <= px1;
@@ -784,7 +793,7 @@ module hdmi_ui3_top (
         csel2   <= csel1;
         camp2   <= comp_cap[{cidx1, 3'b000} +: 8];
         liss_in2  <= liss_in1;
-        liss_bit2 <= lbx[3:0];
+        liss_bit2 <= lbx[1:0];
     end
 
     wire t_lit2 = txt_on2 && glyph_d[tbit2];
@@ -906,10 +915,18 @@ module hdmi_ui3_top (
                      (y2 >= 12'd8) && (y2 <= 12'd51);
 
     // ══════════════════════════════════════════════════════════════
-    //  李萨如：轨迹点 + 中心十字线（仅主页面）
+    //  李萨如：荧光强度 → 颜色 + 中心十字线（仅主页面）
     //    盒子 (1060..1271, 60..271)，中心 (1166, 166)
+    //    强度 0..15 → 亮度 0..100%（橙色 0xFF8020 等比缩放）
     // ══════════════════════════════════════════════════════════════
-    wire liss_lit = (page_show == 2'd0) && liss_in2 && liss_rdata[liss_bit2];
+    wire [3:0]  liss_int = liss_rdata[{liss_bit2, 2'b00} +: 4];
+    wire [7:0]  li       = {liss_int, 4'd0};       // 0,16,...,240
+    wire [7:0]  liss_r8  = li + li[7:4];           // ×1.0625 → 255
+    wire [7:0]  liss_g8  = li >> 1;                // ≈ 0x80
+    wire [7:0]  liss_b8  = li >> 3;                // ≈ 0x20
+    wire [23:0] liss_col = {liss_r8, liss_g8, liss_b8};
+
+    wire liss_lit = (page_show == 2'd0) && liss_in2 && (liss_int != 4'd0);
 
     wire liss_cross = (page_show == 2'd0) &&
                       (x2 > 12'd1060) && (x2 < 12'd1271) &&
@@ -926,7 +943,7 @@ module hdmi_ui3_top (
         else if (c_yaxis)    rgb = 24'h90A0B0;      // 分量图 Y 轴
         else if (c_xaxis)    rgb = 24'h90A0B0;      // 分量图 X 轴
         else if (c_grid)     rgb = 24'h303840;      // 分量图网格线
-        else if (liss_lit)   rgb = 24'hFF8020;      // 李萨如轨迹（橙）
+        else if (liss_lit)   rgb = liss_col;        // 李萨如荧光（强度→亮度）
         else if (liss_cross) rgb = 24'h303840;      // 李萨如中心十字
         else if (comp_lit)   rgb = 24'h40C0FF;      // 分量柱（青）
         else if (t_lit2)     rgb = 24'hFFFFFF;      // 文字
