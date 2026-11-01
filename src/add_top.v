@@ -437,6 +437,11 @@ module add_top #(
     wire [7:0] comp_amp;
     wire       comp_vld;
 
+    // 谐波引擎的同名监控（唢呐/笛子）
+    wire [6:0] harm_idx;
+    wire [7:0] harm_amp;
+    wire       harm_vld;
+
     add_engine8 #(
         .NVOICE   (NVOICE),
         .NPART    (128),
@@ -573,6 +578,9 @@ module add_top #(
         .sample_l   (sua_l),
         .sample_r   (sua_r),
         .v_idle     (sua_v_idle),
+        .part_idx   (harm_idx),
+        .part_amp   (harm_amp),
+        .part_vld   (harm_vld),
 
         .clk100              (ddr_clk_x1),
         .rst100_n            (ddr_init_done),
@@ -800,30 +808,71 @@ module add_top #(
     //======================================================================
     //  COMPONENT 64：把 128 个正弦分量两两合并成 64 根柱
     //
-    //  声部按 p = 0..127 顺序扫，每个分量在 s==6 给出一次 (idx, amp)。
-    //     idx 偶数 → 暂存到 pmax
-    //     idx 奇数 → comp_bar[idx>>1] = max(pmax, amp)   （两根取大值）
-    //  这样 64 根柱覆盖全部 128 个分量，又不会因为 128 根太细看不清。
+    //  数据源按音色二选一（和音源 mux 用同一个 is_harm）：
+    //      钢琴/古筝 → add_engine8       的 part_idx/part_amp（128 分量）
+    //      唢呐/笛子 → add_engine_harm   的 part_idx/part_amp（谐波表）
     //
-    //  ★ 不在每个样点清零：静音后保留最后一帧的包络，
-    //    这样松开键以后图还停在那里，评委能看清谐波形状。
-    //  ★ 声部扫满一轮是 1024 拍，用 comp_vld 门控写入即可，
-    //    不存在同一个 bar 被两轮混写的问题（一轮内每个 bar 只写一次）。
+    //  显示策略（2026-11-01 改，原版是「瞬时值 + 冻结」，会闪一下就没了）：
+    //    ① note-on 时【清空全部 64 根】——立即重画，快奏不糊
+    //       声部扫完 128 分量只要 1 个样点周期 = 20.5 us，
+    //       60 fps 的一帧是 16.7 ms，所以视觉上是瞬间完成
+    //    ② 峰值保持：新值 > 当前值就立即上升（0 延迟）
+    //    ③ 回落：每 ~94 个样点全部降 1 级 → 255 级约 0.49 s 落满
+    //
+    //  快奏时每次按键图瞬间换成新音的包络（不会把上一个音的残留糊上来）；
+    //  按住不松时峰值持续刷新、柱子稳定；松手后 0.5 s 平滑落光。
     //======================================================================
+    localparam integer FS_HZ          = 48828;       // 音频样点率
+    localparam integer COMP_FALL_MS   = 500;         // 回落时间
+    // 每降 1 级间隔的样点数：0.5 s / 255 级 ≈ 94 个样点
+    localparam integer COMP_FALL_STEP = (FS_HZ / 1000) * COMP_FALL_MS / 255;
+
+    // 音色二选一
+    wire [6:0] src_idx = is_harm ? harm_idx : comp_idx;
+    wire [7:0] src_amp = is_harm ? harm_amp : comp_amp;
+    wire       src_vld = is_harm ? harm_vld : comp_vld;
+
+    // 任意一个声部被触发 → 立即清空重画
+    wire comp_clr = (|eng_trig) | sua_trig;
+
     reg [7:0] comp_bar [0:63];
     reg [7:0] pmax;
+    reg [6:0] fdiv;
+    reg [7:0] mx;
     integer   cbi;
 
     always @(posedge clk_sys) begin
         if (!engine_rst_n) begin
             pmax <= 8'd0;
+            fdiv <= 7'd0;
             for (cbi = 0; cbi < 64; cbi = cbi + 1) comp_bar[cbi] <= 8'd0;
         end
-        else if (comp_vld) begin
-            if (!comp_idx[0]) pmax <= comp_amp;
-            else begin
-                comp_bar[comp_idx[6:1]] <= (comp_amp > pmax) ? comp_amp : pmax;
-                pmax <= 8'd0;
+        else begin
+            // ── ③ 回落：每 COMP_FALL_STEP 个样点全部降 1 级 ────────
+            //    先写，下面峰值更新的优先级更高（同拍冲突时峰值赢）
+            if (tick) begin
+                if (fdiv >= COMP_FALL_STEP[6:0] - 7'd1) begin
+                    fdiv <= 7'd0;
+                    for (cbi = 0; cbi < 64; cbi = cbi + 1)
+                        if (comp_bar[cbi] != 8'd0)
+                            comp_bar[cbi] <= comp_bar[cbi] - 8'd1;
+                end
+                else fdiv <= fdiv + 7'd1;
+            end
+
+            // ── ① note-on 清空 ──────────────────────────────────
+            if (comp_clr)
+                for (cbi = 0; cbi < 64; cbi = cbi + 1) comp_bar[cbi] <= 8'd0;
+
+            // ── ② 峰值保持（放最后 → 同拍冲突时它赢）──────────────
+            if (src_vld) begin
+                if (!src_idx[0]) pmax <= src_amp;
+                else begin
+                    mx = (src_amp > pmax) ? src_amp : pmax;
+                    if (mx > comp_bar[src_idx[6:1]])
+                        comp_bar[src_idx[6:1]] <= mx;
+                    pmax <= 8'd0;
+                end
             end
         end
     end

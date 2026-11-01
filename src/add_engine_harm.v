@@ -59,6 +59,14 @@ module add_engine_harm #(
     output wire signed [15:0]      sample_r,
     output wire [NVOICE-1:0]       v_idle,
 
+    // ── 谐波幅度监控（给 HDMI「COMPONENT 64」柱图用）─────────────
+    //    与 add_voice8 的同名口完全同构，add_top 按 is_harm 二选一。
+    //    r4_pm = 第 m 个谐波的瞬时幅度（= env × hAS），pv4 = 有效。
+    //    ★ 纯观察口，不参与任何运算。
+    output reg  [6:0]              part_idx,
+    output reg  [7:0]              part_amp,
+    output reg                     part_vld,
+
     // ── 唢呐：DDR 按音取表 ──────────────────────────────────
     input  wire                    clk100,         // DDR 用户域
     input  wire                    rst100_n,
@@ -330,6 +338,11 @@ module add_engine_harm #(
     reg signed [31:0] r4_pm;
     reg signed [31:0] r4_snf;
 
+    // ★ 新增：谐波序号延迟链。原流水只把 m 带到 r1（S1 算相位要用），
+    //   但 r4_pm 是 S4 的幅度，要配对它的谐波号必须再延 3 拍。
+    //   纯追加，不动任何现有赋值。
+    reg [7:0] r2_m, r3_m, r4_m;
+
     reg pv0, pv1, pv2, pv3, pv4;
 
     // ── S1（ROM 数据 → 插值 / hAS / dmt）───────────────────────────
@@ -466,6 +479,9 @@ module add_engine_harm #(
             r3_sn0  <= rom_sn[15:0];
             r3_sn1  <= rom_sn[31:16];
             r3_frac <= r2_frac;
+            r2_m    <= r1_m;                 // ★ 新增：谐波号延迟链
+            r3_m    <= r2_m;
+            r4_m    <= r3_m;
             r2_env  <= r1_env;
             r2_hAS  <= r1_hAS;
             r2_frac <= s2_theta[8:1];
@@ -645,6 +661,29 @@ module add_engine_harm #(
         .sample_l    (sample_l),
         .sample_r    (sample_r)
     );
+
+    // ════════════════════════════════════════════════════════════════
+    //  谐波幅度监控 → HDMI「COMPONENT 64」
+    //
+    //  pv4 高 = 这一拍 r4_pm 是有效的「第 r4_m 个谐波幅度」。
+    //  r4_pm = env × hAS，满量程约 127×4096 = 2^19，所以取 [18:11] 得 0..255。
+    //  ★ 定标如果偏小/偏大，只改这一行的切片位置即可：
+    //      偏小 → 改成 [20:13]    偏大（削顶）→ 改成 [16:9]
+    // ════════════════════════════════════════════════════════════════
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            part_idx <= 7'd0;
+            part_amp <= 8'd0;
+            part_vld <= 1'b0;
+        end
+        else begin
+            part_vld <= pv4;
+            if (pv4) begin
+                part_idx <= r4_m[6:0];
+                part_amp <= r4_pm[31] ? 8'd0 : r4_pm[18:11];
+            end
+        end
+    end
 
 endmodule
 
