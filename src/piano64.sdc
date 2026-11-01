@@ -1,7 +1,6 @@
 create_clock -name CLOCK_50 -period 20.000 -waveform {0.000 10.000} [get_ports {CLOCK_50}]
 create_generated_clock -name CLK_SYS -source [get_ports {CLOCK_50}] -divide_by 1 [get_nets {clk_sys}]
 set_false_path -from [get_ports {RESET_n}]
-set_false_path -from [get_ports {KEY[*]}]
 
 # Async CDC: CLK_SYS -> CLOCK_50
 # u_led (WS2812) runs on raw CLOCK_50; all of its control signals come from

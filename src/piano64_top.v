@@ -14,7 +14,7 @@
 //    跨域方式见 hdmi_spec_top 里的注释（抓 tick 高电平，data 有几十 ms 静止窗口）。
 //
 //  引脚：完全等于 piano64.cst 的全部引脚 + TMDS 四对差分
-//        （V22/AB13/AA13 三个与 HDMI 工程同名同脚，无双驱冲突）
+//        （V22/AA13 两个与 HDMI 工程同名同脚，无双驱冲突）
 //==========================================================================
 `default_nettype none
 
@@ -25,7 +25,6 @@ module piano64_top #(
     // ── 与 add_top 完全一致的板级引脚 ──────────────────────────────
     input  wire       CLOCK_50,
     input  wire       RESET_n,
-    input  wire [6:0] KEY,
     input  wire [8:0] KEY_R1,
     input  wire [8:0] KEY_R2,
     input  wire [1:0] KEY_AUX,
@@ -78,7 +77,6 @@ module piano64_top #(
     ) u_audio (
         .CLOCK_50   (CLOCK_50),
         .RESET_n    (RESET_n),
-        .KEY        (KEY),
         .KEY_R1     (KEY_R1),
         .KEY_R2     (KEY_R2),
         .KEY_AUX    (KEY_AUX),

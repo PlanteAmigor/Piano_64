@@ -81,7 +81,7 @@ set_option -use_sspi_as_gpio 1
 set_option -use_mspi_as_gpio 1
 set_option -verilog_std sysv2017
 # ★ 实测：1/1 比默认好很多（违规 18 vs 49），不要删
-set_option -place_option 1
-set_option -route_option 1
+set_option -place_option 2
+set_option -route_option 2
 
 run all

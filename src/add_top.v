@@ -1,13 +1,13 @@
 //==========================================================================
-//  piano64 —— 64 路加法分量钢琴，【只有按键发声模式】
+//  piano64 —— 64 路加法分量钢琴（8 音键 + 移调键 + 2 个功能键）
 //
-//  与原工程（piano_twinkle_dac）完全一致的硬件：
-//    · 按键：KEY[0..5]=do re mi fa sol la  KEY[7]=升八度 KEY[8]=降八度
-//            KEY[6] 原为模式键，本工程只有一种模式 → 空闲不用
-//    · 灯带：20 颗，只有 7 颗按键指示灯（按下亮、松开灭），其余全黑
-//            第 5~11 颗（索引 4~10）：KEY[0]→索引10 … KEY[6]→索引4
+//  按键：
+//    · J13 双触点力度键盘 9 组：组 0~7 = 8 个音键，组 8 = 移调键
+//    · KEY_AUX[0] (U38/C18) = 音色键，短按循环 钢琴→古筝→唢呐→笛子
+//    · KEY_AUX[1] (U37/C19) = 效果器键（暂未接音频，仅状态）
+//    · KEY0 (AA13)          = 三模式循环（主页面/测试/教学）
 //
-//  去掉的：自动演奏、指导模式、音色切换、八度切换、常亮状态灯
+//  已删除：J14 六个独立键、两首内置曲谱、指导模式、波形显示
 //  分量数：每音 64 路（赛题拓展 1「单音加法分量 ≥32 路」）
 //==========================================================================
 `default_nettype none
@@ -20,7 +20,6 @@ module add_top #(
 )(
     input  wire       CLOCK_50,   // 50 MHz 晶振 V22（先进 PLL）
     input  wire       RESET_n,
-    input  wire [6:0] KEY,        // [0..5]=do re mi fa sol la  [6]=模式键，悬空=1 按下=0
     // ── 18 键力度键盘（J13，2026-10-30 接入）────────────────────
     //    两排一前一后配对成 9 组，组 0..7 = 8 音键，组 8 = 切音高
     //    ★ RTL 尚未接入，先声明端口让 cst 能通过综合
@@ -67,15 +66,8 @@ module add_top #(
     output wire            SPEC_TICK
 );
 
-    // ★ 20 个键的原始电平（0=按下）。RTL 接入前先保留引用，避免综合优化掉端口。
-    wire [19:0] key_pad_raw = {KEY_AUX, KEY_R2, KEY_R1};
-    /* verilator lint_off UNUSED */
-    wire        _unused_keys = ^key_pad_raw;
-    /* verilator lint_on UNUSED */
-
     localparam integer NVOICE    = 8;      // ★ 4 → 8：只改这个参数（PH_SHIFT = 8/8 = 1 仍成立）
     localparam integer MIX_SHIFT = 1;
-    localparam [2:0]   M_FREE    = 3'd2;       // 只有这一种模式
 
     //======================================================================
     //  时钟：50 MHz → PLL → 全局时钟网（频率不变，只为降时钟偏斜）
@@ -139,24 +131,6 @@ module add_top #(
     end
 
     //======================================================================
-    //  按键扫描（9 个引脚全接，功能见文件头）
-    //======================================================================
-    wire [6:0] key_state, key_press, key_release;
-
-    key_scan #(
-        .N        (7),
-        .DEBOUNCE (DEBOUNCE),
-        .IMMEDIATE(1)
-    ) u_keys (
-        .clk         (clk_sys),
-        .rst_n       (engine_rst_n),
-        .key_in      (KEY),
-        .key_state   (key_state),
-        .key_press   (key_press),
-        .key_release (key_release)
-    );
-
-    //======================================================================
     //  ★ 18 键双触点力度键盘（J13）
     //    KEY_R1 = 前触点（先闭合）  KEY_R2 = 后触点（后闭合）
     //    Δt 越小 = 力度越大；两触点都闭合才确认按下，都断开才确认抬起
@@ -204,52 +178,10 @@ module add_top #(
     wire [7:0]  note_key_press = kd_state[7:0] & ~kd_state_d;
     wire [63:0] note_key_vel   = kd_vel[63:0];
 
-    // 模式/音色键：改用上方独立键 KEY_AUX[0]（旧 P14 不再使用）
-    wire       mode_key_hit = aux_state[0];
-    wire       mode_key_rel = aux_release[0];
-
-    //======================================================================
-    //  模式：1=按键发声  2=指导·小星星  3=指导·欢乐颂
-    //======================================================================
-    localparam [1:0] MD_FREE  = 2'd1,
-                     MD_TWIN  = 2'd2,
-                     MD_ODE   = 2'd3;
-
-    reg [1:0] mode;
-
-    //======================================================================
-    //  KEY[6] 长短按区分
-    //    短按（松开时、且没按满 1 s）→ 切模式 1/2/3
-    //    长按（按满 1 s）          → 切音色 钢琴/古筝
-    //======================================================================
-    localparam integer LP_LIMIT = 50_000_000;       // 1 s @50MHz
-    localparam [25:0]  LP_MAX   = LP_LIMIT - 1;
-
-    reg [25:0] lp_cnt;
-    reg        lp_fired;                            // 本次按键已判定为长按
-
-    always @(posedge clk_sys) begin
-        if (!engine_rst_n) begin
-            lp_cnt   <= 26'd0;
-            lp_fired <= 1'b0;
-        end
-        else if (mode_key_hit) begin                // 按住
-            if (lp_cnt != LP_MAX) lp_cnt <= lp_cnt + 26'd1;
-            else                  lp_fired <= 1'b1;
-        end
-        else begin                                  // 松开
-            lp_cnt   <= 26'd0;
-            lp_fired <= 1'b0;
-        end
-    end
-
-    wire timbre_toggle = (lp_cnt == LP_MAX) && !lp_fired;   // 按满 1 s 那一拍
-    wire mode_toggle   = mode_key_rel && !lp_fired;         // 短按松开
-
-    always @(posedge clk_sys) begin
-        if (!engine_rst_n)          mode <= MD_FREE;
-        else if (mode_toggle)       mode <= (mode == MD_ODE) ? MD_FREE : mode + 2'd1;
-    end
+    // 音色键：上方独立键 KEY_AUX[0]（U38 / C18）
+    // ★ 短按松开一次切一种音色：钢琴 → 古筝 → 唢呐 → 笛子
+    //   （原「长按切音色 / 短按切模式」已废弃，模式由 KEY0 统一管理）
+    wire       timbre_toggle = aux_release[0];
 
     //======================================================================
     //  音色：0 = 钢琴（白灯）  1 = 古筝（青灯）
@@ -348,84 +280,6 @@ module add_top #(
                 end
             end
         end
-    end
-
-    //======================================================================
-    //  曲谱表（MIDI 音号，范围正好是 C4~B4，对应 7 个键）
-    //    小星星 42 音  欢乐颂 30 音
-    //======================================================================
-    reg [6:0] g_twinkle [0:41];
-    reg [6:0] g_ode     [0:29];
-
-    initial begin
-        g_twinkle[ 0]=7'd60; g_twinkle[ 1]=7'd60; g_twinkle[ 2]=7'd67; g_twinkle[ 3]=7'd67;
-        g_twinkle[ 4]=7'd69; g_twinkle[ 5]=7'd69; g_twinkle[ 6]=7'd67;
-        g_twinkle[ 7]=7'd65; g_twinkle[ 8]=7'd65; g_twinkle[ 9]=7'd64; g_twinkle[10]=7'd64;
-        g_twinkle[11]=7'd62; g_twinkle[12]=7'd62; g_twinkle[13]=7'd60;
-        g_twinkle[14]=7'd67; g_twinkle[15]=7'd67; g_twinkle[16]=7'd65; g_twinkle[17]=7'd65;
-        g_twinkle[18]=7'd64; g_twinkle[19]=7'd64; g_twinkle[20]=7'd62;
-        g_twinkle[21]=7'd67; g_twinkle[22]=7'd67; g_twinkle[23]=7'd65; g_twinkle[24]=7'd65;
-        g_twinkle[25]=7'd64; g_twinkle[26]=7'd64; g_twinkle[27]=7'd62;
-        g_twinkle[28]=7'd60; g_twinkle[29]=7'd60; g_twinkle[30]=7'd67; g_twinkle[31]=7'd67;
-        g_twinkle[32]=7'd69; g_twinkle[33]=7'd69; g_twinkle[34]=7'd67;
-        g_twinkle[35]=7'd65; g_twinkle[36]=7'd65; g_twinkle[37]=7'd64; g_twinkle[38]=7'd64;
-        g_twinkle[39]=7'd62; g_twinkle[40]=7'd62; g_twinkle[41]=7'd60;
-
-        g_ode[ 0]=7'd64; g_ode[ 1]=7'd64; g_ode[ 2]=7'd65; g_ode[ 3]=7'd67;
-        g_ode[ 4]=7'd67; g_ode[ 5]=7'd65; g_ode[ 6]=7'd64; g_ode[ 7]=7'd62;
-        g_ode[ 8]=7'd60; g_ode[ 9]=7'd60; g_ode[10]=7'd62; g_ode[11]=7'd64;
-        g_ode[12]=7'd64; g_ode[13]=7'd62; g_ode[14]=7'd62;
-        g_ode[15]=7'd64; g_ode[16]=7'd64; g_ode[17]=7'd65; g_ode[18]=7'd67;
-        g_ode[19]=7'd67; g_ode[20]=7'd65; g_ode[21]=7'd64; g_ode[22]=7'd62;
-        g_ode[23]=7'd60; g_ode[24]=7'd60; g_ode[25]=7'd62; g_ode[26]=7'd64;
-        g_ode[27]=7'd62; g_ode[28]=7'd60; g_ode[29]=7'd60;
-    end
-
-    //======================================================================
-    //  指导：按对当前音才前进，灯带指出"当前该按"和"再下一个"
-    //======================================================================
-    reg [5:0] guide_step;
-
-    wire       use_ode       = (mode == MD_ODE);
-    wire       in_guide      = (mode != MD_FREE);
-    wire [5:0] guide_len     = use_ode ? 6'd30 : 6'd42;
-    wire [5:0] guide_step_p  = guide_step + 6'd1;
-    wire [5:0] guide_step_nx = (guide_step_p >= guide_len) ? 6'd0 : guide_step_p;
-
-    wire [6:0] guide_note  = use_ode ? g_ode[guide_step]     : g_twinkle[guide_step];
-    wire [6:0] guide_note2 = use_ode ? g_ode[guide_step_nx]  : g_twinkle[guide_step_nx];
-
-    // MIDI 音号 → 键序号（C4 D4 E4 F4 G4 A4 B4 = 60 62 64 65 67 69 71）
-    function [2:0] note2key;
-        input [6:0] n;
-        begin
-            case (n)
-                7'd60:   note2key = 3'd0;   // do
-                7'd62:   note2key = 3'd1;   // re
-                7'd64:   note2key = 3'd2;   // mi
-                7'd65:   note2key = 3'd3;   // fa
-                7'd67:   note2key = 3'd4;   // sol
-                7'd69:   note2key = 3'd5;   // la
-                7'd71:   note2key = 3'd6;   // si
-                default: note2key = 3'd0;
-            endcase
-        end
-    endfunction
-
-    wire [2:0] guide_key  = note2key(guide_note);    // 当前该按（亮）
-    wire [2:0] guide_key2 = note2key(guide_note2);   // 再下一个音（暗预告）
-
-    // ★ 必须用"模式发生变化"判断，不能用"进入指导态"：
-    //   模式2→3 都是指导态，用进入态判断会导致 step 不归零（原工程踩过）
-    reg [1:0] mode_d;
-    always @(posedge clk_sys) mode_d <= mode;
-    wire enter_guide = in_guide && (mode != mode_d);
-
-    always @(posedge clk_sys) begin
-        if (!engine_rst_n)                    guide_step <= 6'd0;
-        else if (enter_guide)                 guide_step <= 6'd0;
-        else if (in_guide && note_key_press[guide_key])
-            guide_step <= guide_step_nx;
     end
 
     //======================================================================
@@ -698,18 +552,26 @@ module add_top #(
     end
 
     //======================================================================
-    //  测试模式音源：8 路纯正弦（C3..C10，每路一个频率分量）
+    //  测试模式音源：8 路纯正弦，【按哪个键响哪个单频】
     //
-    //  只用一路真实音频引擎是合成不出「8 个独立谱峰」的：钢琴一个音就有
-    //  128 个分量，8 个声部叠起来是 1024 根谱线的谐波森林，频谱仪上
-    //  根本数不清。测试模式必须每路只有一个频率，才是赛题要的验证信号。
+    //  ★ 为什么要按键驱动、不能 8 路常开：
+    //    只用一路真实音频引擎是合成不出「独立谱峰」的：钢琴一个音就有
+    //    128 个分量，8 个声部叠起来是 1024 根谱线的谐波森林，频谱仪上
+    //    根本数不清。所以测试模式要让每个键只发一个频率。
+    //
+    //  ★ 为什么会带力度：
+    //    kd_state / kd_vel 是 key_dual 双触点算出来的（按得越快力度越大）。
+    //    力度直接做每路增益 → 按重点柱就高，松手立刻灭。
+    //    评委自己上手按几下就能确认：这是实时硬件合成，不是放录音。
     //======================================================================
     wire signed [15:0] test_snd;
     test_sine8 u_test_sine (
-        .clk    (clk_sys),
-        .rst_n  (por_n),
-        .tick   (tick),
-        .sample (test_snd)
+        .clk     (clk_sys),
+        .rst_n   (por_n),
+        .tick    (tick),
+        .key_on  (note_key_state),   // 8 个音键：1 = 按住
+        .key_vel (kd_vel[63:0]),     // 8 个音键 × 8 位力度
+        .sample  (test_snd)
     );
 
     //======================================================================
@@ -835,8 +697,8 @@ module add_top #(
     //  灯带控制信号跨时钟域同步：clk_sys → CLOCK_50
     //
     //  u_led 必须用 CLOCK_50 直连（上板验证过的配置，不走 PLL），
-    //  但它的全部控制信号都产生于 clk_sys 域（mode / key_state /
-    //  guide_key / engine_rst_n）。直接跨域会让 PnR 报出 22 条 hold
+    //  但它的全部控制信号都产生于 clk_sys 域（key_state / timbre /
+    //  engine_rst_n）。直接跨域会让 PnR 报出 22 条 hold
     //  违例（−0.726 ns）：CLK_SYS 与 CLOCK_50 虽然同为 50 MHz，却分布在
     //  不同时钟树分支（PBR1/2 与 PBR2/3），实测偏斜约 0.7 ns，数据会跑赢
     //  捕获时钟。
@@ -847,7 +709,6 @@ module add_top #(
     //      set_false_path -from [get_clocks CLK_SYS] -to [get_clocks CLOCK_50]
     //  （标准 CDC 处理：同步器隔离后不再对跨域路径做时序检查）
     //======================================================================
-    reg [2:0] led_mode_s0,  led_mode_s1;
     reg [7:0] led_key_s0,   led_key_s1;
     // ★★ 配对诊断：同步 KEY_R1 / KEY_R2 的原始电平
     //    灯带只点亮【两个触点都闭合】的位置。
@@ -886,34 +747,21 @@ module add_top #(
     end
 
     wire [7:0] pair_ok = ~(rawk1_s1 & rawk2_s1);   // 低电平 = 闭合
-    reg [2:0] led_gk_s0,    led_gk_s1;
-    reg [2:0] led_gk2_s0,   led_gk2_s1;
     reg       led_rst_s0,   led_rst_s1;
     reg [1:0] led_timbre_s0, led_timbre_s1;
 
     always @(posedge CLOCK_50) begin
-        led_mode_s0 <= {1'b0, mode};
         led_key_s0  <= LED_DIAG ? stage_bar : velbar_s1;   // ★ 诊断：加载阶段条形图
-        led_gk_s0   <= guide_key;
-        led_gk2_s0  <= guide_key2;
         led_rst_s0  <= engine_rst_n;
         led_timbre_s0 <= timbre_r;
-        led_mode_s1 <= led_mode_s0;
         led_key_s1  <= led_key_s0;
-        led_gk_s1   <= led_gk_s0;
-        led_gk2_s1  <= led_gk2_s0;
         led_rst_s1  <= led_rst_s0;
         led_timbre_s1 <= led_timbre_s0;
     end
 
     //======================================================================
-    //  灯带（布局与原工程一致）
+    //  灯带（布局见 ws2812_keyind；Step4 将整体重写）
     //======================================================================
-    // ★★★ 灯带前 6 颗（索引 0~5）是坏灯（实测：第 6 颗往后完全正常）
-    //     所以所有指示灯整体后移到索引 6 开始，前 6 颗永远发 0（保持黑）
-    //       索引 5~10   = 6 个按键灯（KEY[5]→5 … KEY[0]→10）第 6~11 颗
-    //       索引 11     = 乐器灯（白 = 钢琴）        第 12 颗
-    //       索引 12     = 模式灯（红/绿/蓝）          第 13 颗
     ws2812_keyind #(
         .N_LED       (20),
         .LED_BASE    (13),          // KEY[0] → 索引 13（KEY[7] → 索引 6）
@@ -930,9 +778,9 @@ module add_top #(
         .clk       (CLOCK_50),
         .rst_n     (led_rst_s1),
         .key_state (led_key_s1),
-        .mode      (led_mode_s1),
-        .guide_key (led_gk_s1),
-        .guide_key2(led_gk2_s1),
+        .mode      (3'd1),          // 指导模式已删 → 固定「自由」显示
+        .guide_key (3'd0),
+        .guide_key2(3'd0),
         .timbre    (led_timbre_s1),  // 白=钢琴 青=古筝（经两拍同步）
         .oct       (3'sd0),         // 本工程无八度，八度条已删
         .dout      (DOUT)

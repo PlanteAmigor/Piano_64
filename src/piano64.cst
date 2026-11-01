@@ -144,38 +144,10 @@ IO_PORT "KEY_AUX[1]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
 //  保留仅为让当前 RTL 仍能综合；改 add_top 端口时一并去掉。
 //==========================================================================
 
-//=================== 6 个按键开关 (J14 脚 21~26) ===================
-//  从左到右：26 → 25 → 24 → 23 → 22 → 21 → 映射到 KEY[0]..KEY[5]
-//  ★ 按键【默认悬空，按下接地】→ 片内上拉(PULL_MODE=UP)，
-//    悬空读到 1、按下读到 0。key_scan 内部会取反成"按下=1"。
-//  这些球和 PMOD1 是同一批复用（原理图 {SDRAM1|DVP_CAM|PMOD}）：
-//    J14脚26 AA20=PMOD1_IO4   J14脚25 AA21=PMOD1_IO5   J14脚24 AB21=PMOD1_IO2
-//    J14脚23 AB22=PMOD1_IO3   J14脚22 Y21 =PMOD1_IO0   J14脚21 Y22 =PMOD1_IO1
-IO_LOC  "KEY[0]" AA20;   // J14 脚 26  最左 → do  (C4)
-IO_PORT "KEY[0]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
-IO_LOC  "KEY[1]" AA21;   // J14 脚 25       → re  (D4)
-IO_PORT "KEY[1]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
-IO_LOC  "KEY[2]" AB21;   // J14 脚 24       → mi  (E4)
-IO_PORT "KEY[2]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
-IO_LOC  "KEY[3]" AB22;   // J14 脚 23       → fa  (F4)
-IO_PORT "KEY[3]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
-IO_LOC  "KEY[4]" Y21;    // J14 脚 22       → sol (G4)
-IO_PORT "KEY[4]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
-IO_LOC  "KEY[5]" Y22;    // J14 脚 21  最右 → la  (A4)
-IO_PORT "KEY[5]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
-
-//=================== WS2812 灯带数据 (J14 脚 4 = T21) =============
-//  ★ T21 = IOB97A，专用功能 D04(CPU) → build.tcl 里必须开 -use_cpu_as_gpio
-//  这和 PMOD0_IO2 是同一个球。
-
-//=================== 模式切换键 (J14 脚 40 = P14) =================
-//  每按一次切换一个模式：1 自动 → 2 自由 → 3 指导 → 1
-//  同时点亮【第 2 颗】灯作模式指示：红=模式1  绿=模式2  蓝=模式3
-//  ★ 默认悬空、按下接地 → PULL_MODE=UP
-IO_LOC  "KEY[6]" P14;   // 模式键（1=按键 → 2=指导小星星 → 3=指导欢乐颂）
-IO_PORT "KEY[6]" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
-
-// 模式键（1=按键 → 2=指导小星星 → 3=指导欢乐颂 → 1）
+//==========================================================================
+//  旧 PMOD1 六个按键（J14 脚 21~26）与 P14 模式键：已删除
+//    AA20 AA21 AB21 AB22 Y21 Y22 P14 现全部空闲，可作他用
+//==========================================================================
 
 //=================== WS2812 灯带 ===================
 // ★ 必须用 J16！板上这颗脚有 3.3V→5V 电平转换（Q16）+ 49.9Ω 串阻（R121），

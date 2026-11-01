@@ -444,8 +444,7 @@ reg [5:0]  ostd;                // 已发未回的读命令数（代替 wcnt-rcn
 
 // ★ DDR 读数据在本模块打一拍（理由见下面「读数据收回」那段注释）
 reg [255:0] rd_v;
-reg [1:0]   vld_sr;
-wire        rdv = vld_sr[1];
+reg         rdv_d;
 reg [1:0]  vph;                 // 校验发命令节拍分频
 reg [31:0] hdr_total, hdr_chk, chk_v;
 reg [31:0] dbg_d0, dbg_d1;   // 读回 addr=1 的前两个 32 位字（诊断用）
@@ -459,15 +458,31 @@ reg [26:0] bwait;           // 等 DDR 校准时横幅重发计时
 
 // ★ DDR 读数据打一拍（纯扇入，无逻辑）。Gowin 会把 rd_v 放到 DDR IP 输出
 //   寄存器旁边，后面的 sum256 加法树就从 rd_v 出发，不再跨芯片走 256 位。
+//
+//   ★★ 这里的流水对齐必须严格 1 拍对 1 拍：
+//        rd_v  <= app_rd_data        每拍【无条件】采样
+//        rdv_d <= app_rd_data_valid  延迟 1 拍的有效标志
+//     两件事发生在【同一个】时钟沿，所以第 t 拍的 data 和第 t 拍的 valid
+//     在 t+1 拍同时到达，严格对齐。
+//
+//   踩过的坑：第一版写成
+//        if (app_rd_data_valid) rd_v <= app_rd_data;   // 被 valid 门控
+//        vld_sr <= {vld_sr[0], app_rd_data_valid};
+//        wire rdv = vld_sr[1];                          // 延迟了 2 拍
+//     结果是「1 拍的数据 + 2 拍的 valid」—— 连续 valid 时 rd_v 会被后一拍
+//     覆盖掉，头部字段直接读到垃圾。上板现象：
+//        LD BY=00113620 W=000089B1 R=000089B1 HT=5FF4FC00 ... OK=0
+//     HT 本该是字数 0x89B1，实际是 5FF4FC00，校验必然不过。
 always @(posedge clk100) begin
     if (rst100) begin
-        vld_sr <= 2'd0;
+        rdv_d <= 1'b0;
     end
     else begin
-        if (app_rd_data_valid) rd_v <= app_rd_data;
-        vld_sr <= {vld_sr[0], app_rd_data_valid};
+        rd_v  <= app_rd_data;         // 无条件采样，连续 beat 也不会错位
+        rdv_d <= app_rd_data_valid;   // 与之严格同步延迟 1 拍
     end
 end
+wire rdv = rdv_d;
 
 always @(posedge clk100) begin
     // ★ 这里只用 rst100（不门控 DDR 校准），否则校准不过就连横幅都发不出来
