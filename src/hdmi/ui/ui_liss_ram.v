@@ -36,8 +36,10 @@ module ui_liss_ram (
     input  wire        clr_en,
     output reg         clr_done,
 
-    // ── 荧光衰减：每帧给一个单拍脉冲，整屏强度 -1 ────────────────
+    // ── 荧光衰减：每帧给一个单拍脉冲，整屏强度 -decay_step ──────
     input  wire        decay_req,
+    input  wire [2:0]  decay_step,  // 每帧衰减量 1..7
+    input  wire [2:0]  ink_step,    // 每次打点增量 1..7
     output reg         decay_busy,
 
     // ── 读口（扫描）：一个 word = 4 个像素 ───────────────────────
@@ -49,25 +51,29 @@ module ui_liss_ram (
     localparam [13:0] LAST_A = 14'd16383;
 
     // ── 4 位饱和减 / 饱和加 ─────────────────────────────────────
-    function [15:0] dec16;                  // 4 个 nibble 各自饱和 -1
+    function [15:0] dec16;                  // 4 个 nibble 各自饱和 -step
         input [15:0] w;
+        input [2:0]  s;
         begin
-            dec16[3:0]   = (w[3:0]   == 4'd0) ? 4'd0 : (w[3:0]   - 4'd1);
-            dec16[7:4]   = (w[7:4]   == 4'd0) ? 4'd0 : (w[7:4]   - 4'd1);
-            dec16[11:8]  = (w[11:8]  == 4'd0) ? 4'd0 : (w[11:8]  - 4'd1);
-            dec16[15:12] = (w[15:12] == 4'd0) ? 4'd0 : (w[15:12] - 4'd1);
+            dec16[3:0]   = (w[3:0]   >= {1'b0, s}) ? (w[3:0]   - s) : 4'd0;
+            dec16[7:4]   = (w[7:4]   >= {1'b0, s}) ? (w[7:4]   - s) : 4'd0;
+            dec16[11:8]  = (w[11:8]  >= {1'b0, s}) ? (w[11:8]  - s) : 4'd0;
+            dec16[15:12] = (w[15:12] >= {1'b0, s}) ? (w[15:12] - s) : 4'd0;
         end
     endfunction
 
-    function [15:0] inc16;                  // sel 号 nibble 饱和 +1
+    function [15:0] inc16;                  // sel 号 nibble 饱和 +step
         input [15:0] w;
         input [1:0]  sel;
-        reg   [3:0]  n;
+        input [2:0]  s;
+        reg   [15:0] sh;
+        reg   [4:0]  n2;
         begin
-            n = w >> {sel, 2'b00};
-            if (n != 4'hF) n = n + 4'd1;
+            sh = w >> {sel, 2'b00};         // 把要改的 nibble 移到低 4 位
+            n2 = {1'b0, sh[3:0]} + {2'b00, s};
+            if (n2 > 5'd15) n2 = 5'd15;     // 饱和到 15
             inc16 = (w & ~(16'h000F << {sel, 2'b00}))
-                  | ({12'd0, n} << {sel, 2'b00});
+                  | ({12'd0, n2[3:0]} << {sel, 2'b00});
         end
     endfunction
 
@@ -117,10 +123,16 @@ module ui_liss_ram (
     wire [7:0] ndx = (pdx > pen_x) ? (pdx - pen_x) : (pen_x - pdx);
     wire [7:0] ndy = (pdy > pen_y) ? (pdy - pen_y) : (pen_y - pdy);
 
-    // ★ 段长上限：超过 24 px 就断笔，只画目标点。
+    // ★ 段长上限：超过就断笔，只画目标点。
     //   否则一次跳变（限幅、起始杂散）会拉出一条横跨整个画面的长直线，
-    //   看起来就是"扇形发散"。断笔后最多丢一个样点，下一段会接上。
-    wire        seg_ok = (ndx <= 8'd24) && (ndy <= 8'd24);
+    //   看起来就是"扇形发散"。
+    //   ★★ 上限从 24 放宽到 64：钢琴/古筝有 128 个分量，波形起伏快，
+    //      相邻样点经常跳 >24 px，24 的上限会把大量线砍成孤立点，
+    //      结果是曲线不清晰 + 点被打上次数少 → 很暗。
+    //      现在瞬态垃圾已经由「荧光衰减 + 触发后静默 10 ms」管住，
+    //      不需要靠断笔来防了。
+    //   每样点有 1536 拍、每像素 3 拍 → 理论上可画 512 px，64 很安全。
+    wire        seg_ok = (ndx <= 8'd64) && (ndy <= 8'd64);
 
     // ══════════════════════════════════════════════════════════════
     //  存储接口：★ 严格两个读表达式 + 一个写表达式
@@ -208,7 +220,7 @@ module ui_liss_ram (
                     d_ph <= D_WRITE;
                 end
                 default: begin                       // D_WRITE
-                    m[b_wa] <= dec16(b_q);           // 每个 nibble 饱和 -1
+                    m[b_wa] <= dec16(b_q, decay_step);   // 每个 nibble 饱和 -step
                     if (d_addr == LAST_A) d_run <= 1'b0;
                     else begin
                         d_addr <= d_addr + 14'd1;
@@ -254,7 +266,7 @@ module ui_liss_ram (
                     st  <= S_WR;
                 end
                 default: begin                 // S_WR
-                    m[b_wa] <= inc16(b_q, p_sel);
+                    m[b_wa] <= inc16(b_q, p_sel, ink_step);
                     pen_x     <= cur_x;
                     pen_y     <= cur_y;
                     pen_vld   <= 1'b1;

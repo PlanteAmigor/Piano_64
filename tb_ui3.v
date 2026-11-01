@@ -14,6 +14,8 @@ module tb_ui3;
     parameter integer PAGE = 0;          // 0=主页面 1=测试 2=教学
     parameter integer AMP  = 10000;      // 李萨如激励幅度（满幅约 16000）
     parameter real    TAU  = 0.0;        // 衰减时间常数（秒），0 = 不衰减
+    parameter integer AGL  = 0;          // 余辉档位 0..3
+    localparam [1:0] AGLV  = AGL;        // ★ 不能直接写 AGL[1:0]（integer 位选会得 X）
 
     reg clk = 1'b0;
     always #6.667 clk = ~clk;            // 75 MHz
@@ -78,7 +80,7 @@ module tb_ui3;
 
     // 音色/效果器也取个固定值：古筝 + REVERB + +12 半音
     //   ★ 位图：[15:8] transpose  [7:6] 预留  [5:4] fx  [3:2] timbre  [1:0] mode
-    assign UI_INFO = {8'sd12, 2'b00, 2'd2, 2'd1, PAGE[1:0]};
+    assign UI_INFO = {8'sd12, AGLV, 2'd2, 2'd1, PAGE[1:0]};
 
     hdmi_ui3_top dut (
         .clk   (clk),

@@ -172,11 +172,42 @@ module hdmi_ui3_top (
     //         ERROR (PA2122) Not support WRITE_MODE = 2'b10
     //      所以延迟链不带复位，初值用 initial 给（FPGA 上电即 0）。
     (* syn_ramstyle = "registers" *)
+    // ── 直流阻断（一阶高通，≈ 15 Hz）────────────────────────────
+    //   ★ 修「笛子图形从右下到左上漂移」：相图 x=s[n]、y=s[n-Δ]，
+    //     信号带缓慢直流 D 时两个轴【同时】偏移 D，图形就沿 x=y
+    //     对角线平移，余辉又把沿途位置叠起来 → "一坨"。
+    //     x/y 用同一个滤波器，椭圆形状不变。
+    //   截止 ≈ fs·(1/512)/(2π) ≈ 15 Hz，最低音 262 Hz 完全不受影响。
+    //   差分式：y[n] = x[n] - x[n-1] + y[n-1]·(1 - 2^-9)
+    //
+    //   ★★ 必须给初值！feedback 结构里只要有一个 X，就会永久锁在 X
+    //      （dc_fb = X，dc_o = X，下一拍还是 X）→ smp_q 全 X →
+    //      pk 变 X → (pk != 0) 为 X → 永远不打点 → 整块图形全黑。
+    //      FPGA 上电 FF 是 0 所以硬件不会复现，只有仿真会。
+    reg signed [15:0] dc_x1, dc_y1;
+    initial begin
+        dc_x1 = 16'sd0;
+        dc_y1 = 16'sd0;
+    end
+
+    wire signed [17:0] dc_x  = $signed({{2{SCOPE_SMP[15]}}, SCOPE_SMP});
+    wire signed [17:0] dc_xd = $signed({{2{dc_x1[15]}}, dc_x1});
+    wire signed [17:0] dc_yd = $signed({{2{dc_y1[15]}}, dc_y1});
+    wire signed [17:0] dc_d  = dc_x - dc_xd;
+    wire signed [17:0] dc_fb = dc_yd - (dc_yd >>> 9);
+    wire signed [17:0] dc_s  = dc_d + dc_fb;
+    wire signed [17:0] dc_o  = (dc_s >  18'sd32767) ?  18'sd32767 :
+                               (dc_s < -18'sd32768) ? -18'sd32768 : dc_s;
+
     reg signed [16*25-1:0] dly;
     initial dly = {(16*25){1'b0}};
 
     always @(posedge clk_p) begin
-        if (plot) dly <= {dly[16*24-1:0], SCOPE_SMP};
+        if (plot) begin
+            dc_x1 <= SCOPE_SMP;
+            dc_y1 <= dc_o[15:0];
+            dly   <= {dly[16*24-1:0], dc_o[15:0]};
+        end
     end
     wire signed [15:0] smp_q = dly[15:0];            // 当前样点
     wire signed [15:0] smp_d = dly[16*24 +: 16];     // 24 个样点之前
@@ -459,6 +490,22 @@ module hdmi_ui3_top (
     wire liss_clr   = (boot_cnt == 4'd8);
     wire liss_decay = (vcnt == 12'd1) && (hcnt == 12'd0);
 
+    // ── 余辉档位（add_top 用 KEY_R2[0] 切换，经 UI_INFO[7:6] 传过来）──
+    //   L1: 衰减1 / 增量1  余辉 250 ms   唢呐/笛子（波形严格周期，可长）
+    //   L2: 衰减2 / 增量2  余辉 125 ms   折中
+    //   L3: 衰减4 / 增量4  余辉  62 ms   钢琴/古筝（非谐性，必须短）
+    //   L4: 衰减7 / 增量7  余辉  36 ms   最激进
+    //
+    //   ★★ 增量必须跟衰减同量级。踩过的坑：衰减 4、增量 1 时，
+    //      低音（262 Hz）每帧只被扫 ~4.4 次 → 每帧 +4.4 却 -4，
+    //      亮度停在 1 级左右 → 整个屏几乎全黑。
+    //      把增量跟着衰减一起加，亮度就与档位无关了。
+    wire [1:0] agl     = info_s1[7:6];
+    wire [2:0] agl_dec = (agl == 2'd0) ? 3'd1 :
+                         (agl == 2'd1) ? 3'd2 :
+                         (agl == 2'd2) ? 3'd4 : 3'd7;
+    wire [2:0] agl_ink = agl_dec;
+
     // 同步脉冲位置按 CEA-861：跟在【前沿】之后
     wire hsync = ~((hcnt >= H_FP) && (hcnt < H_FP + H_SYNC));
     wire vsync = ~((vcnt >= V_FP) && (vcnt < V_FP + V_SYNC));
@@ -537,6 +584,7 @@ module hdmi_ui3_top (
     wire [255:0] S_TIMBR  = {"TIMBRE:",                      {25{8'h20}}};  //  7
     wire [255:0] S_FXL    = {"FX:",                          {29{8'h20}}};  //  3
     wire [255:0] S_TRL    = {"TRANS:",                       {26{8'h20}}};  //  6
+    wire [255:0] S_AGL    = {"AGL:",                         {28{8'h20}}};  //  4
     wire [255:0] S_TEST   = {"TEST MODE  8 SINE",            {15{8'h20}}};  // 17
     wire [255:0] S_GUIDE  = {"GUIDE MODE",                   {22{8'h20}}};  // 10
     wire [255:0] S_PEND   = {"PENDING",                      {25{8'h20}}};  //  7
@@ -695,6 +743,13 @@ module hdmi_ui3_top (
                         endcase
                     end
                 end
+                6'd21: begin                                          // 信息框 4：余辉档位
+                    if (col >= 8'd133 && col < 8'd137)
+                        txt = gch(S_AGL, col - 8'd133);
+                    if (col == 8'd138) txt = 6'd21;                    // 'L' = A+11
+                    if (col == 8'd139)
+                        txt = {4'd0, agl} + 6'd1;                      // '1'..'4'
+                end
                 default: ;
                 endcase
             end
@@ -749,6 +804,8 @@ module hdmi_ui3_top (
         .clr_en    (liss_clr),
         .clr_done  (),
         .decay_req (liss_decay),
+        .decay_step(agl_dec),
+        .ink_step  (agl_ink),
         .decay_busy(),
         .raddr     (liss_raddr),
         .rdata     (liss_rdata)
