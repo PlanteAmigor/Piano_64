@@ -12,6 +12,16 @@ IO_PORT "CLOCK_50" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3;
 IO_LOC  "RESET_n"  AB13;
 IO_PORT "RESET_n"  IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
 
+//=================== 测试模式键 KEY.0 (AA13) ======================
+//  板载 3 个用户键（原理图 EX_KEY.0/1/2，官方例程叫 KEY.0/1/2）：
+//      KEY.0 = AA13  ← 本用（测试模式）
+//      KEY.1 = AB13  ← 已用作 RESET_n
+//      KEY.2 = Y12   ← 空闲
+//  原理图原文："USER_BUTTONn, requires enable internal pull-up"
+//  → 必须 PULL_MODE=UP；悬空=1，按下=0（低有效）
+IO_LOC  "KEY0"  AA13;
+IO_PORT "KEY0"  IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+
 //=================== I2S → PAC5102A ==============================
 //  DAC 侧：  LCK → P16     DIN → R17     BCK → V17
 //

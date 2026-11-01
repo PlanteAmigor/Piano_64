@@ -27,6 +27,7 @@ module add_top #(
     input  wire [8:0] KEY_R1,     // 第 1 排（PCB 上排）D14 D15 A18 A19 D17 C17 C20 F15 F19
     input  wire [8:0] KEY_R2,     // 第 2 排（PCB 下排）F16 E17 F13 F14 E16 D16 E19 D19 D20
     input  wire [1:0] KEY_AUX,    // 上方两个独立键 C18 C19
+    input  wire       KEY0,       // 板上 KEY.0 (AA13) → 测试模式开关
     output wire       AUD_BCK,
     output wire       AUD_LRCK,
     output wire       AUD_DIN,
@@ -88,6 +89,46 @@ module add_top #(
 
     wire por_n       = (por_cnt == STARTUP[21:0] - 22'd1);
     wire engine_rst_n = por_n & RESET_n & pll_lock;
+
+    //======================================================================
+    //  板上 KEY.0（AA13）→ 测试模式开关
+    //
+    //  赛题「现场验证要求」要一个测试模式：输出 8 路不同频率的纯正弦，
+    //  频谱上能数出对应数量的独立谱峰。这里用板载 KEY.0 短按进出。
+    //
+    //  去抖 20 ms。它不参与演奏计时，不需要 key_dual 那套双触点精度。
+    //  板上三个用户键都是「悬空=1、按下=0」，必须开内部上拉。
+    //======================================================================
+    reg  [1:0] k0_sync;
+    always @(posedge clk_sys) k0_sync <= {k0_sync[0], KEY0};
+
+    reg [19:0] k0_cnt;
+    reg        k0_stable, k0_stable_d;
+    always @(posedge clk_sys) begin
+        if (!por_n) begin
+            k0_cnt      <= 20'd0;
+            k0_stable   <= 1'b1;
+            k0_stable_d <= 1'b1;
+        end
+        else begin
+            k0_stable_d <= k0_stable;
+            if (k0_sync[1] != k0_stable) begin
+                if (k0_cnt == 20'd999_999) begin
+                    k0_cnt    <= 20'd0;
+                    k0_stable <= k0_sync[1];
+                end
+                else k0_cnt <= k0_cnt + 20'd1;
+            end
+            else k0_cnt <= 20'd0;
+        end
+    end
+    wire k0_press = k0_stable_d & ~k0_stable;      // 按下沿（低有效）
+
+    reg test_mode;
+    always @(posedge clk_sys) begin
+        if (!por_n)        test_mode <= 1'b0;
+        else if (k0_press) test_mode <= ~test_mode;
+    end
 
     //======================================================================
     //  按键扫描（9 个引脚全接，功能见文件头）
@@ -649,6 +690,21 @@ module add_top #(
     end
 
     //======================================================================
+    //  测试模式音源：8 路纯正弦（C3..C10，每路一个频率分量）
+    //
+    //  只用一路真实音频引擎是合成不出「8 个独立谱峰」的：钢琴一个音就有
+    //  128 个分量，8 个声部叠起来是 1024 根谱线的谐波森林，频谱仪上
+    //  根本数不清。测试模式必须每路只有一个频率，才是赛题要的验证信号。
+    //======================================================================
+    wire signed [15:0] test_snd;
+    test_sine8 u_test_sine (
+        .clk    (clk_sys),
+        .rst_n  (por_n),
+        .tick   (tick),
+        .sample (test_snd)
+    );
+
+    //======================================================================
     //  输出增益 ×8
     //
     //  实测（修完 add_voice8 两个 bug 后，用浮点模型扫全音域 + iverilog 复算）：
@@ -716,9 +772,29 @@ module add_top #(
     //    代价：整体延迟多一个样点（20.5 us），完全听不出来。
     reg signed [15:0] out_l_r, out_r_r;
     always @(posedge clk_sys) begin
-        out_l_r <= sat_gain(mix_l_r, timbre_r);
-        out_r_r <= sat_gain(mix_r_r, timbre_r);
+        // ★ 测试模式下直接输出 8 路正弦，绕过 sat_gain：
+        //   sat_gain 会按音色乘 ×2/×8/×16，而 test_sind 已经归一化到满幅，
+        //   再过一遍增益会直接削顶。
+        out_l_r <= test_mode ? test_snd : sat_gain(mix_l_r, timbre_r);
+        out_r_r <= test_mode ? test_snd : sat_gain(mix_r_r, timbre_r);
     end
+
+    //======================================================================
+    //  32 段常数-Q 实时频谱
+    //    输入取 out_l_r —— 就是最终送 DAC 的满幅信号，不是中间量
+    //    输出目前还没接到显示，先用 syn_keep 保住逻辑以量测资源
+    //======================================================================
+    wire [32*8-1:0] spec_bands;
+    wire            spec_btick;
+
+    spec_cqt u_spec (
+        .clk        (clk_sys),
+        .rst_n      (por_n),
+        .tick       (tick),
+        .sample     (out_l_r),
+        .bands      (spec_bands),
+        .bands_tick (spec_btick)
+    );
 
     //======================================================================
     //  灯带控制信号跨时钟域同步：clk_sys → CLOCK_50

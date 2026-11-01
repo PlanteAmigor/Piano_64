@@ -22,6 +22,10 @@ add_file src/key_dual.v
 add_file src/note_alloc.v
 add_file src/pcm5102a_tx.v
 add_file src/ws2812_keyind.v
+# ── 赛题「测试模式」：8 路纯正弦（C3..C10），KEY.0 进出 ──
+add_file src/test_sine8.v
+# ── 32 段常数-Q 频谱（ROM 表 spec_*.hex 由 tools/gen_spec_cqt.py 生成）──
+add_file src/spec_cqt.v
 
 add_file src/pll50.v
 add_file src/pll_init.v

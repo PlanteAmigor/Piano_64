@@ -71,8 +71,15 @@ module suona_dma #(
     // ── 当前搬运段 ──────────────────────────────────────────────────
     //  0=ab 1=bc 2=pi 3=env_e 4=env_o 5=psi_e 6=psi_o 7=phi
     reg [3:0]  seg;
-    reg [15:0] seg_n;        // 本段元素总数
     reg [15:0] wptr;         // 已写元素数
+    // ★ 本段【剩余】元素数（= 元素总数 − wptr）。
+    //   原来用 `wptr + 16'd1 >= seg_n` 判断段尾：那是 16 位加法器（进位链
+    //   从低位一路传上去）再进比较器，输出直接扇出到 beat_cnt / cmd_addr
+    //   约 30 个 CE 引脚。100 MHz（10 ns）下实测 DATA DELAY = 10.425 ns，
+    //   SETUP slack = -0.891 ns，25 条最差路径全部出自这一根线。
+    //   改成倒计数后段尾判断变成 `rem == 1`（15 输入 NOR + AND，两级），
+    //   进位链彻底消失。
+    reg [15:0] rem;          // 本段剩余元素数
     reg [5:0]  beat_cnt;     // 本 beat 已写元素数
     reg [255:0] beat;
 
@@ -144,7 +151,7 @@ module suona_dma #(
             ab_we <= 0; bc_we <= 0; pi_we <= 0;
             ee_we <= 0; eo_we <= 0; pe_we <= 0; po_we <= 0; ph_we <= 0;
             seg <= 4'd0; wptr <= 16'd0; beat_cnt <= 6'd0;
-            seg_n <= 16'd0; desc_cnt <= 2'd0;
+            rem <= 16'd0; desc_cnt <= 2'd0;
             en_r <= 1'b0; cmd_addr <= 29'd0; st_prev <= 1'b0; tmo <= 14'd0;
         end
         else begin
@@ -208,7 +215,7 @@ module suona_dma #(
                         seg <= seg + 4'd1;          // 空段跳过
                     end
                     else begin
-                        seg_n    <= px_n;
+                        rem      <= px_n;           // 倒计数初值
                         wptr     <= 16'd0;
                         beat_cnt <= 6'd0;
                         cmd_addr <= px_off[28:2];   // 字节 → 4 字节单位
@@ -260,8 +267,9 @@ module suona_dma #(
                     endcase
 
                     wptr <= wptr + 16'd1;
+                    rem  <= rem - 16'd1;
 
-                    if (wptr + 16'd1 >= seg_n) begin
+                    if (rem == 16'd1) begin
                         // 本段搬完 → 下一段
                         seg <= seg + 4'd1;
                         st  <= S_SEG;
