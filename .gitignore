@@ -20,6 +20,9 @@ device.cfg
 *.vvp
 *.vcd
 *.fst
+# test_sine8 / spec_cqt 测试台导出的样点 dump
+sine8_out.txt
+spec_out.txt
 
 # ── 临时文件 ────────────────────────────────────────────────────
 .tmp/

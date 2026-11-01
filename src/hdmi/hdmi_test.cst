@@ -19,6 +19,12 @@
 IO_LOC  "clk"    V22;
 IO_PORT "clk"    IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=OFF BANK_VCCIO=3.3;
 
+//=================== 测试模式键 KEY.0 (AA13) ======================
+//  板载 3 个用户键：KEY.0=AA13 / KEY.1=AB13（本工程用作复位）/ KEY.2=Y12
+//  悬空=1、按下=0，必须开内部上拉
+IO_LOC  "key0"   AA13;
+IO_PORT "key0"   IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=OFF BANK_VCCIO=3.3;
+
 IO_LOC  "resetn" AB13;
 IO_PORT "resetn" IO_TYPE=LVCMOS33 PULL_MODE=UP   DRIVE=OFF BANK_VCCIO=3.3;
 
