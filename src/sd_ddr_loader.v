@@ -434,7 +434,18 @@ reg        end_seen, end_prev;
 reg [1:0]  end_cnt;             // end_tog 边沿计数：1=列目录完  2=读完
 reg [31:0] drain;
 reg [31:0] wcnt, rcnt;
+// ★ 倒计数：把「wcnt != nwords」「rcnt == nwords」这两个 32 位比较从 CE 路径上拿掉。
+//   nwords 是 32 位寄存器，wcnt 每次发出读命令都变，这个比较直接驱动
+//   大量 CE，合并 HDMI 后实测 DATA DELAY 11.25 ns（约束 10 ns），
+//   SETUP −1.532 ns。改成 rem_w != 0 / rem_r == 0 后只剩一个 32 输入
+//   归约或，深度从「32 位减法/比较器」降到 3 级 LUT。
+reg [31:0] rem_w, rem_r;        // 还没发的读命令数 / 还没收回的数据数
 reg [5:0]  ostd;                // 已发未回的读命令数（代替 wcnt-rcnt 的 32 位减法）
+
+// ★ DDR 读数据在本模块打一拍（理由见下面「读数据收回」那段注释）
+reg [255:0] rd_v;
+reg [1:0]   vld_sr;
+wire        rdv = vld_sr[1];
 reg [1:0]  vph;                 // 校验发命令节拍分频
 reg [31:0] hdr_total, hdr_chk, chk_v;
 reg [31:0] dbg_d0, dbg_d1;   // 读回 addr=1 的前两个 32 位字（诊断用）
@@ -445,6 +456,18 @@ reg [6:0]  olen;
 reg [3:0]  ret_st;
 reg [1:0]  sphase;          // 0=发 send  1=等 busy 拉高  2=等 busy 落下
 reg [26:0] bwait;           // 等 DDR 校准时横幅重发计时
+
+// ★ DDR 读数据打一拍（纯扇入，无逻辑）。Gowin 会把 rd_v 放到 DDR IP 输出
+//   寄存器旁边，后面的 sum256 加法树就从 rd_v 出发，不再跨芯片走 256 位。
+always @(posedge clk100) begin
+    if (rst100) begin
+        vld_sr <= 2'd0;
+    end
+    else begin
+        if (app_rd_data_valid) rd_v <= app_rd_data;
+        vld_sr <= {vld_sr[0], app_rd_data_valid};
+    end
+end
 
 always @(posedge clk100) begin
     // ★ 这里只用 rst100（不门控 DDR 校准），否则校准不过就连横幅都发不出来
@@ -482,6 +505,8 @@ always @(posedge clk100) begin
         drain      <= 32'd0;
         wcnt       <= 32'd0;
         rcnt       <= 32'd0;
+        rem_w      <= 32'd0;
+        rem_r      <= 32'd0;
         hdr_total  <= 32'd0;
         hdr_chk    <= 32'd0;
         chk_v      <= 32'd0;
@@ -559,22 +584,34 @@ always @(posedge clk100) begin
         if (rd_cmd_req && app_en) rd_cmd_req <= 1'b0;
 
         //============================================ 读数据收回
-        if (app_rd_data_valid) begin
+        //
+        //  ★★ app_rd_data 必须先打一拍再用！
+        //    原来是 app_rd_data 直接进 sum256（8 个 32 位字的三级加法树）
+        //    再加到 chk_v，整条路径从 DDR 控制器内部的 phy_rd_data_dly_75
+        //    寄存器出发 —— 那个寄存器在 DDR IP 的固定布局区里，离 u_ld
+        //    很远，256 位总线横跨大半个芯片。合并 HDMI 后实测 10.264 ns
+        //    （约束 10 ns），SETUP −0.347 ns，6 个违规端点全是这一条。
+        //    先搬进本模块的 rd_v 寄存器（纯扇入，无逻辑），后面加法树
+        //    就从 rd_v 出发，变成同一区域内的寄存到寄存。
+        //    代价：数据晚 1 拍，所以 rcnt/ostd 计数也跟着挪到 vld 沿上，
+        //    相对顺序不变。
+        if (rdv) begin
             if (rcnt == 32'd0) begin
                 // ★ 头部字段位置（见 tools/make_ddr_image.py）：
                 //    dword0 [31:0]   = magic "P64I"
                 //    dword1 [63:32]  = ver | n_inst | 保留
                 //    dword2 [95:64]  = total_words   ← 曾误取 [63:32]
                 //    dword3 [127:96] = checksum      ← 曾误取 [95:64]
-                hdr_total <= app_rd_data[95:64];
-                hdr_chk   <= app_rd_data[127:96];
+                hdr_total <= rd_v[95:64];
+                hdr_chk   <= rd_v[127:96];
             end
-            else chk_v <= chk_v + sum256(app_rd_data);
+            else chk_v <= chk_v + sum256(rd_v);
             if (rcnt == 32'd1) begin
-                dbg_d0 <= app_rd_data[31:0];
-                dbg_d1 <= app_rd_data[63:32];
+                dbg_d0 <= rd_v[31:0];
+                dbg_d1 <= rd_v[63:32];
             end
             rcnt <= rcnt + 32'd1;
+            if (rem_r != 32'd0) rem_r <= rem_r - 32'd1;   // ★ 防下溢
             if (ostd != 6'd0) ostd <= ostd - 6'd1;
         end
 
@@ -687,6 +724,8 @@ always @(posedge clk100) begin
                 cnt   <= 32'd0;
                 wcnt  <= 32'd0;
                 rcnt  <= 32'd0;
+                rem_w <= nwords;        // ★ 倒计数初值
+                rem_r <= nwords;
                 chk_v <= 32'd0;
                 st    <= S_V_RD;
             end
@@ -707,15 +746,16 @@ always @(posedge clk100) begin
             end
             else begin
                 if (vph == 2'd3) begin
-                    if (!rd_cmd_req && (wcnt != nwords) && (ostd < 6'd16)) begin
+                    if (!rd_cmd_req && (rem_w != 32'd0) && (ostd < 6'd16)) begin
                         rd_cmd_req  <= 1'b1;
                         rd_cmd_addr <= wcnt[28:0] << ADDR_SHIFT;   // 常量移位，避免综合出真乘法器
                         wcnt        <= wcnt + 32'd1;
+                        rem_w       <= rem_w - 32'd1;
                         ostd        <= ostd + 6'd1;
                     end
                 end
 
-                if ((rcnt == nwords) && !rd_cmd_req) begin
+                if ((rem_r == 32'd0) && !rd_cmd_req) begin
                     v_ok      <= (chk_v == hdr_chk) && (hdr_total == nwords);
                     load_done <= 1'b1;
                     st        <= S_REPORT;

@@ -46,7 +46,31 @@
 //==========================================================================
 `default_nettype none
 
-(* syn_preserve = 1 *)
+// ── 关于综合属性：这里【不要】加 syn_preserve / syn_keep ──────────
+//
+//  踩坑经过（值得记住，绕了很久）：
+//  合并 HDMI 后综合日志里出现
+//      WARN (NL0002): The module "spec_cqt" instantiated to "u_spec"
+//                     is swept in optimizing
+//  也就是整个频谱被删了：DSP 109.5→91.5、Logic 27232→21209。
+//
+//  加回 syn_preserve 确实能把模块保住，但那是「把优化全关掉」的暴力解法：
+//      加 syn_preserve : Logic 27232 / Register 21532 / BSRAM 205 / DSP 109.5
+//                        → 布线拥塞，100 MHz 的 u_ld 被挤到 62 处违规
+//
+//  真正的根因在显示侧 hdmi_spec_top.v —— 一行
+//      (bx_raw[11:5] < 5'd32)
+//  5 位字面量装不下 32，被截断成 0，判断恒假 → 柱子永远不亮 →
+//  bands 无人消费 → 反推把本模块判死。
+//  修掉那行之后，不加任何属性就两全其美：
+//      不加（修好后）: Logic 22486 / Register 18950 / BSRAM 216 / DSP 109.5
+//                      → 0 处 setup 违规、0 处 hold 违规
+//  ★ 注意 BSRAM 205→216：去掉 syn_preserve 后综合器自己把 st_re/st_im/st_wp
+//    这三个「读+写都在同一个 always 里」的数组推断成了 BSRAM，
+//    分布式 RAM 的查表逻辑全部释放出来 —— 这才是它应该有的样子。
+//
+//  教训：看到 NL0002 "is swept" 不要急着加 syn_preserve，
+//        要顺着输出往回找「谁让它变成无用的」，通常是上游某个常量被截断。
 module spec_cqt (
     input  wire                clk,
     input  wire                rst_n,
@@ -183,11 +207,20 @@ module spec_cqt (
     wire signed [31:0] xrnd = (xmul + 32'sd2_097_152) >>> 22;   // +2^21 后右移 22 = 四舍五入
     wire signed [63:0] p_v  = nr * nr + ni * ni;   // 同理，必须给有符号上下文
 
-    (* syn_keep = 1 *) reg [NB*8-1:0] bar_ram;
-    (* syn_keep = 1 *) reg            btick;
-    integer        ri;
+    // ── 柱高存储 ────────────────────────────────────────────────────
+    //  ★ 用 32 项数组 + 显式展开输出，而不是 bar_ram[k*8 +: 8] 变位选。
+    //    变位选写在综合器里会退化成一堆 one-hot 门控 / 甚至被整块丢弃，
+    //    数组写 bar[k] <= v 是最朴素、最不会被误优化的形式。
+    reg [7:0] bar [0:NB-1];
+    reg       btick;
+    integer   ri;
 
-    assign bands      = bar_ram;
+    genvar gi;
+    generate
+        for (gi = 0; gi < NB; gi = gi + 1) begin : g_bar_out
+            assign bands[gi*8 +: 8] = bar[gi];
+        end
+    endgenerate
     assign bands_tick = btick;
 
     // ══════════════════════════════════════════════════════════════
@@ -203,10 +236,9 @@ module spec_cqt (
                 st_re[ri] <= 32'sd0;
                 st_im[ri] <= 32'sd0;
                 st_wp[ri] <= 24'd0;
+                bar[ri]   <= 8'd0;
             end
-            bar_ram <= {NB*8{1'b0}};
-        end
-        else begin
+        end        else begin
             btick <= 1'b0;
 
             // 采样节拍：重头扫 32 段
@@ -282,7 +314,7 @@ module spec_cqt (
 
                 // ── 出柱高，清零该段状态，下一段 ─────────────────
                 S_BAR: begin
-                    bar_ram[k*8 +: 8] <= bar_v;
+                    bar[k]   <= bar_v;
                     st_re[k] <= 32'sd0;
                     st_im[k] <= 32'sd0;
                     st_wp[k] <= 24'd0;

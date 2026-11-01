@@ -120,16 +120,31 @@ module suona_dma #(
     end
 
     // ── 状态机 ──────────────────────────────────────────────────────
-    localparam [2:0] S_IDLE = 3'd0,
-                     S_DESC = 3'd1,
-                     S_DW   = 3'd2,
-                     S_SEG  = 3'd3,
-                     S_CMD  = 3'd4,
-                     S_WAIT = 3'd5,
-                     S_WR   = 3'd6,
-                     S_DONE = 3'd7;
+    localparam [3:0] S_IDLE = 4'd0,
+                     S_DESC = 4'd1,
+                     S_DW   = 4'd2,
+                     S_SEG  = 4'd3,
+                     S_SEG2 = 4'd4,
+                     S_CMD  = 4'd5,
+                     S_WAIT = 4'd6,
+                     S_WR   = 4'd7,
+                     S_DONE = 4'd8;
 
-    reg [2:0]  st;
+    // ── 当前段的寄存器化参数 ───────────────────────────────────────
+    //  ★ 为什么要把它们寄存一级：
+    //    px_off / px_n / px_per 是【从 seg 组合查出来的】8 路大 mux，
+    //    原来它们直接喂给 cmd_addr 的 CE 和 16 位比较器，形成
+    //        seg reg → 8:1 mux → 比较器 → CE
+    //    实测 11.58 ns（约束 10 ns），SETUP −1.883 ns，合并 HDMI 后
+    //    合成大工程布线更挤，这个路径直接顶爆 100 MHz 域。
+    //    现在 S_SEG 只负责「把参数打进寄存器」（D 端不接比较器），
+    //    真正做判断的 S_SEG2 全部用寄存器，路径退化成寄存到寄存。
+    //    代价：每段多 1 拍，8 段一共多 8 拍（80 ns），完全无感。
+    reg [26:0] s_off;        // 段起始地址（4 字节字单位）
+    reg [15:0] s_n;          // 段元素总数
+    reg [5:0]  s_per;        // 每个 256 位 beat 的元素数
+
+    reg [3:0]  st;
     reg [1:0]  desc_cnt;
     reg [28:0] cmd_addr;
     reg        en_r;
@@ -152,6 +167,7 @@ module suona_dma #(
             ee_we <= 0; eo_we <= 0; pe_we <= 0; po_we <= 0; ph_we <= 0;
             seg <= 4'd0; wptr <= 16'd0; beat_cnt <= 6'd0;
             rem <= 16'd0; desc_cnt <= 2'd0;
+            s_off <= 27'd0; s_n <= 16'd0; s_per <= 6'd0;
             en_r <= 1'b0; cmd_addr <= 29'd0; st_prev <= 1'b0; tmo <= 14'd0;
         end
         else begin
@@ -211,14 +227,26 @@ module suona_dma #(
                     if (seg > 4'd7) begin
                         st <= S_DONE;
                     end
-                    else if (px_n == 16'd0) begin
+                    else begin
+                        // ★ 本状态【只打寄存器】，不做任何比较/分支
+                        s_off <= px_off[28:2];      // 字节 → 4 字节单位
+                        s_n   <= px_n;
+                        s_per <= px_per;
+                        st    <= S_SEG2;
+                    end
+                end
+
+                //──────────────────────────────────────────────────
+                S_SEG2: begin
+                    if (s_n == 16'd0) begin
                         seg <= seg + 4'd1;          // 空段跳过
+                        st  <= S_SEG;
                     end
                     else begin
-                        rem      <= px_n;           // 倒计数初值
+                        rem      <= s_n;            // 倒计数初值
                         wptr     <= 16'd0;
                         beat_cnt <= 6'd0;
-                        cmd_addr <= px_off[28:2];   // 字节 → 4 字节单位
+                        cmd_addr <= {2'b00, s_off};
                         st       <= S_CMD;
                     end
                 end
@@ -274,7 +302,7 @@ module suona_dma #(
                         seg <= seg + 4'd1;
                         st  <= S_SEG;
                     end
-                    else if (beat_cnt + 6'd1 >= px_per) begin
+                    else if (beat_cnt + 6'd1 >= s_per) begin
                         // 本 beat 用完 → 取下一拍
                         beat_cnt <= 6'd0;
                         cmd_addr <= cmd_addr + 29'd8;

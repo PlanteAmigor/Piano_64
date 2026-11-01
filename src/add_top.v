@@ -56,7 +56,15 @@ module add_top #(
     output wire [3:0]  ddr_dm,
     inout  wire [31:0] ddr_dq,
     inout  wire [3:0]  ddr_dqs,
-    inout  wire [3:0]  ddr_dqs_n
+    inout  wire [3:0]  ddr_dqs_n,
+
+    // ── 32 段常数-Q 频谱（给 HDMI 渲染器用，不在本工程里画）──────────
+    //    BANDS 是 clk_sys 域寄存器，两次 bands_tick 之间保持不变；
+    //    BANDS_TICK 是 clk_sys 域单拍脉冲（20 ns 宽）。
+    //    显示侧 cross-domain 时只需「tick 高电平期间抓一次」即可，
+    //    因为数据窗口有几十毫秒那么宽，不存在采样竞态。
+    output wire [32*8-1:0] SPEC_BANDS,
+    output wire            SPEC_TICK
 );
 
     // ★ 20 个键的原始电平（0=按下）。RTL 接入前先保留引用，避免综合优化掉端口。
@@ -734,19 +742,28 @@ module add_top #(
     //        y = 24000 + d − d²/32768
     //    d=16384 时 y = 24000+16384−8192 = 32192（最大值，永不超 32767）
     //======================================================================
-    function signed [15:0] sat_gain;
+    function signed [31:0] sat_pre;
         input signed [15:0] x;
         input [1:0]         tb;       // 0=钢琴 1=古筝 2=唢呐
-        reg   signed [31:0] y, ax, d, yy;
         begin
             // ★ 唄呐/笛子只 ×2：实测唄呐引擎输出满力度峰值约 10000，
             //   原来 ×8 送成 80000，软限幅把它压成方波（压缩比 2.5:1），
             //   听感是「嘟嘟」而且削顶后 RMS 更高、听着更响。
             //   ×2 → 20000，在膝点 24000 以下，直通零失真。
             //   笛子 max a 只有 4.48（唄呐 6.83），先同样 ×2，上板听完再调。
-            y = ((tb == 2'd2) || (tb == 2'd3)) ? (x <<< 1) :   // 唄呐/笛子 ×2
-                tb          ? (x <<< 4) :       // 古筝 ×16
-                              (x <<< 3);        // 钢琴 ×8
+            sat_pre = ((tb == 2'd2) || (tb == 2'd3)) ? (x <<< 1) :   // 唄呐/笛子 ×2
+                      tb ? (x <<< 4) :       // 古筝 ×16
+                           (x <<< 3);        // 钢琴 ×8
+        end
+    endfunction
+
+    // 膝点 24000，超过后 d = ax-KNEE（钳在 16384），
+    //     y = 24000 + d − d²/32768
+    // d=16384 时 y = 24000+16384−8192 = 32192（最大值，永不超 32767）
+    function signed [15:0] sat_post;
+        input signed [31:0] y;        // 已乘过增益的 32 位值
+        reg   signed [31:0] ax, d, yy;
+        begin
             ax = (y < 0) ? -y : y;
             if (ax <= 32'sd24000) begin
                 yy = ax;                        // 直通区
@@ -757,9 +774,30 @@ module add_top #(
                 yy = 32'sd24000 + d - ((d * d) >>> 15);
             end
             if (yy > 32'sd32767) yy = 32'sd32767;
-            sat_gain = y[31] ? -yy[15:0] : yy[15:0];
+            sat_post = y[31] ? -yy[15:0] : yy[15:0];
         end
     endfunction
+
+    // ★★ 原来是单个 sat_gain 函数，从 timbre_r 一路走到输出寄存器：
+    //       timbre_r → 增益选择 → 绝对值 → 膝点比较 → d×d 乘法 → 减法 → D
+    //    合并 HDMI 后布线变挤，实测 19.989 ns（CLK_SYS 周期 20 ns），
+    //    SETUP −0.110 ns，占了 CLK_SYS 违规的 4 个端点。
+    //    现在拆成两级：
+    //      ① sat_pre  （只选增益倍数，纯移位）→ gy_l / gy_r
+    //      ② sat_post （只做软限幅，乘法链在这里）→ out_l_r / out_r_r
+    //    两条长链之间的启动寄存器都变了寄存器，乘法链也不再从
+    //    高扇出的 timbre_r 出发。数学上完全等价（只是多 1 个样点延迟）。
+    reg signed [31:0] gy_l, gy_r;
+    always @(posedge clk_sys) begin
+        if (!por_n) begin
+            gy_l <= 32'sd0;
+            gy_r <= 32'sd0;
+        end
+        else begin
+            gy_l <= sat_pre(mix_l_r, timbre_r);
+            gy_r <= sat_pre(mix_r_r, timbre_r);
+        end
+    end
 
     // ★★ sat_gain 输出必须再打一拍！
     //    组合送进 u_tx 时，路径是
@@ -772,28 +810,25 @@ module add_top #(
     //    代价：整体延迟多一个样点（20.5 us），完全听不出来。
     reg signed [15:0] out_l_r, out_r_r;
     always @(posedge clk_sys) begin
-        // ★ 测试模式下直接输出 8 路正弦，绕过 sat_gain：
-        //   sat_gain 会按音色乘 ×2/×8/×16，而 test_sind 已经归一化到满幅，
+        // ★ 测试模式下直接输出 8 路正弦，绕过软限幅：
+        //   sat_pre 会按音色乘 ×2/×8/×16，而 test_sine8 已经归一化到满幅，
         //   再过一遍增益会直接削顶。
-        out_l_r <= test_mode ? test_snd : sat_gain(mix_l_r, timbre_r);
-        out_r_r <= test_mode ? test_snd : sat_gain(mix_r_r, timbre_r);
+        out_l_r <= test_mode ? test_snd : sat_post(gy_l);
+        out_r_r <= test_mode ? test_snd : sat_post(gy_r);
     end
 
     //======================================================================
     //  32 段常数-Q 实时频谱
     //    输入取 out_l_r —— 就是最终送 DAC 的满幅信号，不是中间量
-    //    输出目前还没接到显示，先用 syn_keep 保住逻辑以量测资源
+    //    输出直接送到顶层端口，由合并顶层里（clk_p 域）的渲染器消费
     //======================================================================
-    wire [32*8-1:0] spec_bands;
-    wire            spec_btick;
-
     spec_cqt u_spec (
         .clk        (clk_sys),
         .rst_n      (por_n),
         .tick       (tick),
         .sample     (out_l_r),
-        .bands      (spec_bands),
-        .bands_tick (spec_btick)
+        .bands      (SPEC_BANDS),
+        .bands_tick (SPEC_TICK)
     );
 
     //======================================================================
