@@ -3,9 +3,10 @@
 //
 //  按键：
 //    · J13 双触点力度键盘 9 组：组 0~7 = 8 个音键，组 8 = 移调键
-//    · KEY_AUX[0] (U38/C18) = 音色键，短按循环 钢琴→古筝→唢呐→笛子
-//    · KEY_AUX[1] (U37/C19) = 效果器键（暂未接音频，仅状态）
-//    · KEY0 (AA13)          = 三模式循环（主页面/测试/教学）
+//    · KEY_AUX[0] (U38/C18) = 音色键：短按循环 钢琴→古筝→唢呐→笛子
+//                             长按 1 s 循环效果器 NONE→REVERB→DELAY→CHORUS
+//    · KEY_AUX[1] (U37/C19) = 三模式切换（主页面 / 测试 / 教学）
+//    · KEY0 (AA13)          = 板载键，与 U37 等效（也能切三模式）
 //
 //  已删除：J14 六个独立键、两首内置曲谱、指导模式、波形显示
 //  分量数：每音 64 路（赛题拓展 1「单音加法分量 ≥32 路」）
@@ -144,14 +145,8 @@ module add_top #(
                      MODE_TEST  = 2'd1,
                      MODE_GUIDE = 2'd2;
 
+    // ui_mode 的具体更新放到下面 KEY_AUX 扫描之后（要用 aux_release[1]）
     reg [1:0] ui_mode;
-    always @(posedge clk_sys) begin
-        if (!por_n)        ui_mode <= MODE_MAIN;
-        else if (k0_press) ui_mode <= (ui_mode == MODE_GUIDE) ? MODE_MAIN
-                                                             : (ui_mode + 2'd1);
-    end
-
-    wire test_mode = (ui_mode == MODE_TEST);
 
     //======================================================================
     //  ★ 18 键双触点力度键盘（J13）
@@ -192,8 +187,6 @@ module add_top #(
 
     // 音源：前 8 个键（C4..C5 一个八度）
     // ★ 第 9 键是【纯功能键】——不在 7:0 里，本来就不会发声，不用额外屏蔽
-    wire        shift_on = kd_state[8];     // 仅用于诊断显示
-
     wire [7:0]  note_key_state = kd_state[7:0];
 
     reg  [7:0]  kd_state_d;
@@ -201,10 +194,70 @@ module add_top #(
     wire [7:0]  note_key_press = kd_state[7:0] & ~kd_state_d;
     wire [63:0] note_key_vel   = kd_vel[63:0];
 
-    // 音色键：上方独立键 KEY_AUX[0]（U38 / C18）
-    // ★ 短按松开一次切一种音色：钢琴 → 古筝 → 唢呐 → 笛子
-    //   （原「长按切音色 / 短按切模式」已废弃，模式由 KEY0 统一管理）
-    wire       timbre_toggle = aux_release[0];
+    //======================================================================
+    //  三模式切换：U37（KEY_AUX[1] / C19）短按；板上 KEY0（AA13）也保留
+    //
+    //    每按一次：主页面(0) → 测试(1) → 教学(2) → 主页面(0)
+    //    上电默认主页面。音源切换和页面切换是同一个 mode，同步发生。
+    //
+    //  测试模式是赛题「现场验证要求」：输出 8 路不同频率的纯正弦，
+    //  频谱上能数出对应数量的独立谱峰。
+    //======================================================================
+    wire mode_switch = k0_press | aux_release[1];
+
+    always @(posedge clk_sys) begin
+        if (!por_n)           ui_mode <= MODE_MAIN;
+        else if (mode_switch) ui_mode <= (ui_mode == MODE_GUIDE) ? MODE_MAIN
+                                                                 : (ui_mode + 2'd1);
+    end
+
+    wire test_mode = (ui_mode == MODE_TEST);
+
+    //======================================================================
+    //  音色/效果器键：上方独立键 KEY_AUX[0]（U38 / C18）
+    //
+    //          短按（松开时、没按满 1 s）→ 切音色 钢琴→古筝→唢呐→笛子
+    //          长按（按满 1 s 那一拍）    → 切效果器 NONE→REVERB→DELAY→CHORUS
+    //
+    //  ★★ 长按后不能再触发短按（2026-11-01 修的 bug）
+    //    原来写成松手时就把 lp_fired 清 0：
+    //        else begin lp_cnt <= 0; lp_fired <= 1'b0; end
+    //    但 key_scan 的 key_release 脉冲比 key_state 下降沿【晚一拍】，
+    //    等脉冲到来时 lp_fired 已经被清掉 → 长按松开又当成短按切了音色。
+    //    现在改成：
+    //        · 松手时只清 lp_cnt，lp_fired 一直保持到下一次按下
+    //        · 按下沿（!aux_d）才把 lp_fired 清 0 重新开始判定
+    //======================================================================
+    localparam [25:0] LP_MAX = 26'd49_999_999;      // 1 s @50 MHz
+
+    reg  [25:0] lp_cnt;
+    reg         lp_fired;                           // 本次按键已判定为长按
+    reg         aux0_d;
+
+    always @(posedge clk_sys) aux0_d <= aux_state[0];
+
+    always @(posedge clk_sys) begin
+        if (!engine_rst_n) begin
+            lp_cnt   <= 26'd0;
+            lp_fired <= 1'b0;
+        end
+        else if (!aux_state[0]) begin               // 松开：只清计数
+            lp_cnt   <= 26'd0;
+        end
+        else if (!aux0_d) begin                     // 按下沿：重新开始
+            lp_cnt   <= 26'd0;
+            lp_fired <= 1'b0;
+        end
+        else if (lp_cnt != LP_MAX) begin
+            lp_cnt   <= lp_cnt + 26'd1;
+        end
+        else begin
+            lp_fired <= 1'b1;                       // 按满 1 s
+        end
+    end
+
+    wire timbre_toggle = aux_release[0] && !lp_fired;          // 短按松开
+    wire fx_toggle     = (lp_cnt == LP_MAX) && !lp_fired;      // 按满 1 s 那一拍
 
     //======================================================================
     //  音色：0 = 钢琴（白灯）  1 = 古筝（青灯）
@@ -218,15 +271,14 @@ module add_top #(
     end
 
     //======================================================================
-    //  效果器档位：上方独立键 KEY_AUX[1]（U37 / C19）短按循环
-    //    0=NONE 1=REVERB 2=DELAY 3=CHORUS
-    //  ★ 目前只有 UI 显示，音频通路还没实现（Step4 之后再做）
+    //  效果器档位：0=NONE 1=REVERB 2=DELAY 3=CHORUS（U38 长按循环）
+    //  ★ 目前只有 UI 显示 + 灯带指示，音频通路还没实现
     //======================================================================
     reg [1:0] fx_r;
 
     always @(posedge clk_sys) begin
         if (!engine_rst_n)                       fx_r <= 2'd0;
-        else if (aux_release[1])                 fx_r <= (fx_r == 2'd3) ? 2'd0 : fx_r + 2'd1;
+        else if (fx_toggle)                      fx_r <= (fx_r == 2'd3) ? 2'd0 : fx_r + 2'd1;
     end
 
     // ★ 古筝判定必须写【== 1】，不能再用 timbre_r[0]
@@ -318,22 +370,42 @@ module add_top #(
     end
 
     //======================================================================
+    //  移调指示灯：动作后亮 300 ms（红 = 降 -12，蓝 = 升 +12）
+    //    tr_fire 是「力度已确定、即将改写 transpose」那一拍的组合条件，
+    //    正好是一个单拍脉冲（下一拍 tr_armed 就被清 0）。
+    //======================================================================
+    wire tr_fire = engine_rst_n && tr_armed && (tr_tmr == 22'd0);
+    wire tr_down = (kd_vel[71:64] >= 8'd128);
+
+    localparam [23:0] TR_LED_T = 24'd14_999_999;   // 300 ms @50 MHz
+
+    reg        tr_led_on;
+    reg        tr_led_neg;
+    reg [23:0] tr_led_tmr;
+
+    always @(posedge clk_sys) begin
+        if (!engine_rst_n) begin
+            tr_led_on  <= 1'b0;
+            tr_led_neg <= 1'b0;
+            tr_led_tmr <= 24'd0;
+        end
+        else if (tr_fire) begin
+            tr_led_on  <= 1'b1;
+            tr_led_neg <= tr_down;
+            tr_led_tmr <= TR_LED_T;
+        end
+        else if (tr_led_on) begin
+            if (tr_led_tmr != 24'd0) tr_led_tmr <= tr_led_tmr - 24'd1;
+            else                     tr_led_on  <= 1'b0;
+        end
+    end
+
+    //======================================================================
     //  复音分配：8 键 → 8 声部（C4..C5 一个八度）
     //======================================================================
     wire [NVOICE*7-1:0] k_note;
     wire [NVOICE-1:0]   v_trig, v_gate, v_idle;
     wire [NVOICE*8-1:0] v_vel;
-
-    // ★★ 诊断：记录最近一次 note-on 的力度，并转成条形图（3 位 → 0..7 颗灯）
-    //    vel 254 → 7 颗全亮；vel 128 → 4 颗；vel 32 → 1 颗；vel 2 → 0 颗
-    //    按一下键就能看出实际力度落在哪一档
-    reg [7:0] dbg_vel;
-    integer   di;
-    always @(posedge clk_sys) begin
-        for (di = 0; di < NVOICE; di = di + 1)
-            if (v_trig[di]) dbg_vel <= v_vel[di*8 +: 8];
-    end
-    wire [7:0] vel_bar = (8'd1 << dbg_vel[7:5]) - 8'd1;
 
     //======================================================================
     //  ★ 每个乐器独立的按键映射（键名位置固定，但音高与可用键不同）
@@ -832,6 +904,26 @@ module add_top #(
     wire [7:0] src_amp = is_harm ? harm_amp : comp_amp;
     wire       src_vld = is_harm ? harm_vld : comp_vld;
 
+    //======================================================================
+    //  ★★ 必须打一拍再进 comp_bar（2026-11-01）
+    //
+    //  数据源是「8 个声部 → last_v 选一个」→ 再按音色二选一，组合链是
+    //      last_v → 8:1 mux（7 位）→ 2:1 mux → comp_idx[6:1] → 64 路写译码
+    //  64 路译码本身已经不短，前面再串两级 mux，实测
+    //      u_piano/last_v_1_s1/Q → comp_bar[61]/CE = 20.13 ns（SETUP −0.130）
+    //  在 last_v 选择之后加一级寄存器，把 mux 与译码分开。
+    //  单拍脉冲 src_vld 与 idx/amp 同拍寄存，配对关系不变。
+    //======================================================================
+    reg [6:0] s_idx_r;
+    reg [7:0] s_amp_r;
+    reg       s_vld_r;
+
+    always @(posedge clk_sys) begin
+        s_idx_r <= src_idx;
+        s_amp_r <= src_amp;
+        s_vld_r <= src_vld;
+    end
+
     // 任意一个声部被触发 → 立即清空重画
     wire comp_clr = (|eng_trig) | sua_trig;
 
@@ -865,12 +957,12 @@ module add_top #(
                 for (cbi = 0; cbi < 64; cbi = cbi + 1) comp_bar[cbi] <= 8'd0;
 
             // ── ② 峰值保持（放最后 → 同拍冲突时它赢）──────────────
-            if (src_vld) begin
-                if (!src_idx[0]) pmax <= src_amp;
+            if (s_vld_r) begin
+                if (!s_idx_r[0]) pmax <= s_amp_r;
                 else begin
-                    mx = (src_amp > pmax) ? src_amp : pmax;
-                    if (mx > comp_bar[src_idx[6:1]])
-                        comp_bar[src_idx[6:1]] <= mx;
+                    mx = (s_amp_r > pmax) ? s_amp_r : pmax;
+                    if (mx > comp_bar[s_idx_r[6:1]])
+                        comp_bar[s_idx_r[6:1]] <= mx;
                     pmax <= 8'd0;
                 end
             end
@@ -900,81 +992,51 @@ module add_top #(
     //      set_false_path -from [get_clocks CLK_SYS] -to [get_clocks CLOCK_50]
     //  （标准 CDC 处理：同步器隔离后不再对跨域路径做时序检查）
     //======================================================================
-    reg [7:0] led_key_s0,   led_key_s1;
-    // ★★ 配对诊断：同步 KEY_R1 / KEY_R2 的原始电平
-    //    灯带只点亮【两个触点都闭合】的位置。
-    //      · 按下一个键，对应灯亮 → 配对正确
-    //      · 按下去灯不亮      → 配对错误（对应的两个开关不在同一个琴键上）
-    reg [7:0] rawk1_s0, rawk1_s1, rawk2_s0, rawk2_s1;
-    reg [7:0] velbar_s0, velbar_s1;
-
-    // ★★★ SD→DDR 加载阶段诊断（2026-10-31）
-    //   ld_stage 产生在 clk_x1(100 MHz) 域，阶段变化是「毫秒级慢变量」，
-    //   打到 CLOCK_50 域只需两拍同步。
-    //   灯带亮【几颗】= 加载器走到第几步（0 = 还在横幅/等校准）：
-    //      1 颗 = S_READ  （正在收字节写 DDR）
-    //      2 颗 = S_FLUSH （收尾）
-    //      3 颗 = S_V_RD  （DDR 读回校验）
-    //      4 颗 = S_REPORT
-    //      5 颗 = S_SEND  （正在吐串口）
-    //      6 颗 = S_STAY  （全部结束，结果看串口）
-    //   ⚠ 这期间按键灯不显示力度，是临时诊断配置，定位完就改回来。
-    localparam integer LED_DIAG = 1;
-    wire [3:0] ld_stage;          // 加载器阶段（clk_x1 域，声明前置给灯带用）
-    reg [3:0] ld_stage_s0, ld_stage_s1;
-    wire [7:0] stage_bar = (ld_stage_s1 >= 4'd7) ? 8'h7F
-                         : (ld_stage_s1 == 4'd0) ? 8'h00
-                         : ((8'd1 << ld_stage_s1[2:0]) - 8'd1);
+    reg [7:0]  led_kst_s0,  led_kst_s1;     // 8 键按住状态
+    reg [63:0] led_kvel_s0, led_kvel_s1;    // 8 键力度
+    reg [1:0]  led_tmb_s0,  led_tmb_s1;     // 音色
+    reg [1:0]  led_fx_s0,   led_fx_s1;      // 效果器档位
+    reg        led_trl_s0,  led_trl_s1;     // 移调闪光有效
+    reg        led_trn_s0,  led_trn_s1;     // 移调方向（1=降）
+    reg        led_rst_s0,  led_rst_s1;     // 复位
 
     always @(posedge CLOCK_50) begin
-        rawk1_s0 <= KEY_R1[7:0];
-        rawk2_s0 <= KEY_R2[7:0];
-        velbar_s0 <= vel_bar;
-        ld_stage_s0 <= ld_stage;
-        rawk1_s1 <= rawk1_s0;
-        rawk2_s1 <= rawk2_s0;
-        velbar_s1 <= velbar_s0;
-        ld_stage_s1 <= ld_stage_s0;
-    end
-
-    wire [7:0] pair_ok = ~(rawk1_s1 & rawk2_s1);   // 低电平 = 闭合
-    reg       led_rst_s0,   led_rst_s1;
-    reg [1:0] led_timbre_s0, led_timbre_s1;
-
-    always @(posedge CLOCK_50) begin
-        led_key_s0  <= LED_DIAG ? stage_bar : velbar_s1;   // ★ 诊断：加载阶段条形图
+        led_kst_s0  <= note_key_state;
+        led_kvel_s0 <= kd_vel[63:0];
+        led_tmb_s0  <= timbre_r;
+        led_fx_s0   <= fx_r;
+        led_trl_s0  <= tr_led_on;
+        led_trn_s0  <= tr_led_neg;
         led_rst_s0  <= engine_rst_n;
-        led_timbre_s0 <= timbre_r;
-        led_key_s1  <= led_key_s0;
+
+        led_kst_s1  <= led_kst_s0;
+        led_kvel_s1 <= led_kvel_s0;
+        led_tmb_s1  <= led_tmb_s0;
+        led_fx_s1   <= led_fx_s0;
+        led_trl_s1  <= led_trl_s0;
+        led_trn_s1  <= led_trn_s0;
         led_rst_s1  <= led_rst_s0;
-        led_timbre_s1 <= led_timbre_s0;
     end
 
     //======================================================================
-    //  灯带（布局见 ws2812_keyind；Step4 将整体重写）
+    //  灯带（布局见 ws2812_keyind.v 文件头）
     //======================================================================
     ws2812_keyind #(
-        .N_LED       (20),
-        .LED_BASE    (13),          // KEY[0] → 索引 13（KEY[7] → 索引 6）
-        .NKEY        (8),
-        .BRIGHT_SHIFT(2),
-        .TIMBRE_LED  (14),          // 乐器灯：索引 14
-        .MODE_LED    (15),          // 模式灯：索引 15
-        .DOT_EN      (0),
-        .DIAG        (0)
+        .N_LED (20),
+        .DIAG  (0)
     ) u_led (
         // ★★ 灯带时钟用【CLOCK_50 直连】，和验证正常的 led_align 工程完全一致
         //    （PLL 输出 clk_sys 虽然频率相同，但相位/抖动不同，怀疑是卡死的原因）
         //    所有输入都经过上面的两拍同步，不再直接跨域
-        .clk       (CLOCK_50),
-        .rst_n     (led_rst_s1),
-        .key_state (led_key_s1),
-        .mode      (3'd1),          // 指导模式已删 → 固定「自由」显示
-        .guide_key (3'd0),
-        .guide_key2(3'd0),
-        .timbre    (led_timbre_s1),  // 白=钢琴 青=古筝（经两拍同步）
-        .oct       (3'sd0),         // 本工程无八度，八度条已删
-        .dout      (DOUT)
+        .clk      (CLOCK_50),
+        .rst_n    (led_rst_s1),
+        .key_on   (led_kst_s1),
+        .key_vel  (led_kvel_s1),
+        .timbre   (led_tmb_s1),
+        .fx       (led_fx_s1),
+        .tr_led   (led_trl_s1),
+        .tr_neg   (led_trn_s1),
+        .dout     (DOUT)
     );
 
     //======================================================================
@@ -1055,6 +1117,7 @@ module add_top #(
     wire        ld_done, ld_ok;
     wire [31:0] ld_nbytes, ld_nwords, ld_ov;
     wire [11:0] ld_nfiles, ld_fileno;
+    wire [3:0]  ld_stage;          // 加载阶段（clk_x1 域，仅用于串口报告）
 
     // 加载器独占的 DDR 口（写通道 + 命令通道）
     wire [2:0]   ld_app_cmd;

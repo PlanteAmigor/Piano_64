@@ -446,6 +446,15 @@ reg [5:0]  ostd;                // 已发未回的读命令数（代替 wcnt-rcn
 reg [255:0] rd_v;
 reg         rdv_d;
 reg [1:0]  vph;                 // 校验发命令节拍分频
+// ★ 发命令预判（提前一拍算好）
+//   原来在 vph==3 那一拍组合计算
+//       !rd_cmd_req && (rem_w != 32'd0) && (ostd < 6'd16)
+//   其中 rem_w != 0 是 32 输入 OR 归约，加上后面两级 AND 直接顶到
+//   ostd 的 CE/D 上，100 MHz 下实测 9.925 ns（SETUP −0.015 ns，
+//   而且每次重新布线就在 0~2 处之间反复）。
+//   rem_w 只在 vph==3 发命令时才变，所以 vph==2 看到的 rem_w
+//   与 vph==3 做决定时完全一致 —— 提前一拍算到寄存器里语义等价。
+reg        issue_nxt;
 reg [31:0] hdr_total, hdr_chk, chk_v;
 reg [31:0] dbg_d0, dbg_d1;   // 读回 addr=1 的前两个 32 位字（诊断用）
 reg        v_ok;
@@ -517,6 +526,7 @@ always @(posedge clk100) begin
         end_cnt    <= 2'd0;
         ostd       <= 6'd0;
         vph        <= 2'd0;
+        issue_nxt  <= 1'b0;
         drain      <= 32'd0;
         wcnt       <= 32'd0;
         rcnt       <= 32'd0;
@@ -760,8 +770,12 @@ always @(posedge clk100) begin
                 st        <= S_REPORT;
             end
             else begin
+                // ★ 预判：vph==2 时算好，vph==3 直接用寄存器值
+                issue_nxt <= (vph == 2'd2) && !rd_cmd_req &&
+                             (rem_w != 32'd0) && (ostd < 6'd16);
+
                 if (vph == 2'd3) begin
-                    if (!rd_cmd_req && (rem_w != 32'd0) && (ostd < 6'd16)) begin
+                    if (issue_nxt) begin
                         rd_cmd_req  <= 1'b1;
                         rd_cmd_addr <= wcnt[28:0] << ADDR_SHIFT;   // 常量移位，避免综合出真乘法器
                         wcnt        <= wcnt + 32'd1;
