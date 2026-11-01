@@ -39,7 +39,7 @@ module ui_liss_ram (
     // ── 荧光衰减：每帧给一个单拍脉冲，整屏强度 -decay_step ──────
     input  wire        decay_req,
     input  wire [2:0]  decay_step,  // 每帧衰减量 1..7
-    input  wire [2:0]  ink_step,    // 每次打点增量 1..7
+    input  wire [3:0]  ink_step,    // 每次打点增量 1..15（15 = 直接写满）
     output reg         decay_busy,
 
     // ── 读口（扫描）：一个 word = 4 个像素 ───────────────────────
@@ -65,12 +65,12 @@ module ui_liss_ram (
     function [15:0] inc16;                  // sel 号 nibble 饱和 +step
         input [15:0] w;
         input [1:0]  sel;
-        input [2:0]  s;
+        input [3:0]  s;
         reg   [15:0] sh;
         reg   [4:0]  n2;
         begin
             sh = w >> {sel, 2'b00};         // 把要改的 nibble 移到低 4 位
-            n2 = {1'b0, sh[3:0]} + {2'b00, s};
+            n2 = {1'b0, sh[3:0]} + {1'b0, s};
             if (n2 > 5'd15) n2 = 5'd15;     // 饱和到 15
             inc16 = (w & ~(16'h000F << {sel, 2'b00}))
                   | ({12'd0, n2[3:0]} << {sel, 2'b00});
