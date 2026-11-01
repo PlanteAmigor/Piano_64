@@ -69,6 +69,8 @@ module piano64_top #(
     wire            spec_tick;
     wire [15:0]     ui_info;
     wire [64*8-1:0] comp_amp;
+    wire signed [15:0] scope_smp;
+    wire               scope_tog;
 
     // ══════════════════════════════════════════════════════════════
     //  音频引擎
@@ -109,7 +111,9 @@ module piano64_top #(
         .SPEC_BANDS (spec_bands),
         .SPEC_TICK  (spec_tick),
         .UI_INFO    (ui_info),
-        .COMP_AMP   (comp_amp)
+        .COMP_AMP   (comp_amp),
+        .SCOPE_SMP  (scope_smp),
+        .SCOPE_TOG  (scope_tog)
     );
 
     // ══════════════════════════════════════════════════════════════
@@ -125,6 +129,8 @@ module piano64_top #(
         .BANDS_TICK   (spec_tick),
         .UI_INFO      (ui_info),
         .COMP_AMP     (comp_amp),
+        .SCOPE_SMP    (scope_smp),
+        .SCOPE_TOG    (scope_tog),
         .tmds_clk_n_0 (tmds_clk_n_0),
         .tmds_clk_p_0 (tmds_clk_p_0),
         .tmds_d_n_0   (tmds_d_n_0),

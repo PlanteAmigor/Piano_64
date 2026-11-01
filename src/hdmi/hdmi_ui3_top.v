@@ -57,6 +57,10 @@ module hdmi_ui3_top (
     // ── COMPONENT 64：最近触发声部的 64 根分量柱高度 ────────────────
     input  wire [64*8-1:0] COMP_AMP,
 
+    // ── 李萨如（相位图）取样：SCOPE_TOG 每样点翻转一次 ──────────────
+    input  wire signed [15:0] SCOPE_SMP,
+    input  wire               SCOPE_TOG,
+
     output wire       tmds_clk_n_0,
     output wire       tmds_clk_p_0,
     output wire [2:0] tmds_d_n_0,
@@ -120,6 +124,65 @@ module hdmi_ui3_top (
     wire [1:0]        timbre   = info_s1[3:2];
     wire [1:0]        fx       = info_s1[5:4];
     wire signed [7:0] tr       = info_s1[15:8];
+
+    // ══════════════════════════════════════════════════════════════
+    //  李萨如（相位图）取样：clk_sys → clk_p
+    //
+    //    发端（add_top）每样点锁一次 SCOPE_SMP 并翻转 SCOPE_TOG。
+    //    这里把 SCOPE_TOG 打两拍后检测翻转沿产生单拍 plot；
+    //    SCOPE_SMP 在两次翻转之间稳定 1024 个 clk_sys 周期（20.5 us），
+    //    远大于两拍 clk_p（26.7 ns），所以直接在 plot 那拍采样即可。
+    // ══════════════════════════════════════════════════════════════
+    reg scope_t0, scope_t1, scope_t2;
+    always @(posedge clk_p) begin
+        if (!rst_n) begin
+            scope_t0 <= 1'b0;
+            scope_t1 <= 1'b0;
+            scope_t2 <= 1'b0;
+        end
+        else begin
+            scope_t0 <= SCOPE_TOG;
+            scope_t1 <= scope_t0;
+            scope_t2 <= scope_t1;
+        end
+    end
+    wire plot = scope_t1 ^ scope_t2;
+
+    reg signed [15:0] smp_q;
+    always @(posedge clk_p) begin
+        if (!rst_n)   smp_q <= 16'sd0;
+        else if (plot) smp_q <= SCOPE_SMP;
+    end
+
+    // 延迟线 Δ=24 样点（≈0.49 ms）：y 轴取延迟后的样点，与 x 构成相位图。
+    // 不能用 L/R 做 XY —— 本工程是单声道，左右完全一样，会画成一条直线。
+    reg signed [15:0] dl [0:23];
+    integer li;
+    always @(posedge clk_p) begin
+        if (!rst_n) begin
+            for (li = 0; li < 24; li = li + 1) dl[li] <= 16'sd0;
+        end
+        else if (plot) begin
+            for (li = 23; li > 0; li = li - 1) dl[li] <= dl[li-1];
+            dl[0] <= smp_q;
+        end
+    end
+    wire signed [15:0] smp_d = dl[23];
+
+    // 样点 → 位图坐标（0..255）
+    //   ★ 增益取 27/16 = 1.6875：典型满幅（软限幅后峰值 ≈16000，
+    //     s[15:8]=62）映射到 ±104，图形占满整个盒子；
+    //     再大就会出界，所以后面加限幅到 ±104。
+    //     原来取 13/16，图只占盒子一半，看起来很小。
+    //   ±104 的东西让坐标落在 24..231，而显示窗口取位图中心 22..233。
+    wire signed [12:0] g_x = ($signed(smp_q[15:8]) * 27) >>> 4;
+    wire signed [12:0] g_y = ($signed(smp_d[15:8]) * 27) >>> 4;
+    wire signed [8:0]  cl_x = (g_x >  13'sd104) ?  9'sd104 :
+                              (g_x < -13'sd104) ? -9'sd104 : g_x[8:0];
+    wire signed [8:0]  cl_y = (g_y >  13'sd104) ?  9'sd104 :
+                              (g_y < -13'sd104) ? -9'sd104 : g_y[8:0];
+    wire [7:0] px_pt = 8'd128 + cl_x;
+    wire [7:0] py_pt = 8'd128 + cl_y;
 
     // ══════════════════════════════════════════════════════════════
     //  切页淡入淡出：12 ms 淡出（15→0）→ 黑场换页 → 12 ms 淡入（0→15）
@@ -203,6 +266,17 @@ module hdmi_ui3_top (
     wire h_vis = (hcnt >= H_START) && (hcnt < H_START + H_VIS);
     wire v_vis = (vcnt >= V_START) && (vcnt < V_START + V_VIS);
     wire vis   = h_vis && v_vis;
+
+    // 李萨如位图每帧清一次（4096 字 @75 MHz = 55 us，场消隐 30 行 ≈ 667 us）
+    // 放在场首第 2 行，避开有效显示区。
+    // ★ 每 3 帧才清一次（约 20 Hz）：单帧只有 ~800 个样点，相位图又在缓慢
+    //   进动，清得太勤会看到一串散点。累积 3 帧 ≈ 2400 点后轨迹才连贯。
+    reg [1:0] fclr_div;
+    always @(posedge clk_p) begin
+        if (!rst_n)                          fclr_div <= 2'd0;
+        else if (vcnt == 12'd2 && hcnt == 12'd0) fclr_div <= fclr_div + 2'd1;
+    end
+    wire frame_clr = (fclr_div == 2'd0) && (vcnt == 12'd2) && (hcnt == 12'd1);
 
     // 同步脉冲位置按 CEA-861：跟在【前沿】之后
     wire hsync = ~((hcnt >= H_FP) && (hcnt < H_FP + H_SYNC));
@@ -470,6 +544,34 @@ module hdmi_ui3_top (
     wire [9:0]  gaddr = {char1, 4'd0} + {6'd0, tgy1};
 
     // ══════════════════════════════════════════════════════════════
+    //  李萨如位图读口（256×256，一个 word = 一行里的 16 像素）
+    //    raddr = row*16 + (x>>4)，bit = x&15
+    //    显示窗口 = 盒子 (1060..1271, 60..271) = 212×212，
+    //    取位图中心区 22..233（因为打点只用 24..231，见上面的 13/16 增益）
+    // ══════════════════════════════════════════════════════════════
+    wire [12:0] lpx = {1'b0, px1} - 13'd1060;
+    wire [12:0] lpy = {1'b0, py1} - 13'd60;
+    wire        liss_in1 = !lpx[12] && !lpy[12] &&
+                           (lpx < 13'd212) && (lpy < 13'd212);
+    wire [8:0]  lbx = lpx[8:0] + 9'd22;      // 位图 x 0..233
+    wire [8:0]  lby = lpy[8:0] + 9'd22;      // 位图 y 0..233
+    wire [11:0] liss_raddr = liss_in1 ? ({lby[7:0], 4'd0} + {6'd0, lbx[7:4]})
+                                      : 12'd0;
+    wire [15:0] liss_rdata;
+
+    ui_liss_ram u_liss (
+        .clk    (clk_p),
+        .rst_n  (rst_n),
+        .plot   (plot),
+        .plot_x (px_pt),
+        .plot_y (py_pt),
+        .clr_en (frame_clr),
+        .clr_done(),
+        .raddr  (liss_raddr),
+        .rdata  (liss_rdata)
+    );
+
+    // ══════════════════════════════════════════════════════════════
     //  t1 组合：柱高 → 像素高度（两页系数不同，按页面选）
     //    page0 系数 1.203125 = 1 + 1/8 + 1/16 + 1/64  → h=255 时 304 px
     //    page1 系数 2.5      = 2 + 1/2                → h=255 时 637 px
@@ -494,6 +596,8 @@ module hdmi_ui3_top (
     reg [15:0] glyph_d;
     reg        csel2;
     reg [7:0]  camp2;
+    reg        liss_in2;
+    reg [3:0]  liss_bit2;
 
     always @(posedge clk_p) begin
         px2     <= px1;
@@ -505,6 +609,8 @@ module hdmi_ui3_top (
         glyph_d <= glyph[gaddr];
         csel2   <= csel1;
         camp2   <= comp_cap[{cidx1, 3'b000} +: 8];
+        liss_in2  <= liss_in1;
+        liss_bit2 <= lbx[3:0];
     end
 
     wire t_lit2 = txt_on2 && glyph_d[tbit2];
@@ -626,6 +732,17 @@ module hdmi_ui3_top (
                      (y2 >= 12'd8) && (y2 <= 12'd51);
 
     // ══════════════════════════════════════════════════════════════
+    //  李萨如：轨迹点 + 中心十字线（仅主页面）
+    //    盒子 (1060..1271, 60..271)，中心 (1166, 166)
+    // ══════════════════════════════════════════════════════════════
+    wire liss_lit = (page_show == 2'd0) && liss_in2 && liss_rdata[liss_bit2];
+
+    wire liss_cross = (page_show == 2'd0) &&
+                      (x2 > 12'd1060) && (x2 < 12'd1271) &&
+                      (y2 > 12'd60)   && (y2 < 12'd271)   &&
+                      ((x2 == 12'd1166) || (y2 == 12'd166));
+
+    // ══════════════════════════════════════════════════════════════
     //  上色
     // ══════════════════════════════════════════════════════════════
     reg [23:0] rgb;
@@ -635,6 +752,8 @@ module hdmi_ui3_top (
         else if (c_yaxis)    rgb = 24'h90A0B0;      // 分量图 Y 轴
         else if (c_xaxis)    rgb = 24'h90A0B0;      // 分量图 X 轴
         else if (c_grid)     rgb = 24'h303840;      // 分量图网格线
+        else if (liss_lit)   rgb = 24'hFF8020;      // 李萨如轨迹（橙）
+        else if (liss_cross) rgb = 24'h303840;      // 李萨如中心十字
         else if (comp_lit)   rgb = 24'h40C0FF;      // 分量柱（青）
         else if (t_lit2)     rgb = 24'hFFFFFF;      // 文字
         else if (bar_lit)    rgb = 24'h30FF60;      // 频谱柱（绿）

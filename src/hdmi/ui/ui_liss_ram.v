@@ -81,7 +81,10 @@ module ui_liss_ram (
                     pst   <= P_WR;
                 end
                 default: begin                 // P_WR
-                    m[p_addr] <= p_dat | (16'd1 << p_bit);
+                    // ★ 写 2 个像素宽：单个 1 px 点在 212 px 的显示窗口里太细，
+                    //   看起来像散点。p_bit==15 时高位溢出丢弃，退化成 1 px，
+                    //   概率 1/16，无影响。
+                    m[p_addr] <= p_dat | (16'd3 << p_bit);
                     pst       <= P_IDLE;
                 end
                 endcase

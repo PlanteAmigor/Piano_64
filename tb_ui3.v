@@ -21,6 +21,8 @@ module tb_ui3;
     wire [255:0] BANDS;
     wire [511:0] COMP_AMP;
     wire [15:0]  UI_INFO;
+    wire signed [15:0] SCOPE_SMP;
+    wire               SCOPE_TOG;
 
     // 柱高给一个递增的测试图样，方便核对柱高换算
     genvar gi;
@@ -42,6 +44,28 @@ module tb_ui3;
         end
     endgenerate
 
+    // 李萨如激励：基频 + 三次谐波，模拟带谐波的乐器波形
+    //   每 32768 个 clk 一个样点（相当于 75MHz/48828 ≈ 1536，这里慢一点看得清）
+    real    ph1;
+    reg  signed [15:0] scope_smp;
+    reg                scope_tog = 1'b0;
+    integer            sc_cnt = 0;
+
+    always @(posedge clk) begin
+        sc_cnt <= sc_cnt + 1;
+        if (sc_cnt >= 1536) begin
+            sc_cnt    <= 0;
+            ph1       <= ph1 + 0.0334;          // 基频≈262 Hz（相对 48828）
+            scope_smp <= 16'sd10000 * $sin(ph1)
+                       + 16'sd4000  * $sin(3.0 * ph1)
+                       + 16'sd2000  * $sin(5.0 * ph1);
+            scope_tog <= ~scope_tog;
+        end
+    end
+
+    assign SCOPE_SMP = scope_smp;
+    assign SCOPE_TOG = scope_tog;
+
     // 音色/效果器也取个固定值：古筝 + REVERB + +12 半音
     //   ★ 位图：[15:8] transpose  [7:6] 预留  [5:4] fx  [3:2] timbre  [1:0] mode
     assign UI_INFO = {8'sd12, 2'b00, 2'd2, 2'd1, PAGE[1:0]};
@@ -53,6 +77,8 @@ module tb_ui3;
         .BANDS_TICK(1'b0),
         .UI_INFO(UI_INFO),
         .COMP_AMP(COMP_AMP),
+        .SCOPE_SMP(SCOPE_SMP),
+        .SCOPE_TOG(SCOPE_TOG),
         .tmds_clk_n_0(), .tmds_clk_p_0(),
         .tmds_d_n_0(),   .tmds_d_p_0()
     );
@@ -63,6 +89,11 @@ module tb_ui3;
     integer fout;
     integer ox = 0, oy = 0;
     integer frames = 0;
+
+    initial begin
+        ph1 = 0.0;
+        scope_smp = 16'sd0;
+    end
 
     initial begin
         if (PAGE == 0) fout = $fopen("frame_p0.ppm", "w");

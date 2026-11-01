@@ -77,7 +77,14 @@ module add_top #(
     // ── 「COMPONENT 64」柱图（最近触发声部的 64 根分量柱）─────────────
     //    每根 = 8 位幅度（0..255）。128 个正弦分量两两合并取大值 →
     //    64 根，宽度正好适合 1024 px 的绘图区。
-    output wire [64*8-1:0] COMP_AMP
+    output wire [64*8-1:0] COMP_AMP,
+
+    // ── 李萨如（相位图）取样口 ──────────────────────────────────
+    //    SCOPE_SMP 每样点更新一次，在两次 SCOPE_TOG 翻转之间保持稳定
+    //    （1024 个 clk_sys 周期 = 20.5 us）；渲染侧用 clk_p 打两拍同步
+    //    SCOPE_TOG、靠翻转沿抓一次数据，不存在多位撕裂。
+    output wire signed [15:0] SCOPE_SMP,
+    output wire               SCOPE_TOG
 );
 
     localparam integer NVOICE    = 8;      // ★ 4 → 8：只改这个参数（PH_SHIFT = 8/8 = 1 仍成立）
@@ -975,6 +982,28 @@ module add_top #(
             assign COMP_AMP[cgi*8 +: 8] = comp_bar[cgi];
         end
     endgenerate
+
+    //======================================================================
+    //  李萨如（相位图）取样
+    //    取最终送 DAC 的 out_l_r（已含软限幅），每样点锁一次 + 翻转标志。
+    //    不能用 L/R 做 XY：本工程是单声道，左右完全一样 → 会画成一条直线。
+    //======================================================================
+    reg signed [15:0] scope_smp;
+    reg               scope_tog;
+
+    always @(posedge clk_sys) begin
+        if (!por_n) begin
+            scope_smp <= 16'sd0;
+            scope_tog <= 1'b0;
+        end
+        else if (tick) begin
+            scope_smp <= out_l_r;
+            scope_tog <= ~scope_tog;
+        end
+    end
+
+    assign SCOPE_SMP = scope_smp;
+    assign SCOPE_TOG = scope_tog;
 
     //======================================================================
     //  灯带控制信号跨时钟域同步：clk_sys → CLOCK_50
