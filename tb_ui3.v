@@ -19,6 +19,7 @@ module tb_ui3;
     reg resetn = 1'b0;
 
     wire [255:0] BANDS;
+    wire [511:0] COMP_AMP;
     wire [15:0]  UI_INFO;
 
     // 柱高给一个递增的测试图样，方便核对柱高换算
@@ -26,6 +27,18 @@ module tb_ui3;
     generate
         for (gi = 0; gi < 32; gi = gi + 1) begin : g_band
             assign BANDS[gi*8 +: 8] = gi[7:0] * 8;      // 0, 8, 16 ... 248
+        end
+    endgenerate
+
+    // 分量柱给一条典型谐波包络：基频最强，前 8 次谐波快速下降，
+    // 8~19 次平缓，之后很低。用来检查坐标轴刻度是否对得上。
+    genvar ck;
+    generate
+        for (ck = 0; ck < 64; ck = ck + 1) begin : g_comp
+            localparam integer AV = (ck == 0)  ? 240 :
+                                    (ck <  8)  ? (200 - ck * 18) :
+                                    (ck <  20) ? (56 - (ck - 8) * 4) : 10;
+            assign COMP_AMP[ck*8 +: 8] = AV;
         end
     endgenerate
 
@@ -39,6 +52,7 @@ module tb_ui3;
         .BANDS (BANDS),
         .BANDS_TICK(1'b0),
         .UI_INFO(UI_INFO),
+        .COMP_AMP(COMP_AMP),
         .tmds_clk_n_0(), .tmds_clk_p_0(),
         .tmds_d_n_0(),   .tmds_d_p_0()
     );

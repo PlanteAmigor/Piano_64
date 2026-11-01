@@ -61,7 +61,15 @@ module add_voice8 #(
     output wire [6:0]          rom_addr,     // ★ 改成“分量号 p”：cache 里就是本音的数据
 
     output reg  signed [15:0]  sample,       // 本声部在本样点的和（保持到下一个样点）
-    output reg                 idle
+    output reg                 idle,
+
+    // ── 分量幅度监控（给 HDMI「COMPONENT 64」柱图用）──────────────
+    //    在 s==6 这一拍采样 amp_er（此时它持有第 p 个分量的实时幅度，
+    //    含包络衰减与力度）。每个分量每样点输出一次单拍脉冲。
+    //    ★ 与控制逻辑无关，纯观察口，接不接不影响音质。
+    output reg  [6:0]          part_idx,      // 当前分量号 0..NPART-1
+    output reg  [7:0]          part_amp,      // 该分量的实时幅度（0..255）
+    output reg                 part_vld       // part_idx/part_amp 有效
 );
 
     localparam [6:0] P_LAST = NPART - 1;
@@ -184,6 +192,30 @@ module add_voice8 #(
     wire signed [17:0] itp_s = $signed(itp[27:10]);
     wire signed [23:0] pr_s  = $signed(pr[34:16]);
     wire [16:0]        amp   = e1_q[31:16];
+
+    // ════════════════════════════════════════════════════════════════
+    //  分量幅度监控
+    //    amp_er 在 s==4 打拍，s==5/6/7 持有第 p 个分量的实时幅度
+    //    （s==6 正是 pr <= sv * amp_er 用的同一个值）。
+    //    这里在 s==6 采一次，得到「分量号 + 8 位幅度」的单拍脉冲。
+    //    ★ 装载中/未就绪时不发，避免把旧包络当成新音显示。
+    // ════════════════════════════════════════════════════════════════
+    wire part_ce = (s == 3'd6) && ready && !loading;
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            part_idx <= 7'd0;
+            part_amp <= 8'd0;
+            part_vld <= 1'b0;
+        end
+        else begin
+            part_vld <= part_ce;
+            if (part_ce) begin
+                part_idx <= p;
+                part_amp <= amp_er[15:8];
+            end
+        end
+    end
 
     wire [55:0] dpr1 = e1_q[31:8] * R1_eff;                  // 24 × 32
     wire [32:0] rem  = 33'h1_0000_0000 - {1'b0, er_q};

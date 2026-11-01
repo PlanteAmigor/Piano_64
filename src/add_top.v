@@ -71,7 +71,12 @@ module add_top #(
     //    [5:4]   fx        0=NONE 1=REVERB 2=DELAY 3=CHORUS
     //    [15:8]  transpose 有符号半音数（-24..+12）
     //    全部是「按键级」慢变量（去抖后 >10 ms 才变），渲染侧打两拍同步即可。
-    output wire [15:0] UI_INFO
+    output wire [15:0] UI_INFO,
+
+    // ── 「COMPONENT 64」柱图（最近触发声部的 64 根分量柱）─────────────
+    //    每根 = 8 位幅度（0..255）。128 个正弦分量两两合并取大值 →
+    //    64 根，宽度正好适合 1024 px 的绘图区。
+    output wire [64*8-1:0] COMP_AMP
 );
 
     localparam integer NVOICE    = 8;      // ★ 4 → 8：只改这个参数（PH_SHIFT = 8/8 = 1 仍成立）
@@ -427,6 +432,11 @@ module add_top #(
     wire               tick;
     wire signed [15:0] eng_l, eng_r;
 
+    // 分量幅度监控（来自「最近一次 note-on 的那个声部」）
+    wire [6:0] comp_idx;
+    wire [7:0] comp_amp;
+    wire       comp_vld;
+
     add_engine8 #(
         .NVOICE   (NVOICE),
         .NPART    (128),
@@ -456,6 +466,9 @@ module add_top #(
         .sample_l   (eng_l),
         .sample_r   (eng_r),
         .v_idle     (v_idle),
+        .comp_idx   (comp_idx),
+        .comp_amp   (comp_amp),
+        .comp_vld   (comp_vld),
 
         // DDR 取表口（clk_x1 域）
         .clk100              (ddr_clk_x1),
@@ -670,6 +683,55 @@ module add_top #(
         end
     endfunction
 
+    // ══════════════════════════════════════════════════════════════
+    //  ★★ 软限幅再拆一级（2026-11-01）
+    //
+    //  加 COMPONENT 64 以后 PnR 重新摆位，`gy_l → out_l_r` 实测
+    //  20.021 ns（CLK_SYS 周期 20 ns），SETUP −0.209 ns，占
+    //  CLK_SYS 违规的一大半。链是
+    //      gy_l → 绝对值 → 膝点比较 → d×d 乘法 → 移位 → 加减 → 钳位 → D
+    //  乘法前后塞了太多比较/加减。拆成两级：
+    //      ① abs：只做取绝对值 + 保存符号 → ga_l / ga_s
+    //      ② lim_post：只做膝点 + d×d + 钳位（输入已是非负数）→ out_l_r
+    //  数学上与 sat_post 完全等价（只是再多 1 个样点延迟）。
+    // ══════════════════════════════════════════════════════════════
+    function [15:0] lim_post;        // 软限幅后级（输入已取绝对值）
+        input [31:0] ax;
+        reg   [31:0] d, yy;
+        begin
+            if (ax <= 32'd24000) begin
+                yy = ax;                        // 直通区
+            end
+            else begin
+                d = ax - 32'd24000;
+                if (d > 32'd16384) d = 32'd16384;
+                yy = 32'd24000 + d - ((d * d) >>> 15);
+            end
+            if (yy > 32'd32767) yy = 32'd32767;
+            lim_post = yy[15:0];
+        end
+    endfunction
+
+    reg [31:0] ga_l, ga_r;           // |gy|
+    reg        gs_l, gs_r;           // gy 的符号
+    always @(posedge clk_sys) begin
+        if (!por_n) begin
+            ga_l <= 32'd0;  ga_r <= 32'd0;
+            gs_l <= 1'b0;   gs_r <= 1'b0;
+        end
+        else begin
+            ga_l <= gy_l[31] ? (~gy_l + 32'd1) : gy_l;
+            ga_r <= gy_r[31] ? (~gy_r + 32'd1) : gy_r;
+            gs_l <= gy_l[31];
+            gs_r <= gy_r[31];
+        end
+    end
+
+    wire signed [15:0] sp_l = gs_l ? -$signed({1'b0, lim_post(ga_l)})
+                                   :  $signed({1'b0, lim_post(ga_l)});
+    wire signed [15:0] sp_r = gs_r ? -$signed({1'b0, lim_post(ga_r)})
+                                   :  $signed({1'b0, lim_post(ga_r)});
+
     // ★★ 原来是单个 sat_gain 函数，从 timbre_r 一路走到输出寄存器：
     //       timbre_r → 增益选择 → 绝对值 → 膝点比较 → d×d 乘法 → 减法 → D
     //    合并 HDMI 后布线变挤，实测 19.989 ns（CLK_SYS 周期 20 ns），
@@ -705,8 +767,8 @@ module add_top #(
         // ★ 测试模式下直接输出 8 路正弦，绕过软限幅：
         //   sat_pre 会按音色乘 ×2/×8/×16，而 test_sine8 已经归一化到满幅，
         //   再过一遍增益会直接削顶。
-        out_l_r <= test_mode ? test_snd : sat_post(gy_l);
-        out_r_r <= test_mode ? test_snd : sat_post(gy_r);
+        out_l_r <= test_mode ? test_snd : sp_l;
+        out_r_r <= test_mode ? test_snd : sp_r;
     end
 
     //======================================================================
@@ -734,6 +796,44 @@ module add_top #(
     //        [15:8] transpose  [7:6] 预留  [5:4] fx  [3:2] timbre  [1:0] mode
     //======================================================================
     assign UI_INFO = {transpose, 2'b00, fx_r, timbre_r, ui_mode};
+
+    //======================================================================
+    //  COMPONENT 64：把 128 个正弦分量两两合并成 64 根柱
+    //
+    //  声部按 p = 0..127 顺序扫，每个分量在 s==6 给出一次 (idx, amp)。
+    //     idx 偶数 → 暂存到 pmax
+    //     idx 奇数 → comp_bar[idx>>1] = max(pmax, amp)   （两根取大值）
+    //  这样 64 根柱覆盖全部 128 个分量，又不会因为 128 根太细看不清。
+    //
+    //  ★ 不在每个样点清零：静音后保留最后一帧的包络，
+    //    这样松开键以后图还停在那里，评委能看清谐波形状。
+    //  ★ 声部扫满一轮是 1024 拍，用 comp_vld 门控写入即可，
+    //    不存在同一个 bar 被两轮混写的问题（一轮内每个 bar 只写一次）。
+    //======================================================================
+    reg [7:0] comp_bar [0:63];
+    reg [7:0] pmax;
+    integer   cbi;
+
+    always @(posedge clk_sys) begin
+        if (!engine_rst_n) begin
+            pmax <= 8'd0;
+            for (cbi = 0; cbi < 64; cbi = cbi + 1) comp_bar[cbi] <= 8'd0;
+        end
+        else if (comp_vld) begin
+            if (!comp_idx[0]) pmax <= comp_amp;
+            else begin
+                comp_bar[comp_idx[6:1]] <= (comp_amp > pmax) ? comp_amp : pmax;
+                pmax <= 8'd0;
+            end
+        end
+    end
+
+    genvar cgi;
+    generate
+        for (cgi = 0; cgi < 64; cgi = cgi + 1) begin : g_comp
+            assign COMP_AMP[cgi*8 +: 8] = comp_bar[cgi];
+        end
+    endgenerate
 
     //======================================================================
     //  灯带控制信号跨时钟域同步：clk_sys → CLOCK_50

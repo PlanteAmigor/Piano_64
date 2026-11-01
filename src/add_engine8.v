@@ -65,7 +65,15 @@ module add_engine8 #(
 
     output wire signed [15:0]      sample_l,
     output wire signed [15:0]      sample_r,
-    output wire [NVOICE-1:0]       v_idle
+    output wire [NVOICE-1:0]       v_idle,
+
+    // ── 「COMPONENT 64」柱图数据源 ─────────────────────────────────
+    //    只取【最近一次 note-on 的那个声部】—— 8 个声部全叠在一起会把
+    //    64 根柱变成一团糊，看不出谐波包络。
+    //    三个信号同属 clk 域、单拍脉冲，直接送 add_top 累加。
+    output wire [6:0]              comp_idx,     // 分量号 0..NPART-1
+    output wire [7:0]              comp_amp,     // 该分量实时幅度
+    output wire                    comp_vld
 );
 
     localparam [6:0] P_LO = 21, P_HI = 108, P_BASE = 21;
@@ -220,6 +228,11 @@ module add_engine8 #(
     wire [NVOICE*16-1:0] vs;
     wire [NVOICE-1:0]    idle_w;
 
+    // 分量幅度监控（每声部一份，再由 last_v 选出最近触发的那个）
+    wire [NVOICE*7-1:0]  vp_idx;
+    wire [NVOICE*8-1:0]  vp_amp;
+    wire [NVOICE-1:0]    vp_vld;
+
     genvar g;
     generate
         for (g = 0; g < NVOICE; g = g + 1) begin : g_voice
@@ -344,10 +357,32 @@ module add_engine8 #(
                 .rd2      (c_d2),
                 .rom_addr (v_raddr),
                 .sample   (vs[g*16 +: 16]),
-                .idle     (idle_w[g])
+                .idle     (idle_w[g]),
+                .part_idx (vp_idx[g*7 +: 7]),
+                .part_amp (vp_amp[g*8 +: 8]),
+                .part_vld (vp_vld[g])
             );
         end
     endgenerate
+
+    // ════════════════════════════════════════════════════════════════
+    //  最近一次 note-on 的声部 → 它的分量幅度送到 HDMI
+    //    v_trig 在 add_top 里已经是「按键按下」的单拍脉冲，直接当优先级信号。
+    //    多个同时按下时，循环按 g 递增赋值 → 最大 g 胜出（视觉上无所谓）。
+    // ════════════════════════════════════════════════════════════════
+    reg [2:0] last_v;
+    integer   lv;
+    always @(posedge clk) begin
+        if (!rst_n) last_v <= 3'd0;
+        else begin
+            for (lv = 0; lv < NVOICE; lv = lv + 1)
+                if (v_trig[lv]) last_v <= lv;
+        end
+    end
+
+    assign comp_idx = vp_idx[last_v*7 +: 7];
+    assign comp_amp = vp_amp[last_v*8 +: 8];
+    assign comp_vld = vp_vld[last_v];
 
     // ════════════════════════════════════════════════════════════════
     //  DDR 用户口多路选择

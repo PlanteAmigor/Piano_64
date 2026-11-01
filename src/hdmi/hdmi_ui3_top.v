@@ -54,6 +54,9 @@ module hdmi_ui3_top (
     //    [1:0] ui_mode  [3:2] timbre  [5:4] fx  [15:8] transpose
     input  wire [15:0]     UI_INFO,
 
+    // ── COMPONENT 64：最近触发声部的 64 根分量柱高度 ────────────────
+    input  wire [64*8-1:0] COMP_AMP,
+
     output wire       tmds_clk_n_0,
     output wire       tmds_clk_p_0,
     output wire [2:0] tmds_d_n_0,
@@ -95,16 +98,19 @@ module hdmi_ui3_top (
     //  ★ 必须加复位，否则综合器按「上电未知 = don't care」处理。
     // ══════════════════════════════════════════════════════════════
     reg [255:0] bands_cap;
+    reg [511:0] comp_cap;
     reg [15:0]  info_s0, info_s1;
 
     always @(posedge clk_p) begin
         if (!rst_n) begin
             bands_cap <= 256'd0;
+            comp_cap  <= 512'd0;
             info_s0   <= 16'd0;
             info_s1   <= 16'd0;
         end
         else begin
             bands_cap <= BANDS;
+            comp_cap  <= COMP_AMP;
             info_s0   <= UI_INFO;
             info_s1   <= info_s0;
         end
@@ -228,6 +234,16 @@ module hdmi_ui3_top (
     wire b_sel = !bx_raw[12] && (bx_raw[11:10] == 2'b00) &&
                  (bx_raw[11:5] < 7'd32) && (bx_raw[4:0] < 5'd24);
 
+    // 分量柱列选：列距 16（2 的幂）、柱宽 11、起点 x=64，共 64 根
+    //   64 × 16 = 1024 px → 64..1087；左侧 8..63 留给 Y 轴刻度文字
+    // ★★ 又是同一个坑：`ccx[9:4] < 6'd64` —— 6 位最大 63，64 被截断成 0，
+    //    判断恒假，64 根柱子一根都不亮（iverilog 只给了一句
+    //    "Numeric constant truncated to 6 bits" 的 warning）。
+    //    这里改用 7 位字面量。
+    wire [12:0] ccx  = {1'b0, px} - 13'd64;
+    wire c_sel = !ccx[12] && (ccx[11:10] == 2'b00) &&
+                 (ccx[9:4] < 7'd64) && (ccx[3:0] < 4'd11);
+
     // ══════════════════════════════════════════════════════════════
     //  t1 登记
     // ══════════════════════════════════════════════════════════════
@@ -239,6 +255,8 @@ module hdmi_ui3_top (
     reg        txt_on1;
     reg [4:0]  bidx1;
     reg        bsel1;
+    reg [5:0]  cidx1;
+    reg        csel1;
 
     always @(posedge clk_p) begin
         px1     <= px;
@@ -250,6 +268,8 @@ module hdmi_ui3_top (
         txt_on1 <= cx_ok && cy_ok;
         bidx1   <= bx_raw[9:5];
         bsel1   <= b_sel;
+        cidx1   <= ccx[9:4];
+        csel1   <= c_sel;
     end
 
     // ══════════════════════════════════════════════════════════════
@@ -273,6 +293,11 @@ module hdmi_ui3_top (
     wire [255:0] S_GUZH   = {"GUZHENG",                      {25{8'h20}}};  //  7
     wire [255:0] S_SUONA  = {"SUONA",                        {27{8'h20}}};  //  5
     wire [255:0] S_DIZI   = {"DIZI",                         {28{8'h20}}};  //  4
+    // COMPONENT 64 的坐标轴刻度
+    wire [255:0] S_Y192   = {"192",                          {29{8'h20}}};  //  3
+    wire [255:0] S_Y128   = {"128",                          {29{8'h20}}};  //  3
+    wire [255:0] S_Y64    = {"64",                           {30{8'h20}}};  //  2
+    wire [255:0] S_CSUB   = {"128 SINE / 2 PER BAR",         {12{8'h20}}};  // 20
 
     wire [255:0] s_tname = (timbre == 2'd0) ? S_PIANO :
                            (timbre == 2'd1) ? S_GUZH  :
@@ -321,6 +346,31 @@ module hdmi_ui3_top (
         end
     endfunction
 
+    // COMPONENT 64 的 X 轴刻度（每 8 根标一个，第 1/9/17/25/33/41/49/57 根）
+    //   ★ 只用单字符比较，不占资源；落在其它列就返回空格。
+    function [5:0] xlbl;
+        input [7:0] col;
+        begin
+            case (col)
+            8'd7  : xlbl = 6'd1;              // 1
+            8'd23 : xlbl = 6'd9;              // 9
+            8'd39 : xlbl = 6'd1;              // 17
+            8'd40 : xlbl = 6'd7;
+            8'd55 : xlbl = 6'd2;              // 25
+            8'd56 : xlbl = 6'd5;
+            8'd71 : xlbl = 6'd3;              // 33
+            8'd72 : xlbl = 6'd3;
+            8'd87 : xlbl = 6'd4;              // 41
+            8'd88 : xlbl = 6'd1;
+            8'd103: xlbl = 6'd4;              // 49
+            8'd104: xlbl = 6'd9;
+            8'd119: xlbl = 6'd5;              // 57
+            8'd120: xlbl = 6'd7;
+            default: xlbl = 6'd36;
+            endcase
+        end
+    endfunction
+
     // ── 移调值 → 3 字符（符号 / 十位 / 个位）─────────────────────────
     wire [7:0] tr_abs  = tr[7] ? (~tr + 8'd1) : tr;
     wire [3:0] tr_tens = (tr_abs >= 8'd20) ? 4'd2 : (tr_abs >= 8'd10) ? 4'd1 : 4'd0;
@@ -349,9 +399,23 @@ module hdmi_ui3_top (
                     if (col >= 8'd133 && col < 8'd142)
                         txt = gch(S_LISS, col - 8'd133);
                 end
-                6'd24:                                                 // 分量高度标题
+                6'd24: begin                                          // 分量高度标题 + 副标题
                     if (col >= 8'd2 && col < 8'd14)
                         txt = gch(S_COMP, col - 8'd2);
+                    if (col >= 8'd60 && col < 8'd80)
+                        txt = gch(S_CSUB, col - 8'd60);
+                end
+                6'd30:                                                 // Y 轴刻度 192
+                    if (col >= 8'd2 && col < 8'd5)
+                        txt = gch(S_Y192, col - 8'd2);
+                6'd34:                                                 // Y 轴刻度 128
+                    if (col >= 8'd2 && col < 8'd5)
+                        txt = gch(S_Y128, col - 8'd2);
+                6'd38:                                                 // Y 轴刻度 64
+                    if (col >= 8'd2 && col < 8'd4)
+                        txt = gch(S_Y64, col - 8'd2);
+                6'd42:                                                 // X 轴分量序号
+                    txt = xlbl(col);
                 6'd18: begin                                          // 信息框 1：音色
                     if (col >= 8'd133 && col < 8'd140)
                         txt = gch(S_TIMBR, col - 8'd133);
@@ -428,6 +492,8 @@ module hdmi_ui3_top (
     reg        bsel2;
     reg [9:0]  bhpx2;
     reg [15:0] glyph_d;
+    reg        csel2;
+    reg [7:0]  camp2;
 
     always @(posedge clk_p) begin
         px2     <= px1;
@@ -437,6 +503,8 @@ module hdmi_ui3_top (
         bsel2   <= bsel1;
         bhpx2   <= bhpx_sel;
         glyph_d <= glyph[gaddr];
+        csel2   <= csel1;
+        camp2   <= comp_cap[{cidx1, 3'b000} +: 8];
     end
 
     wire t_lit2 = txt_on2 && glyph_d[tbit2];
@@ -474,21 +542,23 @@ module hdmi_ui3_top (
                       (y2 >= 12'd60)  && (y2 <= 12'd377)  &&
                       ((x2 == 12'd8) || (x2 == 12'd1047) ||
                        (y2 == 12'd60) || (y2 == 12'd377));
-    // 主页面 —— 分量高度框 8..1047 × 388..705
-    assign e_comp   = (x2 >= 12'd8)   && (x2 <= 12'd1047) &&
+    // 主页面 —— 分量高度框 8..1271 × 388..705
+    //    ★ 比频谱框宽：64 根柱 × 16 px = 1024 px，再加上左侧 Y 轴刻度
+    //      和右侧留白，需要整行宽度。信息框相应缩到 284..377。
+    assign e_comp   = (x2 >= 12'd8)   && (x2 <= 12'd1271) &&
                       (y2 >= 12'd388) && (y2 <= 12'd705)  &&
-                      ((x2 == 12'd8) || (x2 == 12'd1047) ||
+                      ((x2 == 12'd8) || (x2 == 12'd1271) ||
                        (y2 == 12'd388) || (y2 == 12'd705));
     // 主页面 —— 李萨如框 1060..1271 × 60..271
     assign e_liss   = (x2 >= 12'd1060) && (x2 <= 12'd1271) &&
                       (y2 >= 12'd60)   && (y2 <= 12'd271)  &&
                       ((x2 == 12'd1060) || (x2 == 12'd1271) ||
                        (y2 == 12'd60)   || (y2 == 12'd271));
-    // 主页面 —— 信息框 1060..1271 × 284..705
+    // 主页面 —— 信息框 1060..1271 × 284..377
     assign e_info   = (x2 >= 12'd1060) && (x2 <= 12'd1271) &&
-                      (y2 >= 12'd284)  && (y2 <= 12'd705)  &&
+                      (y2 >= 12'd284)  && (y2 <= 12'd377)  &&
                       ((x2 == 12'd1060) || (x2 == 12'd1271) ||
-                       (y2 == 12'd284)  || (y2 == 12'd705));
+                       (y2 == 12'd284)  || (y2 == 12'd377));
     // 测试页 —— 满幅框 8..1271 × 60..705
     assign e_test   = (x2 >= 12'd8)   && (x2 <= 12'd1271) &&
                       (y2 >= 12'd60)  && (y2 <= 12'd705)  &&
@@ -518,6 +588,38 @@ module hdmi_ui3_top (
 
     wire edge_lane = (page_show == 2'd2) && (e_lane | e_jline);
 
+    // ══════════════════════════════════════════════════════════════
+    //  COMPONENT 64 柱图 + 坐标轴（仅主页面）
+    //
+    //  绘图区：x 64..1087（64 根 × 16 px），y 424..680（256 px）
+    //    柱高直接用 8 位幅度值 → py 与 amp 一一对应，不需要换算
+    //  坐标轴：
+    //    左 Y 轴竖线  x = 56..57，y 424..681
+    //    底 X 轴线    y = 680..681，x 56..1088
+    //    横向网格线   y = 488 / 552 / 616（对应幅度 192 / 128 / 64）
+    //                  且正好落在字符网格第 30 / 34 / 38 行上，
+    //                  刻度文字就画在同一行的最左侧，天然对齐
+    // ══════════════════════════════════════════════════════════════
+    localparam [9:0] COMP_BASE = 10'd680;
+
+    wire [9:0] py10 = {2'b00, py2[9:0]};
+
+    wire comp_lit = csel2 && (page_show == 2'd0) &&
+                    (py10 >= (COMP_BASE - {2'b00, camp2})) &&
+                    (py10 <   COMP_BASE);
+
+    wire c_yaxis = (page_show == 2'd0) &&
+                   ((x2 == 12'd56) || (x2 == 12'd57)) &&
+                   (y2 >= 12'd424) && (y2 <= 12'd681);
+
+    wire c_xaxis = (page_show == 2'd0) &&
+                   ((y2 == 12'd680) || (y2 == 12'd681)) &&
+                   (x2 >= 12'd56) && (x2 <= 12'd1088);
+
+    wire c_grid  = (page_show == 2'd0) &&
+                   ((y2 == 12'd488) || (y2 == 12'd552) || (y2 == 12'd616)) &&
+                   (x2 >= 12'd60) && (x2 <= 12'd1088);
+
     // 状态栏底色（整块填充）
     wire status_bg = (page_show == 2'd0) &&
                      (x2 >= 12'd8) && (x2 <= 12'd1271) &&
@@ -530,9 +632,13 @@ module hdmi_ui3_top (
     always @(*) begin
         if      (edge_lane)  rgb = 24'hFF8020;      // 轨道 / 判定线
         else if (edge_box)   rgb = 24'h607080;      // 版面框
+        else if (c_yaxis)    rgb = 24'h90A0B0;      // 分量图 Y 轴
+        else if (c_xaxis)    rgb = 24'h90A0B0;      // 分量图 X 轴
+        else if (c_grid)     rgb = 24'h303840;      // 分量图网格线
+        else if (comp_lit)   rgb = 24'h40C0FF;      // 分量柱（青）
         else if (t_lit2)     rgb = 24'hFFFFFF;      // 文字
-        else if (bar_lit)    rgb = 24'h30FF60;      // 频谱柱
-        else if (base_line)  rgb = 24'h405060;      // 柱底基线
+        else if (bar_lit)    rgb = 24'h30FF60;      // 频谱柱（绿）
+        else if (base_line)  rgb = 24'h405060;      // 频谱柱底基线
         else if (status_bg)  rgb = 24'h101820;      // 状态栏底色
         else                 rgb = 24'h000000;
     end
