@@ -63,7 +63,15 @@ module add_top #(
     //    显示侧 cross-domain 时只需「tick 高电平期间抓一次」即可，
     //    因为数据窗口有几十毫秒那么宽，不存在采样竞态。
     output wire [32*8-1:0] SPEC_BANDS,
-    output wire            SPEC_TICK
+    output wire            SPEC_TICK,
+
+    // ── UI 状态总线（给 HDMI 渲染器画状态栏/信息框）─────────────────
+    //    [1:0]   ui_mode   0=主页面 1=测试 2=教学
+    //    [3:2]   timbre    0=钢琴 1=古筝 2=唢呐 3=笛子
+    //    [5:4]   fx        0=NONE 1=REVERB 2=DELAY 3=CHORUS
+    //    [15:8]  transpose 有符号半音数（-24..+12）
+    //    全部是「按键级」慢变量（去抖后 >10 ms 才变），渲染侧打两拍同步即可。
+    output wire [15:0] UI_INFO
 );
 
     localparam integer NVOICE    = 8;      // ★ 4 → 8：只改这个参数（PH_SHIFT = 8/8 = 1 仍成立）
@@ -91,10 +99,13 @@ module add_top #(
     wire engine_rst_n = por_n & RESET_n & pll_lock;
 
     //======================================================================
-    //  板上 KEY.0（AA13）→ 测试模式开关
+    //  板上 KEY.0（AA13）→ 三模式页面循环
     //
     //  赛题「现场验证要求」要一个测试模式：输出 8 路不同频率的纯正弦，
-    //  频谱上能数出对应数量的独立谱峰。这里用板载 KEY.0 短按进出。
+    //  频谱上能数出对应数量的独立谱峰。
+    //
+    //    每按一次：主页面(0) → 测试(1) → 教学(2) → 主页面(0)
+    //    上电默认主页面。音源切换和页面切换是同一个 mode，同步发生。
     //
     //  去抖 20 ms。它不参与演奏计时，不需要 key_dual 那套双触点精度。
     //  板上三个用户键都是「悬空=1、按下=0」，必须开内部上拉。
@@ -124,11 +135,18 @@ module add_top #(
     end
     wire k0_press = k0_stable_d & ~k0_stable;      // 按下沿（低有效）
 
-    reg test_mode;
+    localparam [1:0] MODE_MAIN  = 2'd0,
+                     MODE_TEST  = 2'd1,
+                     MODE_GUIDE = 2'd2;
+
+    reg [1:0] ui_mode;
     always @(posedge clk_sys) begin
-        if (!por_n)        test_mode <= 1'b0;
-        else if (k0_press) test_mode <= ~test_mode;
+        if (!por_n)        ui_mode <= MODE_MAIN;
+        else if (k0_press) ui_mode <= (ui_mode == MODE_GUIDE) ? MODE_MAIN
+                                                             : (ui_mode + 2'd1);
     end
+
+    wire test_mode = (ui_mode == MODE_TEST);
 
     //======================================================================
     //  ★ 18 键双触点力度键盘（J13）
@@ -192,6 +210,18 @@ module add_top #(
     always @(posedge clk_sys) begin
         if (!engine_rst_n)          timbre_r <= 2'd0;
         else if (timbre_toggle)     timbre_r <= (timbre_r == 2'd3) ? 2'd0 : timbre_r + 2'd1;
+    end
+
+    //======================================================================
+    //  效果器档位：上方独立键 KEY_AUX[1]（U37 / C19）短按循环
+    //    0=NONE 1=REVERB 2=DELAY 3=CHORUS
+    //  ★ 目前只有 UI 显示，音频通路还没实现（Step4 之后再做）
+    //======================================================================
+    reg [1:0] fx_r;
+
+    always @(posedge clk_sys) begin
+        if (!engine_rst_n)                       fx_r <= 2'd0;
+        else if (aux_release[1])                 fx_r <= (fx_r == 2'd3) ? 2'd0 : fx_r + 2'd1;
     end
 
     // ★ 古筝判定必须写【== 1】，不能再用 timbre_r[0]
@@ -692,6 +722,13 @@ module add_top #(
         .bands      (SPEC_BANDS),
         .bands_tick (SPEC_TICK)
     );
+
+    //======================================================================
+    //  UI 状态总线 → HDMI 渲染器
+    //    ⚠ transpose 是有符号量，直接截断到 8 位传给渲染器；
+    //      渲染器只用于文字显示，不做算术。
+    //======================================================================
+    assign UI_INFO = {transpose, fx_r, timbre_r, ui_mode};
 
     //======================================================================
     //  灯带控制信号跨时钟域同步：clk_sys → CLOCK_50

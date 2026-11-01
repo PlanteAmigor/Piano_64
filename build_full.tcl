@@ -51,7 +51,7 @@ add_file src/sd_ddr_loader.v
 #══════════════════════════════════════════════════════════════════
 #  HDMI 720p 频谱显示（复用 ir4 已验证的 DVI 栈）
 #══════════════════════════════════════════════════════════════════
-add_file src/hdmi/hdmi_spec_top.v
+add_file src/hdmi/hdmi_ui3_top.v
 add_file src/hdmi/ir4/dvi_tx_tmds_enc.v
 add_file src/hdmi/ir4/dvi_tx_tmds_phy.v
 add_file src/hdmi/ir4/dvi_tx_clk_drv.v
