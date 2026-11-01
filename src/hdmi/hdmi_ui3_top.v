@@ -162,11 +162,25 @@ module hdmi_ui3_top (
 
     // ══════════════════════════════════════════════════════════════
     //  720p 时序
+    //
+    //  ★★ 关键：PLL 出的是 75.000 MHz，不是标准的 74.25 MHz。
+    //     如果照抄 CEA-861 的 H_TOTAL=1650，实际行频就是
+    //         75e6 / 1650 = 45.4545 kHz（标准 45.000 kHz，快 1.01%）
+    //         行频 / 750 = 60.606 Hz（标准 60.000，快 1.01%）
+    //     大显示器容差大能认，但挑剔的屏（比如 1080p 小屏）会间歇性
+    //     丢锁 —— 现象就是"一会儿亮一会儿灭"。
+    //     所以把 H_TOTAL 改成 1667，让行频/帧率回到标准值：
+    //         75e6 / 1667 = 44.991 kHz → /750 = 59.988 Hz
+    //     多出来的 17 个像素补到后沿（blanking 387 = 110+40+237）。
+    //
+    //  行：FP 110 | SYNC 40 | BP 237 | ACTIVE 1280   = 1667
+    //  场：FP   5 | SYNC  5 | BP  20 | ACTIVE  720   =  750
     // ══════════════════════════════════════════════════════════════
-    localparam integer H_TOTAL = 1650, H_SYNC = 40,  H_BP = 220, H_VIS = 1280;
-    localparam integer V_TOTAL = 750,  V_SYNC = 5,   V_BP = 20,  V_VIS = 720;
-    localparam integer H_START = H_SYNC + H_BP;      // 260
-    localparam integer V_START = V_SYNC + V_BP;      //  25
+    localparam integer H_TOTAL = 1667, H_FP = 110, H_SYNC = 40, H_BP = 237;
+    localparam integer V_TOTAL = 750,  V_FP = 5,   V_SYNC = 5,  V_BP = 20;
+    localparam integer H_VIS = 1280, V_VIS = 720;
+    localparam integer H_START = H_FP + H_SYNC + H_BP;      // 387
+    localparam integer V_START = V_FP + V_SYNC + V_BP;      //  30
 
     reg [11:0] hcnt, vcnt;
     always @(posedge clk_p) begin
@@ -184,8 +198,9 @@ module hdmi_ui3_top (
     wire v_vis = (vcnt >= V_START) && (vcnt < V_START + V_VIS);
     wire vis   = h_vis && v_vis;
 
-    wire hsync = ~((hcnt >= H_SYNC) && (hcnt < H_SYNC + 96));
-    wire vsync = ~((vcnt >= V_SYNC) && (vcnt < V_SYNC + 5));
+    // 同步脉冲位置按 CEA-861：跟在【前沿】之后
+    wire hsync = ~((hcnt >= H_FP) && (hcnt < H_FP + H_SYNC));
+    wire vsync = ~((vcnt >= V_FP) && (vcnt < V_FP + V_SYNC));
 
     wire [11:0] px = hcnt - H_START;      // 0..1279
     wire [11:0] py = vcnt - V_START;      // 0..719
