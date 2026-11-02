@@ -334,25 +334,23 @@ module add_top #(
 
     //======================================================================
     //  效果器档位（U38 长按循环）：
-    //      0 = NONE           干声
-    //      1 = DELAY          乒乓延迟
-    //      2 = SUSTAIN        延音（作用于音源：松键后按自然衰减率继续响）
-    //      3 = DELAY+SUSTAIN  两个同时开
-    //      4 = CHORUS         合唱
-    //  ★ DELAY / SUSTAIN 是【互相独立】的：SUSTAIN 改的是音源包络，
-    //    DELAY 改的是后期输出，所以可以叠加。
+    //      0 = NONE     干声
+    //      1 = DELAY    乒乓延迟
+    //      2 = SUSTAIN  延音（作用于音源：松键后按自然衰减率继续响）
+    //      3 = CHORUS   合唱
+    //  ★ DELAY 与 SUSTAIN 互斥，不做叠加档。
     //======================================================================
     reg [2:0] fx_r;
 
     always @(posedge clk_sys) begin
         if (!engine_rst_n)                       fx_r <= 3'd0;
-        else if (fx_toggle)                      fx_r <= (fx_r == 3'd4) ? 3'd0 : fx_r + 3'd1;
+        else if (fx_toggle)                      fx_r <= (fx_r == 3'd3) ? 3'd0 : fx_r + 3'd1;
     end
 
     // 三个使能必须定义在 u_piano 之前（default_nettype none）
-    wire fx_dly_on = (fx_r == 3'd1) || (fx_r == 3'd3);
-    wire fx_sus_on = (fx_r == 3'd2) || (fx_r == 3'd3);
-    wire fx_chr_on = (fx_r == 3'd4);
+    wire fx_dly_on = (fx_r == 3'd1);
+    wire fx_sus_on = (fx_r == 3'd2);
+    wire fx_chr_on = (fx_r == 3'd3);
 
     //======================================================================
     //  李萨如余辉档位：0..3（KEY_R2[0] 短按循环）
@@ -932,7 +930,7 @@ module add_top #(
         .clk    (clk_sys),
         .rst_n  (por_n),
         .tick   (tick),
-        .enable (fx_dly_on),           // 1 = DELAY，3 = DELAY+SUSTAIN
+        .enable (fx_dly_on),           // 1 = DELAY
         .in_l   (fxi_l),
         .in_r   (fxi_r),
         .out_l  (dly_l),
@@ -940,8 +938,8 @@ module add_top #(
     );
 
     //  效果器输出选择：
-    //      1(DELAY) / 3(DELAY+SUSTAIN) → 延迟输出
-    //      其他（NONE / SUSTAIN / CHORUS）→ 合唱模块的输出，
+    //      1(DELAY) → 延迟输出
+    //      0 / 2 / 3（NONE / SUSTAIN / CHORUS）→ 合唱模块的输出，
     //          其中 NONE / SUSTAIN 时合唱 enable=0，输出就是寄存后的干声。
     //  ★ SUSTAIN 不需要在这里改什么：它作用在音源包络上（见 u_piano.sustain），
     //    所以走干声通路就是对的。

@@ -91,7 +91,7 @@ module add_engine_harm #(
     localparam integer PSI_E = 151;
     localparam integer ENV_E = 76;
     localparam integer NPRE  = 7;
-    localparam integer TMAX  = 146400;      // 3 s
+    localparam integer TMAX  = 244140;      // 5 s（含延音的绝对上限）
 
     // ════════════════════════════════════════════════════════════════
     //  ROM
@@ -469,7 +469,8 @@ module add_engine_harm #(
             r4_pm <= 0; r4_snf <= 0;
             pv0 <= 0; pv1 <= 0; pv2 <= 0; pv3 <= 0; pv4 <= 0;
             for (i = 0; i < NVOICE; i = i + 1) begin
-                v_ts[i] <= 20'd0; v_ua[i] <= 32'd0; v_pf[i] <= 19'd0;
+                v_ts[i] <= 20'd0;
+                v_ua[i] <= 32'd0; v_pf[i] <= 19'd0;
                 v_k[i]  <= 8'd0;  v_ab[i] <= 0;     v_eb[i] <= 16'd0;
                 v_pb[i] <= 16'd0; v_fb[i] <= 0;     v_act[i] <= 1'b0;
                 v_px[i] <= 15'd0; v_pfx[i] <= 16'd0;
@@ -539,12 +540,15 @@ module add_engine_harm #(
                     if (v_act[i]) begin
                         // ★ 松键：吹奏乐器默认松口即断气（v_act 清零引擎停）。
                         //   延音档下改成等释放增益衰到 0 再停。
-                        if (!v_gate[i]) begin
-                            if (!sustain || rel_gain == 8'd0) v_act[i] <= 1'b0;
-                        end
-                        else if (v_ts[i] + 20'd1 >= TMAX) v_act[i] <= 1'b0;
-                        // ★ TMAX 只限制【按住】的时长；松键后的延音不受裁剪
-                        if (v_gate[i]) v_ts[i] <= v_ts[i] + 20'd1;
+                        if (!v_gate[i] && (!sustain || rel_gain == 8'd0))
+                            v_act[i] <= 1'b0;
+                        // ★★ 绝对兜底：总时长到 TMAX 一定停。
+                        //   关键：v_ts 无条计数，与 gate 无关。
+                        //   之前写成 if (v_gate) v_ts++ 并松键清零 → 键盘消抖
+                        //   抖动时 v_ts 反复归零，TMAX 永远到不了 → 永不停音。
+                        else if (v_ts[i] + 20'd1 >= TMAX)
+                            v_act[i] <= 1'b0;
+                        v_ts[i] <= v_ts[i] + 20'd1;
                     end
                 end
             end
