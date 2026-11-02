@@ -185,14 +185,22 @@ module add_voice8 #(
     reg [7:0]  ramp;
 
     localparam [31:0] R_REL = 32'd293000;      // 松键、无延音：固定快释放（0.30 s）
+    // ★ 延音档的衰减上限：τ = 2^32/(R·fs) ≈ 1.5 s
+    //   高音区、古筝的 R1_r 本身就大（衰减快），延音档下几乎听不出区别，
+    //   所以松键时给它一个上限 —— 保证每个音至少能拖 1.5 s。
+    //   R1_r 更小的（低音，自然衰减更慢）保留原值，可以拖得更久。
+    localparam [31:0] R_SUS_MAX = 32'd58635;
     reg               gate_r;
     always @(posedge clk) gate_r <= gate;
     wire              rel    = ~gate_r;
-    // ★ 延音（= 延音踏板踩下）：松键后制音器不落下，弦按【自己的自然衰减率】
+    // 延音（= 延音踏板踩下）：松键后制音器不落下，弦按【自己的自然衰减率】
     //   R1_r 继续振动。R1_r 来自采样分析，每个音各不相同（低音慢、高音快），
     //   所以低音拖得久、高音收得快 —— 和真钢琴一致。
-    //   不踩踏板时用固定的 R_REL（0.30 s）= 制音器落下的快收。
-    wire [31:0]       R1_eff = (rel && !sustain) ? R_REL : R1_r;
+    // 不踩踏板时用固定的 R_REL（0.30 s）= 制音器落下的快收。
+    // ★ 只有【松键后】才改衰减率；按住期间始终用采样自带的 R1_r。
+    wire [31:0] R_rel_eff = sustain ? ((R1_r > R_SUS_MAX) ? R_SUS_MAX : R1_r)
+                                    : R_REL;
+    wire [31:0] R1_eff    = rel ? R_rel_eff : R1_r;
 
     wire signed [17:0] itp_s = $signed(itp[27:10]);
     wire signed [23:0] pr_s  = $signed(pr[34:16]);

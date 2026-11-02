@@ -726,6 +726,8 @@ module add_top #(
         .v_trig     ({3'b000, sua_trig}),
         .v_gate     ({3'b000, sua_gate}),
         .v_vel      ({{24{1'b0}}, sua_vel}),
+        // ★ 延音：与钢琴/古筝共用同一个效果器档位（SUSTAIN / DELAY+SUSTAIN）
+        .sustain    (fx_sus_on),
         .sample_tick(tick),
         .sample_l   (sua_l),
         .sample_r   (sua_r),

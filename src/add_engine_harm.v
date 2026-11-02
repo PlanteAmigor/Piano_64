@@ -53,6 +53,7 @@ module add_engine_harm #(
     input  wire [NVOICE-1:0]       v_trig,
     input  wire [NVOICE-1:0]       v_gate,
     input  wire [NVOICE*8-1:0]     v_vel,          // ★ 力度（只调音量）
+    input  wire                    sustain,        // ★ 1 = 延音：松键后逐渐消失
     input  wire                    sample_tick,
 
     output wire signed [15:0]      sample_l,
@@ -432,6 +433,19 @@ module add_engine_harm #(
 
     wire signed [63:0] mix = acc >>> (19 + MIX_SHIFT);
 
+    // ════════════════════════════════════════════════════════════════
+    //  延音（SUSTAIN 档）的释放增益
+    //    唢呐/笛子是吹奏乐器，松口本该立刻断气（v_act 清零 → 引擎停）。
+    //    延音档下改成：引擎继续跑，但把输出乘一个递减的 8 位增益。
+    //    ★ 关键：直接顶替 smp 合成里【已有的】 v_vel 乘法，不新增乘法器。
+    //    REL_STEP=400 样点减 1 → 255×400/48828 ≈ 2.09 s 线性衰减。
+    // ════════════════════════════════════════════════════════════════
+    localparam [17:0] REL_STEP = 18'd400;
+    reg  [7:0]  rel_gain;                      // 255 = 满，0 = 静音
+    reg  [17:0] rel_cnt;
+    wire        sus_rel  = sustain && any_act && !(|v_gate);
+    wire [7:0]  vel_eff  = sus_rel ? rel_gain : v_vel[7:0];
+
     function signed [15:0] sat16; input signed [63:0] x;
         begin
             if      (x >  64'sd32767) sat16 =  16'sd32767;
@@ -504,16 +518,33 @@ module add_engine_harm #(
             else if (pv4)     acc <= acc + ($signed({{32{r4_pm[31]}}, r4_pm})
                                           * $signed({{32{r4_snf[31]}}, r4_snf}));
 
+            // ── 延音释放增益（每样点一档）──────────────────────────
+            if (cnt == 10'd0) begin
+                if (sus_rel) begin
+                    if (rel_cnt == 18'd0) begin
+                        rel_cnt  <= REL_STEP - 18'd1;
+                        rel_gain <= (rel_gain > 8'd1) ? (rel_gain - 8'd1) : 8'd0;
+                    end
+                    else rel_cnt <= rel_cnt - 18'd1;
+                end
+                else begin
+                    rel_gain <= 8'd255;        // 未处于释放（含按住、或未开延音）
+                    rel_cnt  <= 18'd0;
+                end
+            end
+
             // ── 每样点：计数 + 到期（★ 每个样点只加一，不是每拍）──
             if (cnt == 10'd0) begin
                 for (i = 0; i < NVOICE; i = i + 1) begin
                     if (v_act[i]) begin
-                        // ★ 松键即停：唢呐是吹奏乐器，松口就断气。
-                        //   原来只靠 TMAX（3 s）硬切，松键后还会继续响 3 秒。
-                        //   停止后由下面的 smp 一阶衰减平滑收尾，不出爆音。
-                        if (!v_gate[i])                        v_act[i] <= 1'b0;
-                        else if (v_ts[i] + 20'd1 >= TMAX)      v_act[i] <= 1'b0;
-                        v_ts[i] <= v_ts[i] + 20'd1;
+                        // ★ 松键：吹奏乐器默认松口即断气（v_act 清零引擎停）。
+                        //   延音档下改成等释放增益衰到 0 再停。
+                        if (!v_gate[i]) begin
+                            if (!sustain || rel_gain == 8'd0) v_act[i] <= 1'b0;
+                        end
+                        else if (v_ts[i] + 20'd1 >= TMAX) v_act[i] <= 1'b0;
+                        // ★ TMAX 只限制【按住】的时长；松键后的延音不受裁剪
+                        if (v_gate[i]) v_ts[i] <= v_ts[i] + 20'd1;
                     end
                 end
             end
@@ -609,8 +640,9 @@ module add_engine_harm #(
                     dr <= dr + 4'd1;
                     if (dr == 4'd5) begin
                         // ★ 力度只调音量；DMA 覆盖表期间强制静音
+                        //   延音档松键时 vel_eff = rel_gain → 输出逐渐变轻
                         smp <= quiet ? 16'sd0
-                             : sat16((mix * $signed({1'b0, v_vel[7:0]})) >>> 8);
+                             : sat16((mix * $signed({1'b0, vel_eff})) >>> 8);
                         st  <= ST_IDLE;
                     end
                 end
