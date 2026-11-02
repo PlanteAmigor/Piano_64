@@ -879,6 +879,36 @@ module add_top #(
     wire signed [15:0] sp_r = gs_r ? -$signed({1'b0, lim_post(ga_r)})
                                    :  $signed({1'b0, lim_post(ga_r)});
 
+    //======================================================================
+    //  效果器：CHORUS（clk_sys 域，延迟线用 2 个 BSRAM）
+    //
+    //  ★ 输入必须寄存一级。sp_l 是
+    //        ga_l → |·| → 膝点比较 → d*d 乘法 → 钳位 → sp_l
+    //    这条已经很长的组合链（add_top 为此专门把软限幅拆成了两级），
+    //    直接把 FX 的插值乘法再串上去必然顶爆 CLK_SYS。
+    //
+    //  ★ 旁通时（fx_r != CHORUS）延迟线照写、LFO 照跑，输出 = 寄存后的干声。
+    //    所以切入/切出 CHORUS 的延迟恒定，没有爆音也没有瞬间的陈旧数据。
+    //======================================================================
+    reg signed [15:0] fxi_l, fxi_r;
+    always @(posedge clk_sys) begin
+        fxi_l <= sp_l;
+        fxi_r <= sp_r;
+    end
+
+    wire signed [15:0] fxd_l, fxd_r;
+
+    fx_chorus u_fx_chorus (
+        .clk    (clk_sys),
+        .rst_n  (por_n),
+        .tick   (tick),
+        .enable (fx_r == 2'd3),        // 3 = CHORUS（NONE/REVERB/DELAY/CHORUS）
+        .in_l   (fxi_l),
+        .in_r   (fxi_r),
+        .out_l  (fxd_l),
+        .out_r  (fxd_r)
+    );
+
     // ★★ 原来是单个 sat_gain 函数，从 timbre_r 一路走到输出寄存器：
     //       timbre_r → 增益选择 → 绝对值 → 膝点比较 → d×d 乘法 → 减法 → D
     //    合并 HDMI 后布线变挤，实测 19.989 ns（CLK_SYS 周期 20 ns），
@@ -914,8 +944,8 @@ module add_top #(
         // ★ 测试模式下直接输出 8 路正弦，绕过软限幅：
         //   sat_pre 会按音色乘 ×2/×8/×16，而 test_sine8 已经归一化到满幅，
         //   再过一遍增益会直接削顶。
-        out_l_r <= test_mode ? test_snd : sp_l;
-        out_r_r <= test_mode ? test_snd : sp_r;
+        out_l_r <= test_mode ? test_snd : fxd_l;
+        out_r_r <= test_mode ? test_snd : fxd_r;
     end
 
     //======================================================================
