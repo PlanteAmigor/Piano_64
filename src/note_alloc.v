@@ -117,15 +117,22 @@ module note_alloc #(
     endgenerate
     wire [NVOICE-1:0] rr_hot  = ({{(NVOICE-1){1'b0}}, 1'b1} << rr);
 
-    // ★ 保护期内的声部不参与分配
-    wire [NVOICE-1:0] free_ok = is_free & ~rel_hold;
+    // ★ 两级可复用声部（保护期内不参与分配）
+    //   idle_ok：包络已衰到 0（含从未分配过的声部）
+    //   rel_ok ：已松键、但余音还在响 —— 开了延音后这才是普遍状态
+    //   ★ 注意：松键时 v_key 会被置成 KEY_FREE（见下方 189 行），
+    //     所以【不能】用 is_free 判断“是否在释放”，必须用 v_idle。
     wire [NVOICE-1:0] idle_ok = v_idle  & ~rel_hold;
+    wire [NVOICE-1:0] rel_ok  = ~v_gate & ~v_idle & ~rel_hold;
 
-    // ★★ 全忙时【丢音，绝不抢占】—— 宁可少响一个音，也绝不出爆音
-    //    抢占比丢音难听得多：正在响的余音会被一刀切断（阶跃）→ 爆音。
-    //    有 8 个声部 + 0.34 s 保护期，正常演奏根本碰不到这个分支。
-    wire [NVOICE-1:0] cand     = (|free_ok)   ? free_ok   :
-                                 (|idle_ok)   ? idle_ok   :
+    // ★★ 三级候选：静音 → 释放中的余音 → 丢音
+    //    第三级是延音功能必需的：开了延音后余音会长期占住声部，
+    //    只靠 idle 一级会在弹到第 9 个音时大量丢音。
+    //    add_voice8 收到 trig 会先做 1.7 ms 淡出再装载（fading），
+    //    所以抢「已在释放」的声部不会爆音，只会收掉一段已经变轻的余音。
+    //    ★ 按住的键（v_gate=1）永远不抢。
+    wire [NVOICE-1:0] cand     = (|idle_ok)   ? idle_ok   :
+                                 (|rel_ok)    ? rel_ok    :
                                                 {NVOICE{1'b0}};
     wire [NVOICE-1:0] vsel_oh  = pick(cand);
 

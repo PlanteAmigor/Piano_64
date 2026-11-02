@@ -51,6 +51,7 @@ module add_voice8 #(
     input  wire [6:0]          note,
     input  wire                trig,
     input  wire                gate,
+    input  wire                sustain,      // ★ 1 = 延音：松键后按自然衰减率继续响
 
     // ── 本声部的参数 cache 接口（每声部独占一份，读延迟 1 拍）──────
     input  wire [31:0]         rd0,          // bank0 = inc
@@ -183,11 +184,15 @@ module add_voice8 #(
     //  注意：淡入不影响触发延迟（note-on 到第一个到样点的延迟不变）
     reg [7:0]  ramp;
 
-    localparam [31:0] R_REL = 32'd293000;      // 松键：固定快释放（0.30 s）
+    localparam [31:0] R_REL = 32'd293000;      // 松键、无延音：固定快释放（0.30 s）
     reg               gate_r;
     always @(posedge clk) gate_r <= gate;
     wire              rel    = ~gate_r;
-    wire [31:0]       R1_eff = rel ? R_REL : R1_r;
+    // ★ 延音（= 延音踏板踩下）：松键后制音器不落下，弦按【自己的自然衰减率】
+    //   R1_r 继续振动。R1_r 来自采样分析，每个音各不相同（低音慢、高音快），
+    //   所以低音拖得久、高音收得快 —— 和真钢琴一致。
+    //   不踩踏板时用固定的 R_REL（0.30 s）= 制音器落下的快收。
+    wire [31:0]       R1_eff = (rel && !sustain) ? R_REL : R1_r;
 
     wire signed [17:0] itp_s = $signed(itp[27:10]);
     wire signed [23:0] pr_s  = $signed(pr[34:16]);

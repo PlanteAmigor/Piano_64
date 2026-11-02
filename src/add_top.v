@@ -603,6 +603,10 @@ module add_top #(
         .v_trig     (eng_trig),
         .v_gate     (eng_gate),
         .v_vel      (v_vel),
+        // ★ 延音：钢琴/古筝常开（模拟延音踏板踩下）——松键后按每个音
+        //   自己的自然衰减率继续响，而不是 0.30 s 一刀煞掉。
+        //   DELAY/CHORUS 等效果器不受影响，仍是“复制已发出的声音”。
+        .sustain    (1'b1),
         .sample_tick(tick),
         .sample_l   (eng_l),
         .sample_r   (eng_r),

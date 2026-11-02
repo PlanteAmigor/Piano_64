@@ -60,6 +60,7 @@ module add_engine8 #(
     input  wire [NVOICE-1:0]       v_trig,
     input  wire [NVOICE-1:0]       v_gate,
     input  wire [NVOICE*8-1:0]     v_vel,
+    input  wire                    sustain,      // ★ 延音开关（1 = 松键后继续自然衰减）
     input  wire                    timbre,
     input  wire                    sample_tick,
 
@@ -351,6 +352,7 @@ module add_engine8 #(
                 .note_off (v_note_off[g*7 +: 7]),
                 .trig     (vtrig_q[g]),
                 .gate     (v_gate[g]),
+                .sustain  (sustain),
                 .vel_gain (v_vel[g*8 +: 8]),
                 .rd0      (c_d0),
                 .rd1      (c_d1),
