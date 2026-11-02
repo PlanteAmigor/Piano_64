@@ -51,8 +51,8 @@ module hdmi_ui3_top (
     input  wire            BANDS_TICK,      // 保留端口（采样不做门控，见下）
 
     // ── 来自 add_top 的状态总线（clk_sys 域，慢变量）─────────────────
-    //    [1:0] ui_mode  [3:2] timbre  [5:4] fx  [15:8] transpose
-    input  wire [17:0]     UI_INFO,
+    //    [1:0] ui_mode  [3:2] timbre  [6:4] fx  [18:11] transpose
+    input  wire [18:0]     UI_INFO,
 
     // ── COMPONENT 64：最近触发声部的 64 根分量柱高度 ────────────────
     input  wire [64*8-1:0] COMP_AMP,
@@ -105,14 +105,14 @@ module hdmi_ui3_top (
     // ══════════════════════════════════════════════════════════════
     reg [255:0] bands_cap;
     reg [511:0] comp_cap;
-    reg [17:0]  info_s0, info_s1;
+    reg [18:0]  info_s0, info_s1;
 
     always @(posedge clk_p) begin
         if (!rst_n) begin
             bands_cap <= 256'd0;
             comp_cap  <= 512'd0;
-            info_s0   <= 18'd0;
-            info_s1   <= 18'd0;
+            info_s0   <= 19'd0;
+            info_s1   <= 19'd0;
         end
         else begin
             bands_cap <= BANDS;
@@ -124,9 +124,10 @@ module hdmi_ui3_top (
 
     wire [1:0]        page_req = info_s1[1:0];
     wire [1:0]        timbre   = info_s1[3:2];
-    wire [1:0]        fx       = info_s1[5:4];
-    wire [1:0]        flt_sel  = info_s1[9:8];
-    wire signed [7:0] tr       = info_s1[17:10];
+    wire [2:0]        fx       = info_s1[6:4];   // 0=NONE 1=DELAY 2=SUSTAIN 3=DLY+SUS 4=CHORUS
+    wire [1:0]        agl      = info_s1[8:7];
+    wire [1:0]        flt_sel  = info_s1[10:9];
+    wire signed [7:0] tr       = info_s1[18:11];
 
     // ══════════════════════════════════════════════════════════════
     //  李萨如（相位图）：取样 + AGC + 单次捕获
@@ -549,7 +550,7 @@ module hdmi_ui3_top (
     //     拟合值、不是精确谐波 → 波形准周期 → 相图缓慢旋转。余辉一长
     //     就把十多个转角度的副本叠成一条宽带，看起来"线条很粗"。
     //     唢呐谐波严格整数倍 → 图固定不动 → 余辉再长也是 1 px 细线。
-    wire [1:0] agl     = info_s1[7:6];
+    //    ★ agl 已在上面 info_s1 解析处统一提取（info_s1[8:7]），此处不再重复定义
     wire [3:0] agl_dec = (agl == 2'd0) ? 4'd1  :
                          (agl == 2'd1) ? 4'd3  :
                          (agl == 2'd2) ? 4'd7  : 4'd15;
@@ -644,8 +645,9 @@ module hdmi_ui3_top (
     wire [255:0] S_GUIDE  = {"GUIDE MODE",                   {22{8'h20}}};  // 10
     wire [255:0] S_PEND   = {"PENDING",                      {25{8'h20}}};  //  7
     wire [255:0] S_NONE   = {"NONE",                         {28{8'h20}}};  //  4
-    wire [255:0] S_REVERB = {"REVERB",                       {26{8'h20}}};  //  6
     wire [255:0] S_DELAY  = {"DELAY",                        {27{8'h20}}};  //  5
+    wire [255:0] S_SUSTAIN= {"SUSTAIN",                      {25{8'h20}}};  //  7
+    wire [255:0] S_DLYSUS = {"DELAY+SUS",                    {23{8'h20}}};  //  9
     wire [255:0] S_CHORUS = {"CHORUS",                       {26{8'h20}}};  //  6
     wire [255:0] S_PIANO  = {"PIANO",                        {27{8'h20}}};  //  5
     wire [255:0] S_GUZH   = {"GUZHENG",                      {25{8'h20}}};  //  7
@@ -660,9 +662,10 @@ module hdmi_ui3_top (
     wire [255:0] s_tname = (timbre == 2'd0) ? S_PIANO :
                            (timbre == 2'd1) ? S_GUZH  :
                            (timbre == 2'd2) ? S_SUONA : S_DIZI;
-    wire [255:0] s_fname = (fx == 2'd0) ? S_NONE :
-                           (fx == 2'd1) ? S_REVERB :
-                           (fx == 2'd2) ? S_DELAY : S_CHORUS;
+    wire [255:0] s_fname = (fx == 3'd0) ? S_NONE  :
+                           (fx == 3'd1) ? S_DELAY :
+                           (fx == 3'd2) ? S_SUSTAIN :
+                           (fx == 3'd3) ? S_DLYSUS : S_CHORUS;
 
     // ── ASCII → 字库 ROM 索引 ───────────────────────────────────────
     function [5:0] a2i;

@@ -74,7 +74,7 @@ module add_top #(
     //    [9:8]   flt       李萨如显示低通 0=关 1=中 2=强
     //    [17:10] transpose 有符号半音数（-24..+12）
     //    全部是「按键级」慢变量（去抖后 >10 ms 才变），渲染侧打两拍同步即可。
-    output wire [17:0] UI_INFO,
+    output wire [18:0] UI_INFO,
 
     // ── 「COMPONENT 64」柱图（最近触发声部的 64 根分量柱）─────────────
     //    每根 = 8 位幅度（0..255）。128 个正弦分量两两合并取大值 →
@@ -333,15 +333,26 @@ module add_top #(
     end
 
     //======================================================================
-    //  效果器档位：0=NONE 1=REVERB 2=DELAY 3=CHORUS（U38 长按循环）
-    //  ★ 目前只有 UI 显示 + 灯带指示，音频通路还没实现
+    //  效果器档位（U38 长按循环）：
+    //      0 = NONE           干声
+    //      1 = DELAY          乒乓延迟
+    //      2 = SUSTAIN        延音（作用于音源：松键后按自然衰减率继续响）
+    //      3 = DELAY+SUSTAIN  两个同时开
+    //      4 = CHORUS         合唱
+    //  ★ DELAY / SUSTAIN 是【互相独立】的：SUSTAIN 改的是音源包络，
+    //    DELAY 改的是后期输出，所以可以叠加。
     //======================================================================
-    reg [1:0] fx_r;
+    reg [2:0] fx_r;
 
     always @(posedge clk_sys) begin
-        if (!engine_rst_n)                       fx_r <= 2'd0;
-        else if (fx_toggle)                      fx_r <= (fx_r == 2'd3) ? 2'd0 : fx_r + 2'd1;
+        if (!engine_rst_n)                       fx_r <= 3'd0;
+        else if (fx_toggle)                      fx_r <= (fx_r == 3'd4) ? 3'd0 : fx_r + 3'd1;
     end
+
+    // 三个使能必须定义在 u_piano 之前（default_nettype none）
+    wire fx_dly_on = (fx_r == 3'd1) || (fx_r == 3'd3);
+    wire fx_sus_on = (fx_r == 3'd2) || (fx_r == 3'd3);
+    wire fx_chr_on = (fx_r == 3'd4);
 
     //======================================================================
     //  李萨如余辉档位：0..3（KEY_R2[0] 短按循环）
@@ -603,10 +614,9 @@ module add_top #(
         .v_trig     (eng_trig),
         .v_gate     (eng_gate),
         .v_vel      (v_vel),
-        // ★ 延音：钢琴/古筝常开（模拟延音踏板踩下）——松键后按每个音
-        //   自己的自然衰减率继续响，而不是 0.30 s 一刀煞掉。
-        //   DELAY/CHORUS 等效果器不受影响，仍是“复制已发出的声音”。
-        .sustain    (1'b1),
+        // ★ 延音：由效果器档位控制（SUSTAIN 单独一档，也可与 DELAY 叠加）——
+        //   松键后按每个音自己的自然衰减率继续响，而不是 0.30 s 一刀煞掉。
+        .sustain    (fx_sus_on),
         .sample_tick(tick),
         .sample_l   (eng_l),
         .sample_r   (eng_r),
@@ -907,7 +917,7 @@ module add_top #(
         .clk    (clk_sys),
         .rst_n  (por_n),
         .tick   (tick),
-        .enable (fx_r == 2'd3),        // 3 = CHORUS
+        .enable (fx_chr_on),           // 4 = CHORUS
         .in_l   (fxi_l),
         .in_r   (fxi_r),
         .out_l  (cho_l),
@@ -920,18 +930,22 @@ module add_top #(
         .clk    (clk_sys),
         .rst_n  (por_n),
         .tick   (tick),
-        .enable (fx_r == 2'd2),        // 2 = DELAY
+        .enable (fx_dly_on),           // 1 = DELAY，3 = DELAY+SUSTAIN
         .in_l   (fxi_l),
         .in_r   (fxi_r),
         .out_l  (dly_l),
         .out_r  (dly_r)
     );
 
-    //  效果器选择：0=NONE 1=REVERB(未实现) 2=DELAY 3=CHORUS
-    //  NONE / REVERB 走合唱模块的旁通输出（= 寄存后的干声），
-    //  这样切档时延迟恒定，不会有咔哒。
-    wire signed [15:0] fxd_l = (fx_r == 2'd2) ? dly_l : cho_l;
-    wire signed [15:0] fxd_r = (fx_r == 2'd2) ? dly_r : cho_r;
+    //  效果器输出选择：
+    //      1(DELAY) / 3(DELAY+SUSTAIN) → 延迟输出
+    //      其他（NONE / SUSTAIN / CHORUS）→ 合唱模块的输出，
+    //          其中 NONE / SUSTAIN 时合唱 enable=0，输出就是寄存后的干声。
+    //  ★ SUSTAIN 不需要在这里改什么：它作用在音源包络上（见 u_piano.sustain），
+    //    所以走干声通路就是对的。
+    //  走 cho_l/cho_r 而不是直接取 fxi，是为了保持恒定延迟、避免切档咔哒。
+    wire signed [15:0] fxd_l = fx_dly_on ? dly_l : cho_l;
+    wire signed [15:0] fxd_r = fx_dly_on ? dly_r : cho_r;
 
     // ★★ 原来是单个 sat_gain 函数，从 timbre_r 一路走到输出寄存器：
     //       timbre_r → 增益选择 → 绝对值 → 膝点比较 → d×d 乘法 → 减法 → D
@@ -1144,7 +1158,7 @@ module add_top #(
     reg [7:0]  led_kst_s0,  led_kst_s1;     // 8 键按住状态
     reg [63:0] led_kvel_s0, led_kvel_s1;    // 8 键力度
     reg [1:0]  led_tmb_s0,  led_tmb_s1;     // 音色
-    reg [1:0]  led_fx_s0,   led_fx_s1;      // 效果器档位
+    reg [2:0]  led_fx_s0,   led_fx_s1;      // 效果器档位（0..4）
     reg        led_trl_s0,  led_trl_s1;     // 移调闪光有效
     reg        led_trn_s0,  led_trn_s1;     // 移调方向（1=降）
     reg        led_rst_s0,  led_rst_s1;     // 复位

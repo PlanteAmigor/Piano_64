@@ -6,8 +6,9 @@
 //     ────────────────────────────────────────────────────────────
 //      1~ 6     0~ 5   ★ 坏灯，永远发 0（保持黑）
 //      7        6      乐器：白=钢琴  青=古筝  橙=唢呐  紫=笛子
-//      8        7      ★ 效果器（单颗灯，颜色区分 4 档）
-//                          灭=NONE  蓝=REVERB  青=DELAY  品红=CHORUS
+//      8        7      ★ 效果器（单颗灯，颜色区分 5 档）
+//                          灭=NONE  青=DELAY  黄=SUSTAIN
+//                          白=DELAY+SUSTAIN  品红=CHORUS
 //      9~11   8~10     空（效果器已合并到第 8 颗，永远灭）
 //     12       11      键 9 移调    （重按闪红 -12 / 轻按闪蓝 +12，300 ms）
 //     13       12   键 8 do'        14       13   键 7 si
@@ -47,7 +48,7 @@ module ws2812_keyind #(
     input  wire [63:0] key_vel,        // 8 键 × 8 位力度
 
     input  wire [1:0]  timbre,         // 0=钢琴 1=古筝 2=唢呐 3=笛子
-    input  wire [1:0]  fx,             // 0=NONE 1=REVERB 2=DELAY 3=CHORUS
+    input  wire [2:0]  fx,             // 0=NONE 1=DELAY 2=SUSTAIN 3=DLY+SUS 4=CHORUS
 
     input  wire        tr_led,         // 移调刚刚动作过（高电平 300 ms）
     input  wire        tr_neg,         // 1 = 降(-12) → 红   0 = 升(+12) → 蓝
@@ -93,7 +94,7 @@ module ws2812_keyind #(
         input [7:0]  kon;
         input [63:0] kvel;
         input [1:0]  tb;
-        input [1:0]  fx2;
+        input [2:0]  fx2;
         input        tl;
         input        tn;
         reg   [4:0]  ki5;
@@ -118,15 +119,15 @@ module ws2812_keyind #(
                     default: led_grb = 24'h7F7F7F;    // 钢琴 白
                 endcase
             end
-            // ── 8 颗：效果器（单颗灯，颜色区分 4 档）───────────
+            // ── 8 颗：效果器（单颗灯，颜色区分 5 档）───────────
             //    亮色代表当前选中的档位，灭 = NONE。
-            //    比原来“4 颗灯各占一档”更直观：一眼看到当前是哪个效果。
             else if (j == 5'd7) begin
                 case (fx2)
-                    2'd1:    led_grb = 24'h00007F;  // REVERB 蓝
-                    2'd2:    led_grb = 24'h7F007F;  // DELAY  青
-                    2'd3:    led_grb = 24'h007F7F;  // CHORUS 品红
-                    default: led_grb = 24'd0;       // NONE   灭
+                    3'd1:    led_grb = 24'h7F007F;  // DELAY          青  (G+B)
+                    3'd2:    led_grb = 24'h7F7F00;  // SUSTAIN        黄  (G+R)
+                    3'd3:    led_grb = 24'h7F7F7F;  // DELAY+SUSTAIN  白
+                    3'd4:    led_grb = 24'h007F7F;  // CHORUS         品红 (R+B)
+                    default: led_grb = 24'd0;       // NONE           灭
                 endcase
             end
             // ── 9~11 颗：效果器已合并，空置 ──────────────────────
