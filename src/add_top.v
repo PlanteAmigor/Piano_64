@@ -74,7 +74,7 @@ module add_top #(
     //    [9:8]   flt       李萨如显示低通 0=关 1=中 2=强
     //    [17:10] transpose 有符号半音数（-24..+12）
     //    全部是「按键级」慢变量（去抖后 >10 ms 才变），渲染侧打两拍同步即可。
-    output wire [17:0] UI_INFO,
+    output wire [20:0] UI_INFO,
 
     // ── 「COMPONENT 64」柱图（最近触发声部的 64 根分量柱）─────────────
     //    每根 = 8 位幅度（0..255）。128 个正弦分量两两合并取大值 →
@@ -924,16 +924,65 @@ module add_top #(
     );
 
     //======================================================================
-    //  UI 状态总线 → HDMI 渲染器
-    //    ★★ 拼接必须凑成 16 位！原来写成
-    //          assign UI_INFO = {transpose, fx_r, timbre_r, ui_mode};
-    //       只有 14 位，赋给 16 位端口时左边补 2 个 0，
-    //       结果所有字段整体错位 2 位：渲染器读到的音色其实是 fx、
-    //       效果器其实是音色、移调只剩 transpose[7:2]。
-    //    位图（与 hdmi_ui3_top 的解读一一对应）：
-    //        [17:10] transpose  [9:8] flt  [7:6] agl  [5:4] fx  [3:2] timbre  [1:0] mode
+    //  李萨如显示带限档位 disp_k（2026-11-02）
+    //
+    //  问题：钢琴/古筝的模态表把能量堆在 6×~31×f0（C2 基频只占 2%），
+    //        固定截止的低通在李萨如上就是「一坨橙色」。
+    //        offline 仿真（tools/liss_adapt.png）：带限到 ≈2×f0 后
+    //        各音区都变清晰。
+    //
+    //  做法：取【按住的最低音】，按八度换成移位量 k。两级一阶 IIR 的
+    //        -3dB 点 ≈ 1.3×f0，而且整个键盘一致（k 每八度减 1）。
+    //          A0..G#1 → k=7    C2..G#2 → k=6  ...  A7 以上 → k=0
+    //
+    //  ★ 用 8 拍顺序扫描求最小音号，不要写成 8 路组合比较链
+    //    （sysclk 只剩 0.037 MHz 余量）。
     //======================================================================
-    assign UI_INFO = {transpose, flt_sel, agl_sel, fx_r, timbre_r, ui_mode};
+    reg [2:0] vscan_i;
+    reg [6:0] vmin_note;
+    reg [6:0] disp_note;
+
+    always @(posedge clk_sys) begin
+        if (!engine_rst_n) begin
+            vscan_i   <= 3'd0;
+            vmin_note <= 7'd127;
+            disp_note <= 7'd108;
+        end
+        else begin
+            vscan_i <= vscan_i + 3'd1;          // 自由跑，8 拍一轮
+            if (vscan_i == 3'd7) begin
+                disp_note <= vmin_note;         // 本轮结果定格
+                vmin_note <= 7'd127;
+            end
+            else if (v_gate[vscan_i]) begin
+                if (k_note[vscan_i*7 +: 7] < vmin_note)
+                    vmin_note <= k_note[vscan_i*7 +: 7];
+            end
+        end
+    end
+
+    // 音号 → 移位量（纯组合，只比 7 位宽）
+    reg [2:0] disp_k;
+    always @(posedge clk_sys) begin
+        if (!engine_rst_n)            disp_k <= 3'd0;
+        else if (disp_note <= 7'd32)  disp_k <= 3'd7;
+        else if (disp_note <= 7'd44)  disp_k <= 3'd6;
+        else if (disp_note <= 7'd56)  disp_k <= 3'd5;
+        else if (disp_note <= 7'd68)  disp_k <= 3'd4;
+        else if (disp_note <= 7'd80)  disp_k <= 3'd3;
+        else if (disp_note <= 7'd92)  disp_k <= 3'd2;
+        else if (disp_note <= 7'd104) disp_k <= 3'd1;
+        else                          disp_k <= 3'd0;
+    end
+
+    //======================================================================
+    //  UI 状态总线 → HDMI 渲染器
+    //    ★★ 拼接必须凑满 21 位！少一位左边补 0，所有字段整体错位。
+    //    位图（与 hdmi_ui3_top 的解读一一对应）：
+    //        [20:18] disp_k  [17:10] transpose  [9:8] flt
+    //        [7:6]   agl     [5:4]   fx         [3:2] timbre  [1:0] mode
+    //======================================================================
+    assign UI_INFO = {disp_k, transpose, flt_sel, agl_sel, fx_r, timbre_r, ui_mode};
 
     //======================================================================
     //  COMPONENT 64：把 128 个正弦分量两两合并成 64 根柱

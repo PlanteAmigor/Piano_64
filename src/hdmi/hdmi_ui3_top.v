@@ -52,7 +52,7 @@ module hdmi_ui3_top (
 
     // ── 来自 add_top 的状态总线（clk_sys 域，慢变量）─────────────────
     //    [1:0] ui_mode  [3:2] timbre  [5:4] fx  [15:8] transpose
-    input  wire [17:0]     UI_INFO,
+    input  wire [20:0]     UI_INFO,
 
     // ── COMPONENT 64：最近触发声部的 64 根分量柱高度 ────────────────
     input  wire [64*8-1:0] COMP_AMP,
@@ -105,14 +105,14 @@ module hdmi_ui3_top (
     // ══════════════════════════════════════════════════════════════
     reg [255:0] bands_cap;
     reg [511:0] comp_cap;
-    reg [17:0]  info_s0, info_s1;
+    reg [20:0]  info_s0, info_s1;
 
     always @(posedge clk_p) begin
         if (!rst_n) begin
             bands_cap <= 256'd0;
             comp_cap  <= 512'd0;
-            info_s0   <= 18'd0;
-            info_s1   <= 18'd0;
+            info_s0   <= 21'd0;
+            info_s1   <= 21'd0;
         end
         else begin
             bands_cap <= BANDS;
@@ -127,6 +127,7 @@ module hdmi_ui3_top (
     wire [1:0]        fx       = info_s1[5:4];
     wire [1:0]        flt_sel  = info_s1[9:8];
     wire signed [7:0] tr       = info_s1[17:10];
+    wire [2:0]        disp_k   = info_s1[20:18];   // 随音高自适应的带限档位
 
     // ══════════════════════════════════════════════════════════════
     //  李萨如（相位图）：取样 + AGC + 单次捕获
@@ -213,8 +214,19 @@ module hdmi_ui3_top (
     //      在 clk_pix 上拖出 149 个 setup 违例，而且连带把 CLK_SYS /
     //      sysclk 的布点一起拖坏（Fmax 从 78 掉到 67）。
     //      plot 只占 1/1536 拍，加几级流水毫无代价。
-    wire [3:0]    lp_k  = (flt_sel == 2'd0) ? 4'd0 :
-                          (flt_sel == 2'd1) ? 4'd2 : 4'd3;
+    //  显示带限（2026-11-02 改：原来固定 0/2/3，最高只能盖住 1 kHz，
+    //  C4 以下完全不够）。现在以 disp_k 为基准，随按下的最低音自动跟随：
+    //     flt_sel 0 = X2  k = disp_k-1    → ≈2.5×f0（默认，干净且有结构）
+    //     flt_sel 1 = X1  k = disp_k      → ≈1.2×f0（最干净，接近椭圆）
+    //     flt_sel 2 = X4  k = disp_k-2    → ≈5×f0（开始糊）
+    //     flt_sel 3 = OFF k = 0           → 直通（用于对比）
+    //   ★ 默认给 X2 而不是 X1：X1 把谐波削得太狠，图形退化成椭圆就不看变化了。
+    wire [3:0] dk   = {1'b0, disp_k};
+    wire [3:0] k_x2 = (dk > 4'd1) ? (dk - 4'd1) : 4'd0;
+    wire [3:0] k_x4 = (dk > 4'd2) ? (dk - 4'd2) : 4'd0;
+    wire [3:0] lp_k = (flt_sel == 2'd0) ? k_x2 :
+                      (flt_sel == 2'd1) ? dk   :
+                      (flt_sel == 2'd2) ? k_x4 : 4'd0;
 
     reg signed [15:0] dcr;          // 第 0 拍：直流阻断输出
     reg signed [15:0] lp1, lp2;     // 第 1 / 2 拍：两级低通
@@ -636,10 +648,12 @@ module hdmi_ui3_top (
     wire [255:0] S_AGL    = {"AGL:",                         {28{8'h20}}};  //  4
     wire [255:0] S_FILT   = {"FILT:",                        {27{8'h20}}};  //  5
     wire [255:0] S_FOFF   = {"OFF",                          {29{8'h20}}};
-    wire [255:0] S_FMID   = {"MID",                          {29{8'h20}}};
-    wire [255:0] S_FSTR   = {"STR",                          {29{8'h20}}};
-    wire [255:0] s_fltname = (flt_sel == 2'd0) ? S_FOFF :
-                             (flt_sel == 2'd1) ? S_FMID : S_FSTR;
+    wire [255:0] S_FX1    = {"X1",                           {30{8'h20}}};
+    wire [255:0] S_FX2    = {"X2",                           {30{8'h20}}};
+    wire [255:0] S_FX4    = {"X4",                           {30{8'h20}}};
+    wire [255:0] s_fltname = (flt_sel == 2'd0) ? S_FX2 :
+                             (flt_sel == 2'd1) ? S_FX1 :
+                             (flt_sel == 2'd2) ? S_FX4 : S_FOFF;
     wire [255:0] S_TEST   = {"TEST MODE  8 SINE",            {15{8'h20}}};  // 17
     wire [255:0] S_GUIDE  = {"GUIDE MODE",                   {22{8'h20}}};  // 10
     wire [255:0] S_PEND   = {"PENDING",                      {25{8'h20}}};  //  7

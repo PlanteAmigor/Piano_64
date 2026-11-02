@@ -67,7 +67,7 @@ module piano64_top #(
     // ── 频谱总线（clk_sys 域）────────────────────────────────────────
     wire [32*8-1:0] spec_bands;
     wire            spec_tick;
-    wire [17:0]     ui_info;
+    wire [20:0]     ui_info;
     wire [64*8-1:0] comp_amp;
     wire signed [15:0] scope_smp;
     wire               scope_tog;
