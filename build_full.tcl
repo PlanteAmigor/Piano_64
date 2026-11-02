@@ -71,6 +71,11 @@ add_file src/ddr/gowin_pll.v
 add_file src/ddr/gowin_pll_mod.v
 add_file src/ddr/pll_init.v
 
+# ── DDR 用户口 4 路仲裁（alexforencich/verilog-axi，MIT）──
+add_file src/ddr/priority_encoder.v
+add_file src/ddr/arbiter.v
+add_file src/ddr/ddr_arb.v
+
 # ★ 只用拼接后的约束文件（= piano64.cst + TMDS 四对差分）
 add_file src/piano64_hdmi.cst
 add_file src/piano64_hdmi.sdc

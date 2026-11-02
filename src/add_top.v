@@ -571,6 +571,13 @@ module add_top #(
     wire [7:0] harm_amp;
     wire       harm_vld;
 
+    // ── DDR 取表口回馈信号（按仲裁授权过滤，见文件末尾 u_ddr_arb）────────
+    //   ★ 必须声明在例化之前（本文件 default_nettype none）
+    wire       eng_app_rdy;
+    wire       eng_rd_valid;
+    wire       sua_app_rdy;
+    wire       sua_rd_valid;
+
     add_engine8 #(
         .NVOICE   (NVOICE),
         .NPART    (128),
@@ -605,13 +612,15 @@ module add_top #(
         .comp_vld   (comp_vld),
 
         // DDR 取表口（clk_x1 域）
+        // ★ app_rdy / rd_valid 必须按仲裁授权过滤，否则没拿到授权的客户
+        //   会误以为它的命令被接受了（见下方 u_ddr_arb 处说明）
         .clk100              (ddr_clk_x1),
         .rst100_n            (ddr_init_done),
         .app_cmd             (eng_app_cmd),
         .app_en              (eng_app_en),
         .app_addr            (eng_app_addr),
-        .app_rdy             (ddr_app_rdy),
-        .app_rd_data_valid   (ddr_rd_valid),
+        .app_rdy             (eng_app_rdy),
+        .app_rd_data_valid   (eng_rd_valid),
         .app_rd_data         (ddr_rd_data)
     );
 
@@ -716,8 +725,8 @@ module add_top #(
         .app_cmd             (sua_app_cmd),
         .app_en              (sua_app_en),
         .app_addr            (sua_app_addr),
-        .app_rdy             (ddr_app_rdy),
-        .app_rd_data_valid   (ddr_rd_valid),
+        .app_rdy             (sua_app_rdy),
+        .app_rd_data_valid   (sua_rd_valid),
         .app_rd_data         (ddr_rd_data)
     );
 
@@ -1264,25 +1273,120 @@ module add_top #(
     );
 
     //======================================================================
-    //  DDR 用户口仲裁
-    //    加载器只在开机时跑一次，跑完就永久空闲；引擎的取表 DMA 只在
-    //    note-on 时短时占用。所以直接用 ld_done 二选一即可，无需真仲裁器。
-    //    写数据通道只有加载器使用，直接接过去（引擎只读）。
+    //  DDR 用户口：4 路轮询仲裁（clk_x1 = 100 MHz 域）
+    //
+    //  为什么要分两段（而不是全部走仲裁器）
+    //    sd_ddr_loader 是「app_en 在 app_rdy 为高的那一拍才拉高」的风格
+    //    （assign app_en = cmd_valid && app_rdy），和仲裁器要求的
+    //    「保持请求直到 ack」不兼容，硬塞进去得改加载器，回归风险大。
+    //    而它只在开机跑一次、ld_done 之后永久空闲，所以：
+    //      · !ld_done —— 加载器独占直连，与改动前逐字节等价（零风险）
+    //      ·  ld_done —— 引擎 / 谐波 / 效果器 三路走仲裁器
+    //    仲裁器的复位信号里带上 ld_done，开机阶段它始终处于复位态、
+    //    grant 恒为 0，不会去抢加载器的总线。
+    //
+    //  ★ 必须按 grant 过滤 app_rdy / app_rd_data_valid
+    //    否则没拿到授权的客户看到全局的 app_rdy=1，会以为自己的命令
+    //    被接受了（进而清掉自己的请求）→ 命令丢失、数据错乱。
     //======================================================================
-    // 三路互斥：加载期间给 loader；加载后按音色给钢琴(含古筝)或唢呐
-    wire ddr_arb_piano = ld_done && !is_harm;
-    wire ddr_arb_suona = ld_done &&  is_harm;
+    wire [3:0]    arb_req;
+    wire [3:0]    arb_gnt;
+    wire [3:0]    arb_ack;
+    wire [3:0]    arb_abort;
+    wire [3:0]    arb_wdf_vld;
+    wire [11:0]   arb_cmd;       // 4 × 3
+    wire [115:0]  arb_addr;      // 4 × 29
+    wire [1023:0] arb_wdf;       // 4 × 256
 
-    assign ddr_app_cmd      = ddr_arb_suona ? sua_app_cmd  :
-                              ddr_arb_piano ? eng_app_cmd  : ld_app_cmd;
-    assign ddr_app_en       = ddr_arb_suona ? sua_app_en   :
-                              ddr_arb_piano ? eng_app_en   : ld_app_en;
-    assign ddr_app_addr     = ddr_arb_suona ? sua_app_addr :
-                              ddr_arb_piano ? eng_app_addr : ld_app_addr;
-    assign ddr_app_wdf_data = ld_app_wdf_data;
-    assign ddr_app_wdf_wren = ld_app_wdf_wren;
-    assign ddr_app_wdf_end  = ld_app_wdf_end;
-    assign ddr_app_wdf_mask = ld_app_wdf_mask;
+    wire [2:0]    arb_app_cmd;
+    wire          arb_app_en;
+    wire [28:0]   arb_app_addr;
+    wire [255:0]  arb_app_wdf_data;
+    wire          arb_app_wdf_wren;
+    wire          arb_app_wdf_end;
+    wire [31:0]   arb_app_wdf_mask;
+
+    // ── 客户 0：钢琴 / 古筝 参数表 DMA（只读，保持请求式）──────────────
+    assign arb_req[0]             = eng_app_en;
+    assign arb_cmd[0*3   +: 3]    = eng_app_cmd;
+    assign arb_addr[0*29 +: 29]   = eng_app_addr;
+    assign arb_wdf[0*256 +: 256]  = 256'd0;
+    assign arb_wdf_vld[0]         = 1'b0;
+
+    // ── 客户 1：唢呐 / 笛子 谐波表 DMA（只读，保持请求式）──────────────
+    assign arb_req[1]             = sua_app_en;
+    assign arb_cmd[1*3   +: 3]    = sua_app_cmd;
+    assign arb_addr[1*29 +: 29]   = sua_app_addr;
+    assign arb_wdf[1*256 +: 256]  = 256'd0;
+    assign arb_wdf_vld[1]         = 1'b0;
+
+    // ── 客户 2：效果器 DDR 延迟线（尚未接入，先恒空闲）──────────────────
+    assign arb_req[2]             = 1'b0;
+    assign arb_cmd[2*3   +: 3]    = 3'b001;
+    assign arb_addr[2*29 +: 29]   = 29'd0;
+    assign arb_wdf[2*256 +: 256]  = 256'd0;
+    assign arb_wdf_vld[2]         = 1'b0;
+
+    // ── 客户 3：保留（DDR 自检 / 未来扩展）────────────────────────────
+    assign arb_req[3]             = 1'b0;
+    assign arb_cmd[3*3   +: 3]    = 3'b001;
+    assign arb_addr[3*29 +: 29]   = 29'd0;
+    assign arb_wdf[3*256 +: 256]  = 256'd0;
+    assign arb_wdf_vld[3]         = 1'b0;
+
+    //   按 grant 过滤后回馈给客户
+    assign eng_app_rdy  = ddr_app_rdy  & arb_gnt[0];
+    assign eng_rd_valid = ddr_rd_valid & arb_gnt[0];
+    assign sua_app_rdy  = ddr_app_rdy  & arb_gnt[1];
+    assign sua_rd_valid = ddr_rd_valid & arb_gnt[1];
+
+    //   现有 DMA 送出的 app_addr 已经是 <<3 之后的 DDR 地址，
+    //   所以 ADDR_SHIFT = 0（不要再左移一次）
+    ddr_arb #(
+        .N         (4),
+        .TIMEOUT   (4096),
+        .ADDR_SHIFT(0)
+    ) u_ddr_arb (
+        .clk      (ddr_clk_x1),
+        .rst_n    (por_n & RESET_n & ld_done),   // 开机阶段压在复位态
+
+        .m_req      (arb_req),
+        .m_cmd      (arb_cmd),
+        .m_addr     (arb_addr),
+        .m_wdf_data (arb_wdf),
+        .m_wdf_vld  (arb_wdf_vld),
+        .m_gnt      (arb_gnt),
+        .m_ack      (arb_ack),
+        .m_abort    (arb_abort),
+
+        .app_cmd        (arb_app_cmd),
+        .app_en         (arb_app_en),
+        .app_addr       (arb_app_addr),
+        .app_wdf_data   (arb_app_wdf_data),
+        .app_wdf_wren   (arb_app_wdf_wren),
+        .app_wdf_end    (arb_app_wdf_end),
+        .app_wdf_mask   (arb_app_wdf_mask),
+        .app_burst      (),
+        .app_rdy        (ddr_app_rdy),
+        .wr_data_rdy    (ddr_wr_data_rdy),
+        .app_rd_data_valid (ddr_rd_valid),
+        .app_rd_data    (ddr_rd_data)
+    );
+
+    //----------------------------------------------------------------------
+    //  最终二选一：开机阶段给加载器，加载完成后给仲裁器
+    //  切换条件里带上 !ld_app_en && !ld_app_wdf_wren，彻底消除
+    //  「ld_done 刚拉高、加载器还剩一拍没收尾」的重叠窗口
+    //----------------------------------------------------------------------
+    wire ddr_sel_arb = ld_done && !ld_app_en && !ld_app_wdf_wren;
+
+    assign ddr_app_cmd      = ddr_sel_arb ? arb_app_cmd      : ld_app_cmd;
+    assign ddr_app_en       = ddr_sel_arb ? arb_app_en       : ld_app_en;
+    assign ddr_app_addr     = ddr_sel_arb ? arb_app_addr     : ld_app_addr;
+    assign ddr_app_wdf_data = ddr_sel_arb ? arb_app_wdf_data : ld_app_wdf_data;
+    assign ddr_app_wdf_wren = ddr_sel_arb ? arb_app_wdf_wren : ld_app_wdf_wren;
+    assign ddr_app_wdf_end  = ddr_sel_arb ? arb_app_wdf_end  : ld_app_wdf_end;
+    assign ddr_app_wdf_mask = ddr_sel_arb ? arb_app_wdf_mask : ld_app_wdf_mask;
     assign ddr_app_burst    = 1'b0;
 
 endmodule

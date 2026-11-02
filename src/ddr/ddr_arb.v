@@ -54,8 +54,12 @@
 `default_nettype none
 
 module ddr_arb #(
-    parameter integer N       = 4,      // 客户数
-    parameter integer TIMEOUT = 4096    // 事务超时拍数
+    parameter integer N          = 4,      // 客户数
+    parameter integer TIMEOUT    = 4096,   // 事务超时拍数
+    //  0 = 客户直接给 DDR 地址（本工程 ddr_param_dma / suona_dma /
+    //      sd_ddr_loader 送出的 app_addr 已经是 <<3 之后的，必须用 0）
+    //  3 = 客户给 29 位「256 位字序号」，由本模块左移 3 成 DDR 地址
+    parameter integer ADDR_SHIFT = 0
 )(
     input  wire             clk,        // clk_x1 = 100 MHz
     input  wire             rst_n,
@@ -86,9 +90,8 @@ module ddr_arb #(
     input  wire [255:0]     app_rd_data
 );
 
-    //  地址移位：客户给的是 256 位字序号，DDR 地址单位是 32-bit 字
+    //  地址移位：由 ADDR_SHIFT 参数控制（见文件头说明）
     //  1 个 256 位字 = 32 字节 = 8 个 32-bit 字 → 左移 3
-    localparam integer ADDR_SHIFT = 3;
 
     //======================================================================
     //  1. 逐客户判定读写（★ 必须先声明：否则 wdf_want 会用到隐式 1 位线网）
@@ -154,9 +157,10 @@ module ddr_arb #(
     wire [N-1:0] cmd_send = cmd_want & arb_gnt;
     wire [N-1:0] wdf_send = wdf_want & arb_gnt;
 
-    //  ★ 地址约定与 ddr_param_dma.v / sd_ddr_loader.v 完全一致：
-    //     m_addr 是 29 位的「256 位字序号」，左移 3 得到 DDR 地址单位（32-bit 字）。
-    //     256MB 空间 = 2^26 个 32 字节字，左移 3 后正好占满 29 位，不会溢出。
+    //  ★ 地址约定：见 ADDR_SHIFT 参数说明
+    //     ADDR_SHIFT=3 时 m_addr 是 29 位的「256 位字序号」，左移 3 得到 DDR
+    //     地址单位（32-bit 字）。256MB 空间 = 2^26 个 32 字节字，左移 3 后
+    //     正好占满 29 位，不会溢出。
     wire [28:0] sel_addr = mux_n29(m_addr, arb_gnt);
 
     assign app_en       = |cmd_send;

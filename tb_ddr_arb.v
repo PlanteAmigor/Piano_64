@@ -161,7 +161,7 @@ module tb_ddr_arb;
     //──────────────────────────────────────────────────────────────
     //  DUT
     //──────────────────────────────────────────────────────────────
-    ddr_arb #(.N(N), .TIMEOUT(TIMEOUT)) dut (
+    ddr_arb #(.N(N), .TIMEOUT(TIMEOUT), .ADDR_SHIFT(3)) dut (
         .clk(clk), .rst_n(rst_n),
         .m_req(m_req), .m_cmd(m_cmd), .m_addr(m_addr),
         .m_wdf_data(m_wdf_data), .m_wdf_vld(m_wdf_vld),
