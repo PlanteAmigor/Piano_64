@@ -124,7 +124,7 @@ module hdmi_ui3_top (
 
     wire [1:0]        page_req = info_s1[1:0];
     wire [1:0]        timbre   = info_s1[3:2];
-    wire [2:0]        fx       = info_s1[6:4];   // 0=NONE 1=DELAY 2=SUSTAIN 3=CHORUS
+    wire [2:0]        fx       = info_s1[6:4];   // 0=NONE 1=REVERB 2=DELAY 3=SUSTAIN 4=CHORUS
     wire [1:0]        agl      = info_s1[8:7];
     wire [1:0]        flt_sel  = info_s1[10:9];
     wire signed [7:0] tr       = info_s1[18:11];
@@ -645,6 +645,7 @@ module hdmi_ui3_top (
     wire [255:0] S_GUIDE  = {"GUIDE MODE",                   {22{8'h20}}};  // 10
     wire [255:0] S_PEND   = {"PENDING",                      {25{8'h20}}};  //  7
     wire [255:0] S_NONE   = {"NONE",                         {28{8'h20}}};  //  4
+    wire [255:0] S_REVERB = {"REVERB",                       {26{8'h20}}};  //  6
     wire [255:0] S_DELAY  = {"DELAY",                        {27{8'h20}}};  //  5
     wire [255:0] S_SUSTAIN= {"SUSTAIN",                      {25{8'h20}}};  //  7
     wire [255:0] S_CHORUS = {"CHORUS",                       {26{8'h20}}};  //  6
@@ -661,9 +662,10 @@ module hdmi_ui3_top (
     wire [255:0] s_tname = (timbre == 2'd0) ? S_PIANO :
                            (timbre == 2'd1) ? S_GUZH  :
                            (timbre == 2'd2) ? S_SUONA : S_DIZI;
-    wire [255:0] s_fname = (fx == 3'd0) ? S_NONE  :
-                           (fx == 3'd1) ? S_DELAY :
-                           (fx == 3'd2) ? S_SUSTAIN : S_CHORUS;
+    wire [255:0] s_fname = (fx == 3'd0) ? S_NONE   :
+                           (fx == 3'd1) ? S_REVERB :
+                           (fx == 3'd2) ? S_DELAY  :
+                           (fx == 3'd3) ? S_SUSTAIN : S_CHORUS;
 
     // ── ASCII → 字库 ROM 索引 ───────────────────────────────────────
     function [5:0] a2i;

@@ -335,22 +335,24 @@ module add_top #(
     //======================================================================
     //  效果器档位（U38 长按循环）：
     //      0 = NONE     干声
-    //      1 = DELAY    乒乓延迟
-    //      2 = SUSTAIN  延音（作用于音源：松键后按自然衰减率继续响）
-    //      3 = CHORUS   合唱
-    //  ★ DELAY 与 SUSTAIN 互斥，不做叠加档。
+    //      1 = REVERB   混响（Freeverb：8 梳状 + 4 全通）
+    //      2 = DELAY    乒乓延迟
+    //      3 = SUSTAIN  延音（作用于音源：松键后按自然衰减率继续响）
+    //      4 = CHORUS   合唱
+    //  ★ 各档互相独立，不做叠加。
     //======================================================================
     reg [2:0] fx_r;
 
     always @(posedge clk_sys) begin
         if (!engine_rst_n)                       fx_r <= 3'd0;
-        else if (fx_toggle)                      fx_r <= (fx_r == 3'd3) ? 3'd0 : fx_r + 3'd1;
+        else if (fx_toggle)                      fx_r <= (fx_r == 3'd4) ? 3'd0 : fx_r + 3'd1;
     end
 
-    // 三个使能必须定义在 u_piano 之前（default_nettype none）
-    wire fx_dly_on = (fx_r == 3'd1);
-    wire fx_sus_on = (fx_r == 3'd2);
-    wire fx_chr_on = (fx_r == 3'd3);
+    // 各档使能必须定义在 u_piano / u_fx_* 之前（default_nettype none）
+    wire fx_rev_on = (fx_r == 3'd1);
+    wire fx_dly_on = (fx_r == 3'd2);
+    wire fx_chr_on = (fx_r == 3'd4);
+    // ★ fx_sus_on 依赖 is_harm，定义放在 timbre 判定之后（见下方）
 
     //======================================================================
     //  李萨如余辉档位：0..3（KEY_R2[0] 短按循环）
@@ -391,6 +393,15 @@ module add_top #(
     wire is_dizi  = (timbre_r == 2'd3);
     // ★ 谐波类乐器（唄呐或笛子）：共用同一个 add_engine_harm 实例
     wire is_harm  = is_suona | is_dizi;
+
+    // ★ 延音（SUSTAIN）使能
+    //   SUSTAIN 档：直接开。
+    //   REVERB 档：钢琴/古筝也开 —— 混响需要【持续的声源能量】。
+    //     钢琴/古筝是打击性音色，松键 0.3 s 就断，混响只能收到一小段碎片，
+    //     听感上几乎“没有混响”；而笛子/唄呐是持续音，本来就够。
+    //     真实演奏中钢琴加混响也是一定踩延音踏板的。
+    //   笛子/唄呐在 REVERB 档不额外加延音（它们本来就是持续音）。
+    wire fx_sus_on = (fx_r == 3'd3) || ((fx_r == 3'd1) && !is_harm);
 
     //======================================================================
     //  ★ 移调（第 9 组拆成两个物理按键）
@@ -912,6 +923,7 @@ module add_top #(
 
     wire signed [15:0] cho_l, cho_r;
     wire signed [15:0] dly_l, dly_r;
+    wire signed [15:0] rev_l, rev_r;
 
     fx_chorus u_fx_chorus (
         .clk    (clk_sys),
@@ -926,6 +938,19 @@ module add_top #(
 
     // ── 效果器：DELAY（乒乓延迟，两条 16384 深 BSRAM，共 32 块）──────
     //    ★ 同样旁通时照常读写延迟线，切入无缝、延迟恒定。
+    // ── 效果器：REVERB（Freeverb，24 块 BSRAM）─────────────────────
+    //    单声道内核 + 左右双抽头（读位置差 23 样本）→ 内存减半。
+    fx_reverb u_fx_reverb (
+        .clk    (clk_sys),
+        .rst_n  (por_n),
+        .tick   (tick),
+        .enable (fx_rev_on),           // 1 = REVERB
+        .in_l   (fxi_l),
+        .in_r   (fxi_r),
+        .out_l  (rev_l),
+        .out_r  (rev_r)
+    );
+
     fx_delay u_fx_delay (
         .clk    (clk_sys),
         .rst_n  (por_n),
@@ -938,14 +963,15 @@ module add_top #(
     );
 
     //  效果器输出选择：
-    //      1(DELAY) → 延迟输出
-    //      0 / 2 / 3（NONE / SUSTAIN / CHORUS）→ 合唱模块的输出，
+    //      1(REVERB) → 混响输出
+    //      2(DELAY)  → 延迟输出
+    //      0 / 3 / 4（NONE / SUSTAIN / CHORUS）→ 合唱模块的输出，
     //          其中 NONE / SUSTAIN 时合唱 enable=0，输出就是寄存后的干声。
     //  ★ SUSTAIN 不需要在这里改什么：它作用在音源包络上（见 u_piano.sustain），
     //    所以走干声通路就是对的。
     //  走 cho_l/cho_r 而不是直接取 fxi，是为了保持恒定延迟、避免切档咔哒。
-    wire signed [15:0] fxd_l = fx_dly_on ? dly_l : cho_l;
-    wire signed [15:0] fxd_r = fx_dly_on ? dly_r : cho_r;
+    wire signed [15:0] fxd_l = fx_dly_on ? dly_l : (fx_rev_on ? rev_l : cho_l);
+    wire signed [15:0] fxd_r = fx_dly_on ? dly_r : (fx_rev_on ? rev_r : cho_r);
 
     // ★★ 原来是单个 sat_gain 函数，从 timbre_r 一路走到输出寄存器：
     //       timbre_r → 增益选择 → 绝对值 → 膝点比较 → d×d 乘法 → 减法 → D

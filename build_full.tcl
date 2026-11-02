@@ -79,6 +79,7 @@ add_file src/ddr/ddr_arb.v
 # ── 效果器 ──
 add_file src/fx/fx_chorus.v
 add_file src/fx/fx_delay.v
+add_file src/fx/fx_reverb.v
 
 # ★ 只用拼接后的约束文件（= piano64.cst + TMDS 四对差分）
 add_file src/piano64_hdmi.cst
