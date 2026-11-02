@@ -896,18 +896,38 @@ module add_top #(
         fxi_r <= sp_r;
     end
 
-    wire signed [15:0] fxd_l, fxd_r;
+    wire signed [15:0] cho_l, cho_r;
+    wire signed [15:0] dly_l, dly_r;
 
     fx_chorus u_fx_chorus (
         .clk    (clk_sys),
         .rst_n  (por_n),
         .tick   (tick),
-        .enable (fx_r == 2'd3),        // 3 = CHORUS（NONE/REVERB/DELAY/CHORUS）
+        .enable (fx_r == 2'd3),        // 3 = CHORUS
         .in_l   (fxi_l),
         .in_r   (fxi_r),
-        .out_l  (fxd_l),
-        .out_r  (fxd_r)
+        .out_l  (cho_l),
+        .out_r  (cho_r)
     );
+
+    // ── 效果器：DELAY（乒乓延迟，两条 16384 深 BSRAM，共 32 块）──────
+    //    ★ 同样旁通时照常读写延迟线，切入无缝、延迟恒定。
+    fx_delay u_fx_delay (
+        .clk    (clk_sys),
+        .rst_n  (por_n),
+        .tick   (tick),
+        .enable (fx_r == 2'd2),        // 2 = DELAY
+        .in_l   (fxi_l),
+        .in_r   (fxi_r),
+        .out_l  (dly_l),
+        .out_r  (dly_r)
+    );
+
+    //  效果器选择：0=NONE 1=REVERB(未实现) 2=DELAY 3=CHORUS
+    //  NONE / REVERB 走合唱模块的旁通输出（= 寄存后的干声），
+    //  这样切档时延迟恒定，不会有咔哒。
+    wire signed [15:0] fxd_l = (fx_r == 2'd2) ? dly_l : cho_l;
+    wire signed [15:0] fxd_r = (fx_r == 2'd2) ? dly_r : cho_r;
 
     // ★★ 原来是单个 sat_gain 函数，从 timbre_r 一路走到输出寄存器：
     //       timbre_r → 增益选择 → 绝对值 → 膝点比较 → d×d 乘法 → 减法 → D
