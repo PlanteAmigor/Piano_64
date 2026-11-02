@@ -1285,9 +1285,11 @@ module add_top #(
     //    仲裁器的复位信号里带上 ld_done，开机阶段它始终处于复位态、
     //    grant 恒为 0，不会去抢加载器的总线。
     //
-    //  ★ 必须按 grant 过滤 app_rdy / app_rd_data_valid
-    //    否则没拿到授权的客户看到全局的 app_rdy=1，会以为自己的命令
-    //    被接受了（进而清掉自己的请求）→ 命令丢失、数据错乱。
+    //  ★ 按 grant 过滤回馈信号
+    //    没拿到授权的客户若看到全局 app_rdy=1，会以为命令被接受了 → 命令丢失。
+    //    所以 eng / sua 的「读数据」和 eng 的「app_rdy」都必须过滤。
+    //    唯一的例外是 sua 的 app_rdy —— 它只用来判断「能发命令了吗」，
+    //    命令本身由 sua_q_* 排队器保管，过滤它反而会死锁（见客户 1 处说明）。
     //======================================================================
     wire [3:0]    arb_req;
     wire [3:0]    arb_gnt;
@@ -1314,9 +1316,41 @@ module add_top #(
     assign arb_wdf_vld[0]         = 1'b0;
 
     // ── 客户 1：唢呐 / 笛子 谐波表 DMA（只读，保持请求式）──────────────
-    assign arb_req[1]             = sua_app_en;
-    assign arb_cmd[1*3   +: 3]    = sua_app_cmd;
-    assign arb_addr[1*29 +: 29]   = sua_app_addr;
+    //  ★★ 这一路必须加「1 拍脉冲 → 保持请求」的排队器，不能像客户 0 那样直连。
+    //     suona_dma.v 的 app_en 是「看到 app_rdy 后打一拍的脉冲」：
+    //         S_DESC / S_CMD:  if (app_rdy) begin en_r <= 1'b1; st <= ...; end
+    //     而仲裁器要求「保持请求直到 ack」。如果把 app_en 直接当 m_req：
+    //       · 脉冲那一拍 arb_gnt 还是 0（仲裁器输出是寄存的）→ 命令没发出去
+    //       · 下一拍 arb_gnt 来了但 req 已经掉了 → 永远发不出命令
+    //       → 只能等超时；同时 suona_dma 自己的 tmo(4000) 会先把每段都跳掉
+    //       → 听感就是完全静音（实测正是如此）
+    //     深度 1 就够：suona 一次只可能有一个未完成的读。
+    wire sua_arb_rst_n = por_n & RESET_n & ld_done;
+
+    reg        sua_q_pend;
+    reg [2:0]  sua_q_cmd;
+    reg [28:0] sua_q_addr;
+
+    always @(posedge ddr_clk_x1) begin
+        if (!sua_arb_rst_n) begin
+            sua_q_pend <= 1'b0;
+            sua_q_cmd  <= 3'b001;
+            sua_q_addr <= 29'd0;
+        end
+        //  注意优先级：同一拍既「来新脉冲」又「上一笔 ack」时，以新脉冲为准
+        else if (sua_app_en && (!sua_q_pend || arb_ack[1] || arb_abort[1])) begin
+            sua_q_pend <= 1'b1;
+            sua_q_cmd  <= sua_app_cmd;
+            sua_q_addr <= sua_app_addr;
+        end
+        else if (arb_ack[1] || arb_abort[1]) begin
+            sua_q_pend <= 1'b0;
+        end
+    end
+
+    assign arb_req[1]             = sua_q_pend;
+    assign arb_cmd[1*3   +: 3]    = sua_q_cmd;
+    assign arb_addr[1*29 +: 29]   = sua_q_addr;
     assign arb_wdf[1*256 +: 256]  = 256'd0;
     assign arb_wdf_vld[1]         = 1'b0;
 
@@ -1337,7 +1371,11 @@ module add_top #(
     //   按 grant 过滤后回馈给客户
     assign eng_app_rdy  = ddr_app_rdy  & arb_gnt[0];
     assign eng_rd_valid = ddr_rd_valid & arb_gnt[0];
-    assign sua_app_rdy  = ddr_app_rdy  & arb_gnt[1];
+    //  suona 的 app_rdy 【不过滤】：它只拿这个当「可以发命令了」的使能，
+    //  命令本身会被上面的 sua_q_* 排队器保管。如果过滤就会死锁：
+    //  仲裁器要请求才给授权，而 suona 要授权才发请求。
+    //  读数据仍然按 grant 过滤（必须），否则会拿到别人的数据。
+    assign sua_app_rdy  = ddr_app_rdy;
     assign sua_rd_valid = ddr_rd_valid & arb_gnt[1];
 
     //   现有 DMA 送出的 app_addr 已经是 <<3 之后的 DDR 地址，
