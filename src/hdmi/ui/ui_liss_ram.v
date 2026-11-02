@@ -38,7 +38,7 @@ module ui_liss_ram (
 
     // ── 荧光衰减：每帧给一个单拍脉冲，整屏强度 -decay_step ──────
     input  wire        decay_req,
-    input  wire [2:0]  decay_step,  // 每帧衰减量 1..7
+    input  wire [3:0]  decay_step,  // 每帧衰减量 1..15（15 = 每帧清空）
     input  wire [3:0]  ink_step,    // 每次打点增量 1..15（15 = 直接写满）
     output reg         decay_busy,
 
@@ -53,12 +53,12 @@ module ui_liss_ram (
     // ── 4 位饱和减 / 饱和加 ─────────────────────────────────────
     function [15:0] dec16;                  // 4 个 nibble 各自饱和 -step
         input [15:0] w;
-        input [2:0]  s;
+        input [3:0]  s;
         begin
-            dec16[3:0]   = (w[3:0]   >= {1'b0, s}) ? (w[3:0]   - s) : 4'd0;
-            dec16[7:4]   = (w[7:4]   >= {1'b0, s}) ? (w[7:4]   - s) : 4'd0;
-            dec16[11:8]  = (w[11:8]  >= {1'b0, s}) ? (w[11:8]  - s) : 4'd0;
-            dec16[15:12] = (w[15:12] >= {1'b0, s}) ? (w[15:12] - s) : 4'd0;
+            dec16[3:0]   = (w[3:0]   >= s) ? (w[3:0]   - s) : 4'd0;
+            dec16[7:4]   = (w[7:4]   >= s) ? (w[7:4]   - s) : 4'd0;
+            dec16[11:8]  = (w[11:8]  >= s) ? (w[11:8]  - s) : 4'd0;
+            dec16[15:12] = (w[15:12] >= s) ? (w[15:12] - s) : 4'd0;
         end
     endfunction
 

@@ -15,7 +15,9 @@ module tb_ui3;
     parameter integer AMP  = 10000;      // 李萨如激励幅度（满幅约 16000）
     parameter real    TAU  = 0.0;        // 衰减时间常数（秒），0 = 不衰减
     parameter integer AGL  = 0;          // 余辉档位 0..3
+    parameter integer FILT = 0;          // 显示低通档位 0..2
     localparam [1:0] AGLV  = AGL;        // ★ 不能直接写 AGL[1:0]（integer 位选会得 X）
+    localparam [1:0] FLTV  = FILT;
 
     reg clk = 1'b0;
     always #6.667 clk = ~clk;            // 75 MHz
@@ -24,7 +26,7 @@ module tb_ui3;
 
     wire [255:0] BANDS;
     wire [511:0] COMP_AMP;
-    wire [15:0]  UI_INFO;
+    wire [17:0]  UI_INFO;
     wire signed [15:0] SCOPE_SMP;
     wire               SCOPE_TOG;
     reg                scope_trg = 1'b0;
@@ -80,7 +82,7 @@ module tb_ui3;
 
     // 音色/效果器也取个固定值：古筝 + REVERB + +12 半音
     //   ★ 位图：[15:8] transpose  [7:6] 预留  [5:4] fx  [3:2] timbre  [1:0] mode
-    assign UI_INFO = {8'sd12, AGLV, 2'd2, 2'd1, PAGE[1:0]};
+    assign UI_INFO = {8'sd12, FLTV, AGLV, 2'd2, 2'd1, PAGE[1:0]};
 
     hdmi_ui3_top dut (
         .clk   (clk),

@@ -52,7 +52,7 @@ module hdmi_ui3_top (
 
     // ── 来自 add_top 的状态总线（clk_sys 域，慢变量）─────────────────
     //    [1:0] ui_mode  [3:2] timbre  [5:4] fx  [15:8] transpose
-    input  wire [15:0]     UI_INFO,
+    input  wire [17:0]     UI_INFO,
 
     // ── COMPONENT 64：最近触发声部的 64 根分量柱高度 ────────────────
     input  wire [64*8-1:0] COMP_AMP,
@@ -105,14 +105,14 @@ module hdmi_ui3_top (
     // ══════════════════════════════════════════════════════════════
     reg [255:0] bands_cap;
     reg [511:0] comp_cap;
-    reg [15:0]  info_s0, info_s1;
+    reg [17:0]  info_s0, info_s1;
 
     always @(posedge clk_p) begin
         if (!rst_n) begin
             bands_cap <= 256'd0;
             comp_cap  <= 512'd0;
-            info_s0   <= 16'd0;
-            info_s1   <= 16'd0;
+            info_s0   <= 18'd0;
+            info_s1   <= 18'd0;
         end
         else begin
             bands_cap <= BANDS;
@@ -125,7 +125,8 @@ module hdmi_ui3_top (
     wire [1:0]        page_req = info_s1[1:0];
     wire [1:0]        timbre   = info_s1[3:2];
     wire [1:0]        fx       = info_s1[5:4];
-    wire signed [7:0] tr       = info_s1[15:8];
+    wire [1:0]        flt_sel  = info_s1[9:8];
+    wire signed [7:0] tr       = info_s1[17:10];
 
     // ══════════════════════════════════════════════════════════════
     //  李萨如（相位图）：取样 + AGC + 单次捕获
@@ -199,15 +200,58 @@ module hdmi_ui3_top (
     wire signed [17:0] dc_o  = (dc_s >  18'sd32767) ?  18'sd32767 :
                                (dc_s < -18'sd32768) ? -18'sd32768 : dc_s;
 
+    // ── 显示用低通（两级一阶串联，12 dB/oct）──────────────────────
+    //   针对「线条不像唢呐那样细」：
+    //     笛子有气流噪声（宽带）→ 每个样点被推偏一点 → 线条变宽
+    //     钢琴/古筝高次谐波丰富 → 相邻样点跳变大 → 描出的带更宽
+    //   低通削掉这些高频抖动，线条立刻变细、图形更简洁。
+    //   ★ 只滤显示，音频通路完全不动。
+    //   截止（fs=48828）：k=2 → ≈1.9 kHz；k=3 → ≈970 Hz；k=0 → 直通
+    //   y[n] = y[n-1] + (x[n] - y[n-1]) / 2^k   （k=0 时 y=x，等效不滤）
+    //   ★★ 必须每级单独打一拍。写成一条组合链
+    //      （dc 限幅 → 减 → 动态移位 → 加 → 再一级 → 加）是 15 ns 级，
+    //      在 clk_pix 上拖出 149 个 setup 违例，而且连带把 CLK_SYS /
+    //      sysclk 的布点一起拖坏（Fmax 从 78 掉到 67）。
+    //      plot 只占 1/1536 拍，加几级流水毫无代价。
+    wire [3:0]    lp_k  = (flt_sel == 2'd0) ? 4'd0 :
+                          (flt_sel == 2'd1) ? 4'd2 : 4'd3;
+
+    reg signed [15:0] dcr;          // 第 0 拍：直流阻断输出
+    reg signed [15:0] lp1, lp2;     // 第 1 / 2 拍：两级低通
+    reg               f1, f2, f3;   // 流水有效标志
+
+    // ★★ 差分必须用 17 位！信号是 ±24000，两点之差可达 48000，
+    //    16 位有符号（±32767）装不下 → 溢出反号 → 滤波器朝反方向走 →
+    //    波形变成圆角方波。仿真踩过一次。
+    wire signed [16:0] lp_d1 = $signed({dcr[15], dcr}) - $signed({lp1[15], lp1});
+    wire signed [16:0] lp_v1 = $signed({lp1[15], lp1}) + (lp_d1 >>> lp_k);
+    wire signed [16:0] lp_d2 = $signed({lp1[15], lp1}) - $signed({lp2[15], lp2});
+    wire signed [16:0] lp_v2 = $signed({lp2[15], lp2}) + (lp_d2 >>> lp_k);
+
+    initial begin
+        dcr = 16'sd0; lp1 = 16'sd0; lp2 = 16'sd0;
+        f1  = 1'b0;   f2  = 1'b0;   f3  = 1'b0;
+    end
+
     reg signed [16*25-1:0] dly;
     initial dly = {(16*25){1'b0}};
 
     always @(posedge clk_p) begin
+        f1 <= plot;
+        f2 <= f1;
+        f3 <= f2;
+
         if (plot) begin
             dc_x1 <= SCOPE_SMP;
             dc_y1 <= dc_o[15:0];
-            dly   <= {dly[16*24-1:0], dc_o[15:0]};
+            dcr   <= dc_o[15:0];
         end
+        // 第 1 级低通
+        if (f1) lp1 <= lp_v1[15:0];
+        // 第 2 级低通
+        if (f2) lp2 <= lp_v2[15:0];
+        // 第 3 拍：送进延迟线
+        if (f3) dly <= {dly[16*24-1:0], lp2};
     end
     wire signed [15:0] smp_q = dly[15:0];            // 当前样点
     wire signed [15:0] smp_d = dly[16*24 +: 16];     // 24 个样点之前
@@ -491,8 +535,8 @@ module hdmi_ui3_top (
     wire liss_decay = (vcnt == 12'd1) && (hcnt == 12'd0);
 
     // ── 余辉档位（add_top 用 KEY_R2[0] 切换，经 UI_INFO[7:6] 传过来）──
-    //   L1: 衰减1 / 余辉 250 ms    L2: 衰减2 / 余辉 125 ms
-    //   L3: 衰减4 / 余辉  62 ms    L4: 衰减7 / 余辉  36 ms
+    //   L1: 衰减 1 / 余辉 250 ms     L2: 衰减 3 / 余辉 83 ms
+    //   L3: 衰减 7 / 余辉 36 ms      L4: 衰减 15 / 余辉 17 ms（≈每帧清空）
     //
     //   ★★ 打点固定【写满 15】，不是 +1。这是参考工程的做法：
     //      rschlaikjer/lissajous 里 alpha = (age/window)^2
@@ -500,10 +544,15 @@ module hdmi_ui3_top (
     //      我们原来是 +1 累积（驻留性），于是束流慢的转折点疯狂累加成
     //      亮区、快的地方始终暗，用户看到的就是"右下一条边亮，其他
     //      地方隐隐约约"。改成写满后整个拖尾亮度均匀，只有新旧之分。
+    //
+    //   ★ 为什么 L4 要“每帧清空”：钢琴/古筝的 128 个模态频率是实测
+    //     拟合值、不是精确谐波 → 波形准周期 → 相图缓慢旋转。余辉一长
+    //     就把十多个转角度的副本叠成一条宽带，看起来"线条很粗"。
+    //     唢呐谐波严格整数倍 → 图固定不动 → 余辉再长也是 1 px 细线。
     wire [1:0] agl     = info_s1[7:6];
-    wire [2:0] agl_dec = (agl == 2'd0) ? 3'd1 :
-                         (agl == 2'd1) ? 3'd2 :
-                         (agl == 2'd2) ? 3'd4 : 3'd7;
+    wire [3:0] agl_dec = (agl == 2'd0) ? 4'd1  :
+                         (agl == 2'd1) ? 4'd3  :
+                         (agl == 2'd2) ? 4'd7  : 4'd15;
     wire [3:0] agl_ink = 4'd15;          // 直接写满 → 亮度 = 最近性
 
     // 同步脉冲位置按 CEA-861：跟在【前沿】之后
@@ -585,6 +634,12 @@ module hdmi_ui3_top (
     wire [255:0] S_FXL    = {"FX:",                          {29{8'h20}}};  //  3
     wire [255:0] S_TRL    = {"TRANS:",                       {26{8'h20}}};  //  6
     wire [255:0] S_AGL    = {"AGL:",                         {28{8'h20}}};  //  4
+    wire [255:0] S_FILT   = {"FILT:",                        {27{8'h20}}};  //  5
+    wire [255:0] S_FOFF   = {"OFF",                          {29{8'h20}}};
+    wire [255:0] S_FMID   = {"MID",                          {29{8'h20}}};
+    wire [255:0] S_FSTR   = {"STR",                          {29{8'h20}}};
+    wire [255:0] s_fltname = (flt_sel == 2'd0) ? S_FOFF :
+                             (flt_sel == 2'd1) ? S_FMID : S_FSTR;
     wire [255:0] S_TEST   = {"TEST MODE  8 SINE",            {15{8'h20}}};  // 17
     wire [255:0] S_GUIDE  = {"GUIDE MODE",                   {22{8'h20}}};  // 10
     wire [255:0] S_PEND   = {"PENDING",                      {25{8'h20}}};  //  7
@@ -749,6 +804,12 @@ module hdmi_ui3_top (
                     if (col == 8'd138) txt = 6'd21;                    // 'L' = A+11
                     if (col == 8'd139)
                         txt = {4'd0, agl} + 6'd1;                      // '1'..'4'
+                end
+                6'd22: begin                                          // 信息框 5：显示低通
+                    if (col >= 8'd133 && col < 8'd138)
+                        txt = gch(S_FILT, col - 8'd133);
+                    if (col >= 8'd139 && col < 8'd142)
+                        txt = gch(s_fltname, col - 8'd139);
                 end
                 default: ;
                 endcase
