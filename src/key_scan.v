@@ -18,7 +18,7 @@
 //
 //  ── 消抖 ───────────────────────────────────────────────────────
 //     机械按键按下/松开时触点会抖 1~10 ms。做法：每个键一个计数器，
-//     电平连续保持 DEBOUNCE 个时钟才认。DEBOUNCE=30000 @50MHz = 0.6 ms。
+//     电平连续保持 DEBOUNCE 个时钟才认；松开用 RELEASE_DEBOUNCE。
 //     ★ 消抖是【必须】的：不消抖的话一次按下会被当成几十次触发，
 //       复音分配会瞬间把 4 个声部全抢光，听起来像噪声。
 //==========================================================================
@@ -27,14 +27,12 @@
 module key_scan #(
     parameter integer N         = 8,         // 按键数
     parameter integer DEBOUNCE  = 400_000,   // 8 ms @50MHz
-    // ★★ IMMEDIATE 决定【演奏延迟】。实测（tools/tb_latency.v）：
-    //      IMMEDIATE=0（等电平稳定 8ms 才认）→ 控制信号到 I2S 输出 8069 µs
-    //                                            ❌ 赛题扩展 #13（≤5ms）不过
-    //      IMMEDIATE=1（边沿立即认 + 消隐窗只挡抖动）→ 82 µs ✅ 10 倍余量
-    //    机理：按键抖动的第一跳【一定】是真的按下，抖动发生在它【之后】，
-    //    所以立刻认第一条边沿不会误触发，只要之后 8ms 的边沿不理它就行。
-    //    代价：比消隐窗（8ms）还短的"极短点击"会被当成一次按下-松开（正确行为）。
-    parameter integer IMMEDIATE = 1
+    // IMMEDIATE=0: qualify both edges independently. This is the performance
+    // path; RELEASE_DEBOUNCE may be longer than the press qualification.
+    // IMMEDIATE=1 preserves the legacy function-button behavior (delayed
+    // press, immediate release + blanking). Do not use it for playing keys.
+    parameter integer IMMEDIATE = 1,
+    parameter integer RELEASE_DEBOUNCE = DEBOUNCE
 )(
     input  wire         clk,
     input  wire         rst_n,
@@ -63,7 +61,9 @@ module key_scan #(
     genvar  g;
     generate
         for (g = 0; g < N; g = g + 1) begin : g_key
-            localparam integer CW = $clog2(DEBOUNCE + 1);
+            localparam integer MAX_DB = (DEBOUNCE > RELEASE_DEBOUNCE) ? DEBOUNCE : RELEASE_DEBOUNCE;
+            localparam integer CW = (MAX_DB < 2) ? 1 : $clog2(MAX_DB + 1);
+            wire [CW-1:0] qualify = raw ? DEBOUNCE : RELEASE_DEBOUNCE;
             reg [CW-1:0] cnt;
             reg [CW-1:0] blank;
 
@@ -81,19 +81,9 @@ module key_scan #(
                     key_state[g] <= 1'b0;
                 end
                 else if (IMMEDIATE) begin
-                    // ── ★ 非对称消抖（低延迟 + 防抬起抖动）──────────────
-                    //    按下（raw 0→1）：【立即】生效，0 延迟（演奏手感）
-                    //    抬起（raw 1→0）：必须稳定 DEBOUNCE 拍才认
-                    //
-                    //    为什么抬起要延时：微动开关【抬起】时的触点抖动比按下
-                    //    更脏，实测会连出好几个 0/1 跳变。原来的做法是"边沿立即
-                    //    生效 + 之后 DEBOUNCE 拍消隐"，如果抖动跨过消隐窗末尾
-                    //    就会漏过去 → 多次 note-off/note-on → 爆音。
-                    //    抬起慢 20 ms 完全无感（余音本来就在衰减），但抖动
-                    //    被彻底挡掉。
+                    // Legacy function-button mode; retained for compatibility.
                     if (raw != key_state[g]) begin
                         if (raw) begin
-                            // ── 抬起：稳定 DEBOUNCE 拍才认 ─────────────
                             if (cnt >= DEBOUNCE[CW-1:0]) begin
                                 cnt          <= {CW{1'b0}};
                                 key_state[g] <= 1'b1;
@@ -102,13 +92,6 @@ module key_scan #(
                                 cnt <= cnt + 1'b1;
                         end
                         else begin
-                            // ── 按下：立即认，但【消隐窗内不重复触发】──
-                            //  ★★ 消隐窗是治"猛按爆音"的关键：
-                            //     猛按时机械冲击会抖出一长串跳变，如果每个
-                            //     下降沿都当真按下，key_state 就会反复 1/0，
-                            //     note_alloc 的 handled 被反复清零 → 同一个键
-                            //     被分配到好几个声部、每个都从满幅重新起音
-                            //     → 幅度叠加 → 爆音。
                             cnt <= {CW{1'b0}};    // 抖动回落，清抬起计时
                             if (blank == {CW{1'b0}}) begin
                                 key_state[g] <= 1'b0;
@@ -123,9 +106,9 @@ module key_scan #(
                     end
                 end
                 else begin
-                    // ── 等电平稳定够久才认（老行为，延迟 8ms）──────────
+                    // A pulse shorter than its qualification cannot change state.
                     if (raw != key_state[g]) begin
-                        if (cnt >= DEBOUNCE[CW-1:0]) begin
+                        if (qualify <= 1 || cnt >= qualify - 1'b1) begin
                             cnt          <= {CW{1'b0}};
                             key_state[g] <= raw;
                         end

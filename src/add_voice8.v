@@ -50,6 +50,8 @@ module add_voice8 #(
 
     input  wire [6:0]          note,
     input  wire                trig,
+    input  wire                prepare, // fade old cache BEFORE DMA replacement
+    output wire                cache_safe,
     input  wire                gate,
     input  wire                sustain,      // ★ 1 = 延音：松键后按自然衰减率继续响
 
@@ -74,6 +76,8 @@ module add_voice8 #(
     output reg  [7:0]          part_amp,      // 该分量的实时幅度（0..255）
     output reg                 part_vld       // part_idx/part_amp 有效
 );
+
+    assign cache_safe = !ready && !loading && !fading;
 
     localparam [6:0] P_LAST = NPART - 1;
     // 相位错开量 = 每分量拍数 / 声部数 = (1024/NPART)/NVOICE
@@ -276,7 +280,8 @@ module add_voice8 #(
             //      直接装载会让 sample 从当前值跳到 0 → 阶跃 → 爆音。
             //      所以先进入 fading，用 1.7 ms 淡到 0，再装载。
             //      这就是"快速连弹/猛击不爆音"的关键 —— 任何情况下 sample 连续。
-            if (trig && !loading && !fading) pending <= 1'b1;
+            if (trig && !loading) pending <= 1'b1;
+            if (prepare && ready && !loading && !fading) fading <= 1'b1;
 
             // 正在响的声部收到 note-on → 先淡出
             if (pending && ready && !loading && !fading && (cnt == 10'd0))
@@ -375,9 +380,10 @@ module add_voice8 #(
                     if (ramp <= 8'd3) begin
                         ramp     <= 8'd0;
                         fading   <= 1'b0;
-                        pending  <= 1'b0;
-                        loading  <= 1'b1;           // 接到装载流程
-                        load_cnt <= 7'd0;
+                        ready    <= 1'b0;
+                        sample   <= 16'sd0;
+                        // DMA now owns the silent cache. Its completion trig
+                        // (or an existing pending trig) starts the new load.
                     end
                     else
                         ramp <= ramp - 8'd3;

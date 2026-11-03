@@ -17,7 +17,9 @@ module add_top #(
     parameter integer STARTUP  = 2_500_000,    // 上电静音 50 ms
     // ★ 消隐窗从 8 ms 加长到 20 ms：便宜的轻触开关抖动可达 10~20 ms，
     //   8 ms 挡不住会多出几次 key_press → 重触发 → 听感是"哒哒"噪音
-    parameter integer DEBOUNCE = 1_000_000     // 按键消隐窗 20 ms
+    parameter integer DEBOUNCE = 1_000_000,    // 功能键 20 ms
+    parameter integer PLAY_PRESS = 25_000,   // 演奏键按下连续稳定 0.5 ms
+    parameter integer PLAY_RELEASE = 100_000 // 演奏键松开连续稳定 2 ms
 )(
     input  wire       CLOCK_50,   // 50 MHz 晶振 V22（先进 PLL）
     input  wire       RESET_n,
@@ -351,27 +353,22 @@ module add_top #(
     //         KEY_R2[8] 短按 → 移调 -12（降）
     //
     //    原来的 key_dual 用双触点 Δt 测力度，现在有 ROW2 就不用它了。
-    //    代价：单触点失去双触点对「脏开关假高电平」的防护（Jack Ganssle
-    //    实测过坏开关松手时会先"稳定高电平 81 ms"再"稳定低 42 ms"，
-    //    任何基于稳定时间的去抖都会被骗，于是同一个音触发两次）。
-    //    下面的 40 ms 重触发屏蔽窗口是最低成本的兜底。
+    //    演奏键独立消抖：0.5ms 按下、2ms 松开；两级同步后计时。
+    //    功能键仍用长消抖，歌曲菜单保留自己的防连跳状态机。
     //======================================================================
     wire [8:0] r1_state, r1_press, r1_release;
     wire [8:0] r2_state, r2_press, r2_release;
 
-    key_scan #(
-        .N        (9),
-        .DEBOUNCE (DEBOUNCE),
-        // Piano switches must debounce both edges: release chatter must not
-        // turn one held key into a false note-off/note-on sequence.
-        .IMMEDIATE(0)
-    ) u_keys_r1 (
-        .clk         (clk_sys),
-        .rst_n       (engine_rst_n),
-        .key_in      (KEY_R1),
-        .key_state   (r1_state),
-        .key_press   (r1_press),
-        .key_release (r1_release)
+    key_scan #(.N(8), .DEBOUNCE(PLAY_PRESS),
+        .RELEASE_DEBOUNCE(PLAY_RELEASE), .IMMEDIATE(0)) u_keys_r1 (
+        .clk(clk_sys), .rst_n(engine_rst_n), .key_in(KEY_R1[7:0]),
+        .key_state(r1_state[7:0]), .key_press(r1_press[7:0]),
+        .key_release(r1_release[7:0])
+    );
+    key_scan #(.N(1), .DEBOUNCE(DEBOUNCE), .IMMEDIATE(0)) u_key_r1_menu (
+        .clk(clk_sys), .rst_n(engine_rst_n), .key_in(KEY_R1[8]),
+        .key_state(r1_state[8]), .key_press(r1_press[8]),
+        .key_release(r1_release[8])
     );
 
     key_scan #(
@@ -405,33 +402,10 @@ module add_top #(
     // ── 力度：暂时固定 128，以后接外部输入只改这一行 ────────────────
     wire [7:0] vel_ext = 8'd128;
 
-    // ── 40 ms 重触发屏蔽：note-off 后这段时间内同一键的 press 忽略 ──
-    localparam [20:0] RETRIG_T = 21'd2_000_000;    // 40 ms @50 MHz
-
-    reg [7:0]  rt_mask;
-    reg [20:0] rt_tmr;
-
-    always @(posedge clk_sys) begin
-        if (!engine_rst_n) begin
-            rt_mask <= 8'd0;
-            rt_tmr  <= 21'd0;
-        end
-        else if (|r1_release[7:0]) begin
-            rt_mask <= rt_mask | r1_release[7:0];
-            rt_tmr  <= RETRIG_T;
-        end
-        else if (rt_tmr != 21'd0) begin
-            rt_tmr <= rt_tmr - 21'd1;
-        end
-        else begin
-            rt_mask <= 8'd0;
-        end
-    end
-
     // 音源：第 1 排前 8 个键（C4..C5 一个八度）
     // ★ 第 9 键是【纯功能键】——不在 7:0 里，本来就不会发声
     wire [7:0]  note_key_state = r1_state[7:0];
-    wire [7:0]  note_key_press = r1_press[7:0] & ~rt_mask;
+    wire [7:0]  note_key_press = r1_press[7:0];
     wire [63:0] note_key_vel   = {8{vel_ext}};
 
     //======================================================================
@@ -914,7 +888,7 @@ module add_top #(
     wire sua_gate = mixed_score ? song_gate[7] : is_harm && (score_mode ? song_gate[0] : (|note_key_state));
 
     // 按下沿 → 按【键号】锁存力度（不是声部号）
-    //   直接复用 note_key_press（= r1_press[7:0]，已含重触发屏蔽）
+    //   直接复用 note_key_press（= r1_press[7:0]，独立消抖后的单拍）
     reg  [7:0] sua_vel;
     integer sv;
     always @(posedge clk_sys) begin

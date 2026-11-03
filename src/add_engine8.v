@@ -174,7 +174,9 @@ module add_engine8 #(
         end
     endfunction
 
-    wire [2:0] sel_now = pick_lo(dma_pend);
+    wire [NVOICE-1:0] cache_safe;
+    wire [NVOICE-1:0] dma_ready = dma_pend & cache_safe;
+    wire [2:0] sel_now = pick_lo(dma_ready);
 
     // ★★ 用「循环展开 + 常量索引」代替运行时变量位选 [sel*7 +: 7]
     reg [6:0] note_now;
@@ -218,7 +220,7 @@ module add_engine8 #(
             else if (dma_done_v[dma_sel])
                 dma_active <= 1'b0;
 
-            if (!dma_active && !dma_start && (|dma_pend)) begin
+            if (!dma_active && !dma_start && (|dma_ready)) begin
                 dma_sel      <= sel_now;
                 dma_note_off <= note_now;
                 dma_timbre <= MULTI_TIMBRE?voice_timbre_q[sel_now]:timbre;
@@ -411,6 +413,8 @@ module add_engine8 #(
                 .note     (v_note[g*7 +: 7]),
                 .note_off (v_note_off[g*7 +: 7]),
                 .trig     (vtrig_q[g]),
+                .prepare  (v_trig[g]),
+                .cache_safe(cache_safe[g]),
                 .gate     (v_gate[g]),
                 .sustain  (sustain),
                 .vel_gain (v_vel[g*8 +: 8]),

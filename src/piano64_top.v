@@ -20,7 +20,9 @@
 
 module piano64_top #(
     parameter integer STARTUP  = 2_500_000,
-    parameter integer DEBOUNCE = 1_000_000
+    parameter integer DEBOUNCE = 1_000_000,
+    parameter integer PLAY_PRESS = 25_000,
+    parameter integer PLAY_RELEASE = 100_000
 )(
     // ── 与 add_top 完全一致的板级引脚 ──────────────────────────────
     input  wire       CLOCK_50,
@@ -93,7 +95,9 @@ module piano64_top #(
     // ══════════════════════════════════════════════════════════════
     add_top #(
         .STARTUP  (STARTUP),
-        .DEBOUNCE (DEBOUNCE)
+        .DEBOUNCE (DEBOUNCE),
+        .PLAY_PRESS(PLAY_PRESS),
+        .PLAY_RELEASE(PLAY_RELEASE)
     ) u_audio (
         .CLOCK_50   (CLOCK_50),
         .RESET_n    (RESET_n),
