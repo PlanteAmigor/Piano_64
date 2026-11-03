@@ -69,6 +69,7 @@ def main():
     engine=['add_engine8','add_engine_harm','add_voice8','param_cache','param_dma','ddr_param_dma',
         'add_param_rom','add_sine_lut','mix_sum','harm_buf','suona_dma']
     results+=bench('tb_audio_controls',['sim/tb_audio_controls.v',*['src/'+x+'.v' for x in engine]])
+    results+=bench('tb_harm_hold',['sim/tb_harm_hold.v','src/add_engine_harm.v','src/harm_buf.v','src/suona_dma.v','src/mix_sum.v'])
     # Existing optical gesture regression returns zero even on failed assertions:
     # inspect its explicit failure count instead of trusting the process status.
     results+=bench('tb_art',['tb_art.v','src/optical/position_control.v'])

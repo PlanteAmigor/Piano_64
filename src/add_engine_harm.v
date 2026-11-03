@@ -103,7 +103,8 @@ module add_engine_harm #(
     localparam integer PSI_E = 151;
     localparam integer ENV_E = 76;
     localparam integer NPRE  = 7;
-    localparam integer TMAX  = 244140;      // 5 s（含延音的绝对上限）
+    // 约 1 s 后保持稳态音色，不能继续走到录音包络末尾。
+    localparam integer HOLD_SAMPLES = 48832;
 
     // ════════════════════════════════════════════════════════════════
     //  ROM
@@ -219,6 +220,8 @@ module add_engine_harm #(
     //  每声部状态
     // ════════════════════════════════════════════════════════════════
     reg [19:0]       v_ts [0:NVOICE-1];
+    reg [28:0]       v_clock [0:NVOICE-1]; // dm 相位时钟，模 2^29 回绕连续
+    reg signed [15:0] v_step [0:NVOICE-1]; // 稳态基频增量（弯音前）
     reg [31:0]       v_ua [0:NVOICE-1];      // u_acc（Q0.32）
     reg [18:0]       v_pf [0:NVOICE-1];      // Φ 相位累加器（19 位 = 模一圈）
     reg [18:0]       v_php[0:NVOICE-1];      // 上上一拍的 Φ（求增量用）
@@ -388,9 +391,11 @@ module add_engine_harm #(
     wire signed [15:0] s1_DM  = rom_bc[15:0];
     wire signed [15:0] s1_SC  = rom_bc[31:16];
     wire signed [31:0] s1_hAS = (s1_A * s1_SC + 32'sd16384) >>> 15;
-    wire [23:0]        s1_tw  = {4'd0, v_ts[dq_vo]} * 5'd11;
+    // dm*11*t/1024 的低 19 位在 t+=2^29 后完全相同。
+    // 因此 29 位时钟可无限回绕，且不会像 20 位时钟那样每 21 s 跳相位。
+    wire [32:0]        s1_tw  = {4'd0, v_clock[dq_vo]} * 4'd11;
     wire signed [63:0] s1_dmt = ($signed({{32{s1_DM[15]}}, s1_DM})
-                                * $signed({40'd0, s1_tw}) + 64'sd512) >>> 10;
+                                * $signed({31'd0, s1_tw}) + 64'sd512) >>> 10;
 
     // ── S2（相位合成）────────────────────────────────────────────
     wire signed [31:0] s2_mphi = $signed({9'd0, r1_pf}) * $signed({24'd0, r1_m});
@@ -503,7 +508,8 @@ module add_engine_harm #(
         else        ratio_q <= ratio_use;
     end
 
-    wire signed [32:0] dphi_r = dphi_s * ratio_q;
+    wire signed [15:0] phase_step = (v_ts[hv] >= HOLD_SAMPLES) ? v_step[hv] : dphi_s;
+    wire signed [32:0] dphi_r = phase_step * ratio_q;
     wire signed [19:0] dphi_s2 = (dphi_r + 33'sd8192) >>> 14;   // 带四舍五入
 
     // ════════════════════════════════════════════════════════════════
@@ -653,6 +659,8 @@ module add_engine_harm #(
             pv0 <= 0; pv1 <= 0; pv2 <= 0; pv3 <= 0; pv4 <= 0;
             for (i = 0; i < NVOICE; i = i + 1) begin
                 v_ts[i] <= 20'd0;
+                v_clock[i] <= 29'd0;
+                v_step[i] <= 16'sd0;
                 v_ua[i] <= 32'd0; v_pf[i] <= 19'd0; v_php[i] <= 19'd0; v_phl[i] <= 19'd0;
                 v_k[i]  <= 8'd0;  v_ab[i] <= 0;     v_eb[i] <= 16'd0;
                 v_pb[i] <= 16'd0; v_fb[i] <= 0;     v_act[i] <= 1'b0;
@@ -677,14 +685,15 @@ module add_engine_harm #(
             r3_sn0  <= rom_sn[15:0];
             r3_sn1  <= rom_sn[31:16];
             r3_frac <= r2_frac;
-            r2_m    <= r1_m;                 // ★ 新增：谐波号延迟链
+            r2_m    <= r1_m - 8'd1;          // 显示仍使用从 0 开始的表索引
             r3_m    <= r2_m;
             r4_m    <= r3_m;
             r2_env  <= r1_env;
             r2_hAS  <= r1_hAS;
             r2_frac <= s2_theta[8:1];
             r1_vo   <= dq_vo;
-            r1_m    <= dq_m;
+            // 表索引 0 对应第 1 谐波，不能把基音乘以 0 变成直流。
+            r1_m    <= dq_m + 8'd1;
             r1_dm   <= s1_DM;
             r1_dmt  <= s1_dmt[27:0];
             r1_pa   <= {{4{s1_PA[15]}}, s1_PA, 3'b000};   // Q0.16 → 19 位小数
@@ -725,13 +734,11 @@ module add_engine_harm #(
                         //   延音档下改成等释放增益衰到 0 再停。
                         if (!v_gate[i] && (!sustain || rel_gain == 8'd0))
                             v_act[i] <= 1'b0;
-                        // ★★ 绝对兜底：总时长到 TMAX 一定停。
-                        //   关键：v_ts 无条计数，与 gate 无关。
-                        //   之前写成 if (v_gate) v_ts++ 并松键清零 → 键盘消抖
-                        //   抖动时 v_ts 反复归零，TMAX 永远到不了 → 永不停音。
-                        else if (v_ts[i] + 20'd1 >= TMAX)
-                            v_act[i] <= 1'b0;
-                        v_ts[i] <= v_ts[i] + 20'd1;
+                        // 包络/残差相位保持稳态，但载波和 dm 相位继续运行。
+                        // 停音由真实 gate / 延音释放决定，不设长按超时。
+                        if (v_ts[i] < HOLD_SAMPLES)
+                            v_ts[i] <= v_ts[i] + 20'd1;
+                        v_clock[i] <= v_clock[i] + 29'd1;
                     end
                 end
             end
@@ -748,6 +755,8 @@ module add_engine_harm #(
                 sd_pend <= 1'b0;
                 v_act[0]  <= 1'b1;
                 v_ts[0]   <= 20'd0;
+                v_clock[0] <= 29'd0;
+                v_step[0] <= 16'sd0;
                 v_ua[0]   <= 32'd0;
                 nidx_r[0] <= (sd_note < note_lo) ? 5'd0 :
                              (sd_note > note_hi) ? (note_hi - note_lo) :
@@ -776,6 +785,8 @@ module add_engine_harm #(
                                   // ★ 第二级：用上一拍采到的 Φ 求增量、乘弯音比、累加
                                   v_pf[hv]  <= v_pf[hv] + dphi_s2[18:0];
                                   v_php[hv] <= v_phl[hv];
+                                  if (v_ts[hv] < HOLD_SAMPLES)
+                                      v_step[hv] <= dphi_s;
                               end
                         3'd1: begin
                                   pre_u0   <= rom_u;
@@ -843,7 +854,7 @@ module add_engine_harm #(
             end
 
             // ★★ 音符结束后平滑归零。
-            //    TMAX 到期（3 s）/ 松键都是硬切断：v_act 一清零引擎立刻停下，
+            //    松键结束时 v_act 清零，引擎立刻停下，
             //    而 smp 停在最后一个样点的电平上（随机直流），
             //    送出去就是「噗」一下。这里用一阶衰减收尾。
             //
