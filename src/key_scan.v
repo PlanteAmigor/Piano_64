@@ -46,6 +46,19 @@ module key_scan #(
 
     reg [N-1:0] key_d;               // 上一拍的稳定值，用来做边沿
 
+    // Mechanical contacts are asynchronous to clk. Synchronize before any
+    // debounce counter or edge detector consumes the pin level.
+    reg [N-1:0] key_sync0, key_sync1;
+    always @(posedge clk) begin
+        if(!rst_n) begin
+            key_sync0 <= {N{1'b1}};
+            key_sync1 <= {N{1'b1}};
+        end else begin
+            key_sync0 <= key_in;
+            key_sync1 <= key_sync0;
+        end
+    end
+
     integer i;
     genvar  g;
     generate
@@ -59,7 +72,7 @@ module key_scan #(
             //    如果忘了取反，key_state 就变成"松开的电平"，
             //    于是 key_press 的上升沿出现在【松手】那一刻 ——
             //    现象就是"碰地不响、离开才响"。（这个 bug 踩过）
-            wire raw = ~key_in[g];        // 按下 = 1
+            wire raw = ~key_sync1[g];     // synchronized, 按下 = 1
 
             always @(posedge clk) begin
                 if (!rst_n) begin

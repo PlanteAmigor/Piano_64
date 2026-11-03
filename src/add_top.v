@@ -272,7 +272,9 @@ module add_top #(
     key_scan #(
         .N        (9),
         .DEBOUNCE (DEBOUNCE),
-        .IMMEDIATE(1)
+        // Piano switches must debounce both edges: release chatter must not
+        // turn one held key into a false note-off/note-on sequence.
+        .IMMEDIATE(0)
     ) u_keys_r1 (
         .clk         (clk_sys),
         .rst_n       (engine_rst_n),

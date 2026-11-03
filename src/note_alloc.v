@@ -56,10 +56,14 @@ module note_alloc #(
     // ★ 声部索引位宽：原来是写死的 [1:0]，只能覆盖 4 个声部。
     //   NVOICE=8 时 rr 只能取 0~3 → 声部 4~7 永远轮不到（轮询指针卡住）。
     localparam integer  VW       = (NVOICE <= 1) ? 1 : $clog2(NVOICE);
-    localparam [IW-1:0] KEY_FREE = {IW{1'b1}};
+    // Ownership must represent NKEY distinct keys plus an unowned value.
+    // With eight keys, a 3-bit 7 sentinel collides with the last real key and
+    // prevents its gate from ever releasing.
+    localparam integer KW = (NKEY <= 1) ? 1 : $clog2(NKEY + 1);
+    localparam [KW-1:0] KEY_FREE = {KW{1'b1}};
     localparam [VW-1:0] RR_MAX   = NVOICE - 1;
 
-    reg [IW-1:0]     v_key [0:NVOICE-1];
+    reg [KW-1:0]     v_key [0:NVOICE-1];
     // ★★ 余音保护期（治"快速拨一下爆音"）────────────────────────
     //  症状：猛快速拨一下按键就爆音（旧代码也有，不是 8 声部引入的）。
     //  机理：松键后声部【立刻】被标成 FREE，但 R_REL 要 0.3 s 才把 e1
@@ -181,7 +185,7 @@ module note_alloc #(
             //      add_voice8 的 ramp 会向 vel_gain 收敛，力度一出来就生效。
             for (v = 0; v < NVOICE; v = v + 1)
                 if (v_key[v] != KEY_FREE)
-                    v_vel[v*8 +: 8] <= key_vel[ v_key[v]*8 +: 8 ];
+                    v_vel[v*8 +: 8] <= key_vel[ v_key[v][IW-1:0]*8 +: 8 ];
 
             // ── 每键锁定窗倒计时 ────────────────────────────────────
             for (k = 0; k < NKEY; k = k + 1)
@@ -189,7 +193,7 @@ module note_alloc #(
 
             // ── 松键：gate 拉低 + 启动余音保护期 ───────────────────
             for (v = 0; v < NVOICE; v = v + 1) begin
-                if ((v_key[v] != KEY_FREE) && !ks[ v_key[v] ]) begin
+                if ((v_key[v] != KEY_FREE) && !ks[ v_key[v][IW-1:0] ]) begin
                     v_gate[v]   <= 1'b0;
                     v_key[v]    <= KEY_FREE;
                     rel_hold[v] <= 1'b1;          // ★ 余音未散，暂不可抢
