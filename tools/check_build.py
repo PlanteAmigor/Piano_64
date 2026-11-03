@@ -28,8 +28,12 @@ def main():
         mode_file=ROOT/'src/hdmi/ui_video_mode.vh'
         low=mode_file.exists() and '`define UI_VIDEO_720P' in mode_file.read_text()
         sdc=(ROOT/'src/piano64_hdmi.sdc').read_text()
-        for pin,div in [('CLKOUT0',10 if low else 5),('CLKOUT1',2 if low else 1)]:
-            assert f'-multiply_by 27 -divide_by {div} [get_pins {{u_hdmi/u_pll/u_pixel/PLL_inst/{pin}}}]' in sdc,'Video PLL/constraint mode mismatch'
+        if low:
+            for pin,mul,div in [('CLKOUT0',3,2),('CLKOUT1',15,2)]:
+                assert f'-multiply_by {mul} -divide_by {div} [get_pins {{u_hdmi/u_pll/u_pixel/PLL_inst/{pin}}}]' in sdc,'Video PLL/constraint mode mismatch'
+        else:
+            for pin,div in [('CLKOUT0',5),('CLKOUT1',1)]:
+                assert f'-multiply_by 27 -divide_by {div} [get_pins {{u_hdmi/u_pll/u_pixel/PLL_inst/{pin}}}]' in sdc,'Video PLL/constraint mode mismatch'
         html=(PNR/'piano64_full_tr_content.html').read_text()
         violations={}
         for kind in ['Setup','Hold']:
@@ -44,7 +48,7 @@ def main():
             resources[key]=[float(m[1]),float(m[2])];assert float(m[1])<=float(m[2])
         paths=(PNR/'piano64_full.timing_paths').read_text().split('=====')
         setup=[float(p.strip().splitlines()[1]) for p in paths if p.strip().startswith('SETUP')]
-        record={'video_mode':'720p60' if low else '1080p60','inputs':inputs(),'bitstreams':{name:sha(PNR/name) for name in ['piano64_full.fs','piano64_full.bin']},
+        record={'video_mode':'720p60.606' if low else '1080p60','inputs':inputs(),'bitstreams':{name:sha(PNR/name) for name in ['piano64_full.fs','piano64_full.bin']},
             'violations':violations,'resources':resources,'worst_reported_setup_ns':min(setup)}
         manifest.write_text(json.dumps(record,indent=2)+'\n')
     else:

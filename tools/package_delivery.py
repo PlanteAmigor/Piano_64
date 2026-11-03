@@ -23,7 +23,8 @@ def main():
     subprocess.run(['python3','tools/check_build.py'],cwd=ROOT,check=True)
     manifest=json.loads((ROOT/'impl/pnr/piano64_full.manifest.json').read_text())
     mode=manifest.get('video_mode','1080p60')
-    resolution='1280×720' if mode=='720p60' else '1920×1080'
+    resolution='1280×720' if mode.startswith('720p') else '1920×1080'
+    refresh='约 60.606 Hz' if mode=='720p60.606' else '60 Hz'
     board=json.loads((ROOT/'work/ui1080/board_delivery.json').read_text())
     persistent=board.get('mode')=='flash'
     programming='Flash 固化并读回校验' if persistent else 'SRAM 下载'
@@ -90,7 +91,7 @@ def main():
 ## 先使用
 
 1. 将 `SD/SONG05.BIN` 放到原有工程 SD 卡根目录，保留原有 P64.BIN 和曲谱。新卡可复制 `SD/` 中全部文件。电脑当前未识别到工程 SD 卡，因此新曲随包提供。
-2. KEY0 切换主页面、八键纯音测试、教学页面。主页面保留频谱、64 分量和李萨如，显示为 {resolution} 60Hz，完整保留三页布局。
+2. KEY0 切换主页面、八键纯音测试、教学页面。主页面保留频谱、64 分量和李萨如，显示为 {resolution}、{refresh}，完整保留三页布局。
 3. 教学页 R1[8] 下一首，R2[8] 确认；选择教学模式并开始。准备 3 秒后跟随判定线按七个 C/D/E/F/G/A/B 键。
 4. 用户负责主旋律；乐器、八度自动按谱切换。其他声部自动伴奏，黑键自动演奏。漏按时主旋律准时以半力度发声，±150 ms 内按对后平滑恢复正常力度。
 5. 演奏时 R2[8] 停止，长按 R2[8] 返回。手势影响主旋律，伴奏保持独立。
@@ -99,7 +100,7 @@ SONG05 是约 34 秒的多乐器《小星星》：笛子→古筝→唢呐→钢
 
 ## 板上检查
 
-- 显示器信息应报告 {mode}；三页文字、边框和音符应清晰且无抖动、花屏。
+- 本固件输出 {resolution}、{refresh}（显示器可能将刷新率取整）；三页文字、边框和音符应清晰且无抖动、花屏。
 - 自由演奏检查多键紧密按下、松键停止、长按笛子／唢呐和四种音色的混响。
 - SONG05 中故意漏按，再按对：主旋律应由半力度恢复正常，伴奏连续；换乐器和八度无需菜单操作。
 

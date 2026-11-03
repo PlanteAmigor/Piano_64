@@ -4,17 +4,18 @@
 // Video: 27.5 MHz *27 =742.5 MHz VCO; /5 pixels, /1 serializer.
 // Retain the public module name for existing build scripts.
 module Gowin_PLL_720P(output lock,output clkout0,output clkout1,input clkin);
+`ifdef UI_VIDEO_720P
+    // Board-proven single PLL: 50 MHz *15 =750 MHz VCO,
+    // /10 gives75 MHz pixels, /2 gives375 MHz serial (720p ~60.61Hz).
+    ui_pll_core #(.FREQ("50"),.MDIV(15),.DIV0(10),.DIV1(2)) u_pixel(
+        .clkin(clkin),.reset(1'b0),.clkout0(clkout0),.clkout1(clkout1),.lock(lock));
+`else
     wire ref_clk,ref_lock,pixel_lock;
     ui_pll_core #(.FREQ("50"),.MDIV(22),.FRAC(0),.DIV0(40),.DIV1(40),.OUT1("FALSE"))
         u_ref(.clkin(clkin),.reset(1'b0),.clkout0(ref_clk),.clkout1(),.lock(ref_lock));
-`ifdef UI_VIDEO_720P
-    // 742.5 MHz VCO /10 pixels, /2 serializer: exact 720p60.
-    ui_pll_core #(.DIV0(10),.DIV1(2)) u_pixel(
-`else
-    ui_pll_core u_pixel(
-`endif
-.clkin(ref_clk),.reset(!ref_lock),.clkout0(clkout0),.clkout1(clkout1),.lock(pixel_lock));
+    ui_pll_core u_pixel(.clkin(ref_clk),.reset(!ref_lock),.clkout0(clkout0),.clkout1(clkout1),.lock(pixel_lock));
     assign lock=ref_lock && pixel_lock;
+`endif
 endmodule
 
 module ui_pll_core #(

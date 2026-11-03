@@ -3,7 +3,7 @@
     "mode": "flash",
     "verified": true,
     "exit_code": 0,
-    "fs_sha256": "40eae3244d32002221ae4fb01b171498aa390aa252a7394f30fa4c8d499005d4",
+    "fs_sha256": "7ec417b53ac864cedb204301f05d1f85b0a656a2c812bb86e7ae63e6755717c5",
     "command": [
       "./flash.sh",
       "--ftdi-serial",
@@ -14,18 +14,19 @@
       "--quiet"
     ],
     "board_serial": "2025030317",
-    "video_mode": "720p60",
-    "time": "2026-11-04T03:47:56.721587+08:00"
+    "video_mode": "720p60.606",
+    "monitor_confirmation": "User confirmed screen lit and pages normal after loading this source-matched image to SRAM",
+    "time": "2026-11-04T04:15:29.282779+08:00"
   },
   "timing": {
-    "video_mode": "720p60",
+    "video_mode": "720p60.606",
     "violations": {
       "setup": 0,
       "hold": 0
     },
     "resources": {
       "Logic": [
-        58615.0,
+        58610.0,
         138240.0
       ],
       "Register": [
@@ -41,7 +42,7 @@
         298.0
       ]
     },
-    "worst_reported_setup_ns": 1.534
+    "worst_reported_setup_ns": 1.573
   },
   "source_fingerprints": {
     "src/add_engine.v": "bc7c44e71eab2e9569278bfa9858fecbc292b80825dcc199a241b41c08c04fcb",
@@ -84,7 +85,7 @@
     "src/hdmi/ir4/dvi_tx_tmds_enc.v": "d9ce5e96648278b262576c7ebdeaca7b1b6c01f92a8d70e047f155563cd2fc5a",
     "src/hdmi/ir4/dvi_tx_tmds_phy.v": "d109e2098871df8267e3dc3a85ec7c95dba71874454b98431ef3a143faa891b2",
     "src/hdmi/ir4/dvi_tx_top.v": "a16cf49a57f53daf3d653087c077f80f49d2792b30e62ee38160b853c6af92d7",
-    "src/hdmi/ir4/gowin_pll_720p.v": "95af34fe8fd32e7e85f2b3f2e7817b9b838f3258a52906708ad55decb1c83fa2",
+    "src/hdmi/ir4/gowin_pll_720p.v": "fa9093e2e50b0cc570e7a14b9679105080dedbbcf4ddd99771cfa262503b6b17",
     "src/hdmi/ir4/tmds_encode.mem": "31fdd0137aba70499c760b91b76e5778c375aaca627bee706af073fc3ee17ee8",
     "src/hdmi/ui/ui1080_assets.json": "45d1df6fd525bf44a066e07fbd8a95d3148c5df9762001034eac0733c1271114",
     "src/hdmi/ui/ui1080_decimal.vh": "23357d7615de0055e17a940011937d1687cde425cc7bc5f8ac12355f4f6afc0a",
@@ -114,7 +115,7 @@
     "src/piano64.cst": "17e271ac325a87a3680cc2c4cce48e75cbb3a97d4d01f2aee167b4f44ced6053",
     "src/piano64.sdc": "d1077b3fbb901cf90e21ed51bf87e2ae811dbd41472fd6f7f01c6c0dc2201c4e",
     "src/piano64_hdmi.cst": "d2c1611f121049885ba67bdd5d3c4229c580f8f2fb930ac69cb48718d72b8673",
-    "src/piano64_hdmi.sdc": "390d6d3e57b76bcedbe3a546b83eb4e889dba23fb4d22e61d3405a57e6b19025",
+    "src/piano64_hdmi.sdc": "2b4274b4d2f001025688933d183401616798a5edb6aa6dd2a88b2f19b9c13ae1",
     "src/piano64_top.v": "608376cde454a8d8b9f4c63031f3b1902f3bbabfd261aa506d659d7780e09b6d",
     "src/pll50.v": "a3664953c91bf0697f63e400d75794fded2adca10dfb5d0dc35ccd558060a087",
     "src/pll_init.v": "3ef05a1ba92157d73e3c54ed9d589645508a4ae332d8bcf133a0457cc3e866c8",
@@ -186,6 +187,34 @@
     "build_full.tcl": "7daf620426fe751c805bf53592ae308a255cebc9d2a8ac1a2bc2e7e54bd3c5ca"
   },
   "regression": "tools/check_all.py --bt: all requested regressions passed; 66 PASS lines",
-  "ui": "13 real RTL 1280x720 snapshots; pixel-identical after timing fixes",
-  "hardware_validation": "Flash written, 100% readback verification and reload succeeded. Monitor, listening and real phone upload require board-side observation."
+  "ui": "13 real RTL 1280x720 snapshots; source fingerprints verified",
+  "hardware_validation": {
+    "sram_display": "User confirmed screen lit and pages normal with this exact image",
+    "flash": "Write, full readback verification and reset completed successfully",
+    "cold_boot_display": "Awaiting user confirmation after power cycle"
+  },
+  "withdrawn_previous_version": {
+    "commit": "0a06ec6",
+    "tag": "720p-btsd-flash-20261104",
+    "programming": {
+      "mode": "flash",
+      "verified": true,
+      "exit_code": 0,
+      "fs_sha256": "40eae3244d32002221ae4fb01b171498aa390aa252a7394f30fa4c8d499005d4",
+      "command": [
+        "./flash.sh",
+        "--ftdi-serial",
+        "2025030317",
+        "--write-flash",
+        "--verify",
+        "--reset",
+        "--quiet"
+      ],
+      "board_serial": "2025030317",
+      "video_mode": "720p60",
+      "time": "2026-11-04T03:47:56.721587+08:00"
+    },
+    "hardware_validation": "FAILED monitor validation: no HDMI signal; audio and LEDs normal. Same source-matched image loaded to SRAM gives same no-signal result. Flash content verified correctly; HDMI clock investigation in progress.",
+    "reason": "Dual-PLL image has no HDMI signal in both Flash and SRAM; replaced with board-confirmed single-PLL image. Analog clock cause not measured."
+  }
 }

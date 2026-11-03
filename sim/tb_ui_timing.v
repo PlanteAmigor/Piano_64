@@ -2,7 +2,12 @@
 `include "src/hdmi/ui_video_mode.vh"
 `default_nettype none
 module tb_ui_timing;
-    reg clk=0,resetn=0;always #3.367 clk=~clk;
+    reg clk=0,resetn=0;
+`ifdef UI_VIDEO_720P
+    always #6.667 clk=~clk;
+`else
+    always #3.367 clk=~clk;
+`endif
     hdmi_ui3_top dut(.CLK_SCOPE(clk),.clk(clk),.resetn(resetn),.BANDS(256'd0),.BANDS_TICK(1'b0),.UI_INFO(19'd0),
         .SONG_UI(384'd0),.SONG_ROLL(1024'd0),.SONG_UI_TOGGLE(1'b0),.COMP_AMP(512'd0),
         .SCOPE_SMP(16'sd0),.SCOPE_TOG(1'b0),.SCOPE_TRG(1'b0));
@@ -41,7 +46,7 @@ module tb_ui_timing;
         force dut.vcnt=VF;repeat(3)@(negedge clk);if(!dut.vsync)$fatal(1,"positive vertical sync");
         force dut.vcnt=VF+VS;repeat(3)@(negedge clk);if(dut.vsync)$fatal(1,"vertical sync end");
         release dut.vcnt;
-        $display("PASS native %0dx%0d 60Hz timing: %0dx%0d total, HS=%0d VS=%0d, logical coordinates, frame wrap, RGB/sync pipeline",HV,VV,HT,VT,HS,VS);$finish;
+        $display("PASS native %0dx%0d video timing: %0dx%0d total, HS=%0d VS=%0d, logical coordinates, frame wrap, RGB/sync pipeline",HV,VV,HT,VT,HS,VS);$finish;
     end
     initial begin #1000000;$fatal(1,"timing timeout");end
 endmodule

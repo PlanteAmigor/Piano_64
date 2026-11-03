@@ -5,7 +5,7 @@
 module tb_song_ui;
     parameter integer SHOT=0;
 `ifdef UI_VIDEO_720P
-    localparam WIDTH=1280,HEIGHT=720,VTOTAL=750,AUDIO_DIV=1520;
+    localparam WIDTH=1280,HEIGHT=720,VTOTAL=750,AUDIO_DIV=1535;
 `else
     localparam WIDTH=1920,HEIGHT=1080,VTOTAL=1125,AUDIO_DIV=3040;
 `endif
@@ -13,7 +13,7 @@ module tb_song_ui;
     reg clk=0,scope_clk=0,resetn=0,toggle=0;
     always #10 scope_clk=~scope_clk;
     `ifdef UI_VIDEO_720P
-    always #6.734 clk=~clk;
+    always #6.667 clk=~clk;
 `else
     always #3.367 clk=~clk;
 `endif

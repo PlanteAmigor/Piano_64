@@ -61,9 +61,8 @@ set_false_path -from [get_ports {UART_TX}]
 //  50 MHz -> PCLK = 148.5 MHz (297/100)
 //  50 MHz -> SER  = 742.5 MHz (297/20, 5 × PCLK)
 //==========================================================================
-create_generated_clock -name clk_hdmi_ref -source [get_ports {CLOCK_50}] -multiply_by 11 -divide_by 20 [get_pins {u_hdmi/u_pll/u_ref/PLL_inst/CLKOUT0}]
-create_generated_clock -name clk_pix -source [get_pins {u_hdmi/u_pll/u_ref/PLL_inst/CLKOUT0}] -multiply_by 27 -divide_by 10 [get_pins {u_hdmi/u_pll/u_pixel/PLL_inst/CLKOUT0}]
-create_generated_clock -name clk_ser -source [get_pins {u_hdmi/u_pll/u_ref/PLL_inst/CLKOUT0}] -multiply_by 27 -divide_by 2 [get_pins {u_hdmi/u_pll/u_pixel/PLL_inst/CLKOUT1}]
+create_generated_clock -name clk_pix -source [get_ports {CLOCK_50}] -multiply_by 3 -divide_by 2 [get_pins {u_hdmi/u_pll/u_pixel/PLL_inst/CLKOUT0}]
+create_generated_clock -name clk_ser -source [get_ports {CLOCK_50}] -multiply_by 15 -divide_by 2 [get_pins {u_hdmi/u_pll/u_pixel/PLL_inst/CLKOUT1}]
 
 // BANDS / BANDS_TICK 是 clk_sys -> clk_p 的慢变量跨域（详见 hdmi_spec_top.v），
 // 不按同步路径检查
