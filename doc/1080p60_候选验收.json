@@ -46,9 +46,10 @@
   "reverb_samples": 120000,
   "reverb_saturation_cases": 245632,
   "board_programming": "SRAM loaded successfully; openFPGALoader exit 0",
-  "board_display_verified": null,
+  "board_display_verified": false,
   "flash_changed": false,
   "fallback_tag": "720p-flash-coldboot-ok-20261104",
   "fallback_fs_sha256": "7ec417b53ac864cedb204301f05d1f85b0a656a2c812bb86e7ae63e6755717c5",
-  "programmed_fs_sha256": "83d85f4be99228dac00f6c039701e11602c0c1136c1b5fd9ad0c2111958d0d80"
+  "programmed_fs_sha256": "83d85f4be99228dac00f6c039701e11602c0c1136c1b5fd9ad0c2111958d0d80",
+  "board_feedback": "No HDMI signal; withdrawn from board use; 720p restored"
 }
