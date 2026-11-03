@@ -133,7 +133,7 @@ Flash 固化并读回校验：`./flash.sh --ftdi-serial 2025030317 --write-flash
     for p in sorted(folder.rglob('*')):
         if p.is_file():checks.append(sha(p)+'  '+str(p.relative_to(folder)))
     (folder/'SHA256SUMS').write_text('\n'.join(checks)+'\n')
-    archive=folder.with_suffix('.zip')
+    archive=Path(str(folder)+'.zip')
     with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as z:
         for p in sorted(folder.rglob('*')):
             if p.is_file():z.write(p,folder.name+'/'+str(p.relative_to(folder)))

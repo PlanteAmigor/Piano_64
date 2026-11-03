@@ -16,7 +16,8 @@
     "board_serial": "2025030317",
     "video_mode": "720p60.606",
     "monitor_confirmation": "User confirmed screen lit and pages normal after loading this source-matched image to SRAM",
-    "time": "2026-11-04T04:15:29.282779+08:00"
+    "time": "2026-11-04T04:15:29.282779+08:00",
+    "cold_boot_confirmation": "User confirmed all three pages display normally after power cycle"
   },
   "timing": {
     "video_mode": "720p60.606",
@@ -191,7 +192,7 @@
   "hardware_validation": {
     "sram_display": "User confirmed screen lit and pages normal with this exact image",
     "flash": "Write, full readback verification and reset completed successfully",
-    "cold_boot_display": "Awaiting user confirmation after power cycle"
+    "cold_boot_display": "User confirmed all three pages display normally after power cycle"
   },
   "withdrawn_previous_version": {
     "commit": "0a06ec6",
