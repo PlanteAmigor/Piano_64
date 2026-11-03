@@ -78,6 +78,8 @@ module piano64_top #(
     wire [32*8-1:0] spec_bands;
     wire            spec_tick;
     wire [18:0]     ui_info;
+    wire [255:0] song_ui;
+    wire song_ui_toggle, song_ui_ack;
     wire [64*8-1:0] comp_amp;
     wire signed [15:0] scope_smp;
     wire               scope_tog;
@@ -130,6 +132,7 @@ module piano64_top #(
         .SPEC_BANDS (spec_bands),
         .SPEC_TICK  (spec_tick),
         .UI_INFO    (ui_info),
+        .SONG_UI(song_ui),.SONG_UI_TOGGLE(song_ui_toggle),.SONG_UI_ACK(song_ui_ack),
         .COMP_AMP   (comp_amp),
         .SCOPE_SMP  (scope_smp),
         .SCOPE_TOG  (scope_tog),
@@ -148,6 +151,7 @@ module piano64_top #(
         .BANDS        (spec_bands),
         .BANDS_TICK   (spec_tick),
         .UI_INFO      (ui_info),
+        .SONG_UI(song_ui),.SONG_UI_TOGGLE(song_ui_toggle),.SONG_UI_ACK(song_ui_ack),
         .COMP_AMP     (comp_amp),
         .SCOPE_SMP    (scope_smp),
         .SCOPE_TOG    (scope_tog),

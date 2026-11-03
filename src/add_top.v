@@ -89,6 +89,9 @@ module add_top #(
     //    [17:10] transpose 有符号半音数（-24..+12）
     //    全部是「按键级」慢变量（去抖后 >10 ms 才变），渲染侧打两拍同步即可。
     output wire [18:0] UI_INFO,
+    output reg [255:0] SONG_UI,
+    output reg SONG_UI_TOGGLE,
+    input wire SONG_UI_ACK,
 
     // ── 「COMPONENT 64」柱图（最近触发声部的 64 根分量柱）─────────────
     //    每根 = 8 位幅度（0..255）。128 个正弦分量两两合并取大值 →
@@ -192,6 +195,53 @@ module add_top #(
 
     // ui_mode 的具体更新放到下面 KEY_AUX 扫描之后（要用 aux_release[1]）
     reg [1:0] ui_mode;
+    wire guide_mode = ui_mode == MODE_GUIDE;
+    wire [4:0] sd_song_count, song_count_ui;
+    wire [127:0] sd_song_ids, song_ids_ui;
+    wire sd_song_catalog, sd_song_busy, sd_song_begin, sd_song_end, sd_song_error;
+    wire [7:0] sd_song_byte;
+    wire sd_song_valid, song_request;
+    wire [3:0] song_selected;
+    wire [55:0] song_note;
+    wire [7:0] song_trig, song_gate;
+    wire [63:0] song_vel;
+    wire song_playing, song_teaching, song_valid, song_catalog_ready;
+    wire [1:0] song_timbre, song_countdown;
+    wire [2:0] song_menu;
+    wire [6:0] song_expected, song_matched;
+    wire [31:0] song_position;
+    wire [15:0] song_wrong, song_missed;
+    wire [7:0] song_error;
+    song_system u_song (
+        .clk(clk_sys),.clk_sd(CLOCK_50),.rst_n(engine_rst_n),.guide(guide_mode),
+        .next_state(r1_state[8]),.confirm_state(r2_state[8]),
+        .key_press(note_key_press[6:0]),.key_state(note_key_state[6:0]),
+        .sd_count(sd_song_count),.sd_ids(sd_song_ids),.sd_catalog_done(sd_song_catalog),
+        .sd_begin(sd_song_begin),.sd_end(sd_song_end),.sd_error(sd_song_error),
+        .sd_byte(sd_song_byte),.sd_byte_valid(sd_song_valid),
+        .request_toggle(song_request),.selected(song_selected),
+        .v_note(song_note),.v_trig(song_trig),.v_gate(song_gate),.v_vel(song_vel),
+        .playing(song_playing),.timbre(song_timbre),.score_valid(song_valid),
+        .menu_state(song_menu),.teaching(song_teaching),.expected_keys(song_expected),
+        .matched_keys(song_matched),.countdown(song_countdown),.position_ms(song_position),
+        .wrong_count(song_wrong),.missed_count(song_missed),.error_code(song_error),
+        .file_count(song_count_ui),.file_ids(song_ids_ui),.catalog_ready(song_catalog_ready)
+    );
+    // Mailbox handshake: hold the entire status snapshot until HDMI ACKs it.
+    reg [1:0] song_ack_sync;
+    always @(posedge clk_sys) begin
+        if(!engine_rst_n) begin SONG_UI<=0; SONG_UI_TOGGLE<=0; song_ack_sync<=0; end
+        else begin
+            song_ack_sync <= {song_ack_sync[0],SONG_UI_ACK};
+            if(song_ack_sync[1]==SONG_UI_TOGGLE) begin
+                SONG_UI <= {23'd0,song_catalog_ready,song_timbre,song_missed,song_wrong,song_position,
+                    song_error,song_matched,song_expected,song_countdown,
+                    song_playing,song_teaching,song_menu,song_selected,song_count_ui,song_ids_ui};
+                SONG_UI_TOGGLE<=~SONG_UI_TOGGLE;
+            end
+        end
+    end
+
 
     //======================================================================
     //  ★ 演奏键盘改为【单触点】扫描（2026-11-01 需求变更）
@@ -355,11 +405,12 @@ module add_top #(
     //  音色：0 = 钢琴（白灯）  1 = 古筝（青灯）
     //======================================================================
     //  0 = 钢琴（白灯）  1 = 古筝（青灯）  2 = 唄呐（橙灯）  3 = 笛子（紫灯）
-    reg [1:0] timbre_r;
+    reg [1:0] manual_timbre_r;
+    wire [1:0] timbre_r = guide_mode && song_valid ? song_timbre : manual_timbre_r;
 
     always @(posedge clk_sys) begin
-        if (!engine_rst_n)          timbre_r <= 2'd0;
-        else if (timbre_toggle)     timbre_r <= (timbre_r == 2'd3) ? 2'd0 : timbre_r + 2'd1;
+        if (!engine_rst_n)          manual_timbre_r <= 2'd0;
+        else if (timbre_toggle && !guide_mode) manual_timbre_r <= manual_timbre_r + 2'd1;
     end
 
     //======================================================================
@@ -454,8 +505,8 @@ module add_top #(
 
     reg signed [7:0] transpose;
 
-    wire tr_up_fire   = engine_rst_n && r1_press[8];
-    wire tr_down_fire = engine_rst_n && r2_press[8];
+    wire tr_up_fire   = engine_rst_n && !guide_mode && r1_press[8];
+    wire tr_down_fire = engine_rst_n && !guide_mode && r2_press[8];
 
     always @(posedge clk_sys) begin
         if (!engine_rst_n) begin
@@ -518,7 +569,14 @@ module add_top #(
     //   add_voice8 里 vel_gain 是【实时目标值】（ramp 每次 +2/−1 向它收敛），
     //   不是按下的瞬间锁存，所以这里连续覆盖就能当「音量踏瓣」用：
     //   按住琴键不动、手抬起来 → 声音渐弱；压下去 → 渐强。
-    wire [NVOICE*8-1:0] vel_eng = hand_on ? {NVOICE{opt_vel}} : {NVOICE{8'd0}};
+    wire [NVOICE*8-1:0] song_vel_expr;
+    genvar sg;
+    generate for(sg=0;sg<NVOICE;sg=sg+1) begin:g_song_vel
+        wire [15:0] vscale = song_vel[sg*8+:8] * opt_vel;
+        assign song_vel_expr[sg*8+:8] = song_teaching && hand_on ? vscale[15:8] : song_vel[sg*8+:8];
+    end endgenerate
+    wire [NVOICE*8-1:0] vel_eng = guide_mode ? song_vel_expr :
+        hand_on ? {NVOICE{opt_vel}} : {NVOICE{8'd0}};
 
     //======================================================================
     //  ★ 每个乐器独立的按键映射（键名位置固定，但音高与可用键不同）
@@ -559,7 +617,7 @@ module add_top #(
         .clk      (clk_sys),
         .rst_n    (engine_rst_n),
 
-        .key_state(note_key_state),
+        .key_state(guide_mode ? 8'd0 : note_key_state),
         .key_enable(t_key_en),
         .note_base (t_note_base),
         .key_step  (t_key_step),
@@ -596,9 +654,9 @@ module add_top #(
     wire aut_gate = AUTO_TEST && (aut_t >= AT_TRIG) && (aut_t < AT_OFF);
     wire aut_any  = aut_trig || aut_gate;
 
-    wire [NVOICE*7-1:0] eng_note = aut_any ? {NVOICE{7'd60}} : k_note;
-    wire [NVOICE-1:0]   eng_trig = aut_trig ? {{(NVOICE-1){1'b0}}, 1'b1} : v_trig;
-    wire [NVOICE-1:0]   eng_gate = aut_gate ? {{(NVOICE-1){1'b0}}, 1'b1} : v_gate;
+    wire [NVOICE*7-1:0] eng_note = guide_mode ? song_note : aut_any ? {NVOICE{7'd60}} : k_note;
+    wire [NVOICE-1:0]   eng_trig = guide_mode ? song_trig : aut_trig ? {{(NVOICE-1){1'b0}}, 1'b1} : v_trig;
+    wire [NVOICE-1:0]   eng_gate = guide_mode ? song_gate : aut_gate ? {{(NVOICE-1){1'b0}}, 1'b1} : v_gate;
 
     //======================================================================
     //  加法合成引擎：128 分量/声部，8 声部共用一份参数 ROM
@@ -661,10 +719,10 @@ module add_top #(
         .v_vel      (vel_eng),           // ★ 光学力度优先，否则用键盘力度
         // ★★ 滑音只给古筝（技法表：钢琴没有滑音）。
         //    二者共用同一个 add_engine8 实例，所以在顶层按音色选。
-        .bend_q14   (is_gz ? opt_bend_q14 : 16'd16384),
-        .vib_en     (opt_vib_en && is_gz),   // G3 揉弦（古筝）
-        .art_en     (opt_art  && is_gz),     // G7 顿音
-        .stop_hold  (opt_stop && is_gz),     // G8 急停
+        .bend_q14   (is_gz && (!guide_mode || hand_on) ? opt_bend_q14 : 16'd16384),
+        .vib_en     (opt_vib_en && is_gz && (!guide_mode || hand_on)),   // G3 揉弦（古筝）
+        .art_en     (opt_art  && is_gz && (!guide_mode || hand_on)),     // G7 顿音
+        .stop_hold  (opt_stop && is_gz && (!guide_mode || hand_on)),     // G8 急停
         // ★ 延音：由效果器档位控制（SUSTAIN 单独一档，也可与 DELAY 叠加）——
         //   松键后按每个音自己的自然衰减率继续响，而不是 0.30 s 一刀煞掉。
         .sustain    (fx_sus_on),
@@ -727,7 +785,7 @@ module add_top #(
     // ★★ 关键：只有谐波类音色下才允许触发取表 DMA！
     //   之前写成 |v_trig，导致钢琴模式下按一次键，唄呐引擎也会去抢 DDR，
     //   钢琴的取表被挤掉 → 切回钢琴也没声音（实测整机哑掉）。
-    wire sua_trig = is_harm && |v_trig;
+    wire sua_trig = is_harm && |eng_trig;
 
     // ★★ gate / 力度【不能】走 note_alloc 的声部！
     //    note_alloc 是 8 声部轮转分配，同一个键每次可能落在不同声部；
@@ -737,7 +795,7 @@ module add_top #(
     //    钢琴/古筝不受影响：它们每个声部有自己的 v_gate[g]/v_vel[g]，
     //    声部与按键是一一对应的，所以那边一直正常。
     //    唢呐改成直接看【8 个音源键】，与声部分配彻底解耦。
-    wire sua_gate = is_harm && (|note_key_state);
+    wire sua_gate = is_harm && (guide_mode ? song_gate[0] : (|note_key_state));
 
     // 按下沿 → 按【键号】锁存力度（不是声部号）
     //   直接复用 note_key_press（= r1_press[7:0]，已含重触发屏蔽）
@@ -754,7 +812,7 @@ module add_top #(
     always @(*) begin
         sua_note = harm_note_lo;
         for (si = 0; si < NVOICE; si = si + 1)
-            if (v_trig[si]) sua_note = eng_note[si*7 +: 7];
+            if (eng_trig[si]) sua_note = eng_note[si*7 +: 7];
     end
 
 
@@ -762,6 +820,7 @@ module add_top #(
     //   只用 0 号声部：v_trig 只有 bit0 会动，其余声部永不激活。
     //   表缓冲是【共享的一份】，所以多留 3 个空声部不额外占 BSRAM。
     add_engine_harm #(
+        .SCORE_VELOCITY(1),
         .NVOICE    (4),
         .MIX_SHIFT (2),      // 谐波引擎满刻度远高于钢琴，先 ÷4
         .SOFT      (1)
@@ -773,21 +832,22 @@ module add_top #(
         .note_hi    (harm_note_hi),
         .inf_base   (harm_inf_base),
         .desc_base  (harm_desc),
+        .score_mode (guide_mode),
         .v_note     ({21'd0, sua_note}),
         .v_trig     ({3'b000, sua_trig}),
         .v_gate     ({3'b000, sua_gate}),
-        .v_vel      ({{24{1'b0}}, sua_vel}),
+        .v_vel      ({{24{1'b0}}, (guide_mode ? song_vel_expr[7:0] : sua_vel)}),
         // ★ 延音：与钢琴/古筝共用同一个效果器档位（SUSTAIN / DELAY+SUSTAIN）
         .sustain    (fx_sus_on),
         // ★ 光学前端（步骤 1：先接常量，保证与改动前逐位等价）
-        .bend_q14   (opt_bend_q14),
-        .trem_en    (opt_trem_en && is_suona),
-        .vib_pitch  (opt_vib_en && is_suona),   // G3 颤音（音高） 唢呐
-        .vib_am     (opt_vib_en && is_dizi),    // G3 颤音（幅度） 笛子
-        .art_en     (opt_art  && is_harm),      // G7 顿音/吐音
-        .stop_hold  (opt_stop && is_harm),      // G8 急停
-        .hand_on    (opt_hand),                 // 有手才响
-        .opt_en     (opt_en),
+        .bend_q14   (guide_mode && !hand_on ? 16'd16384 : opt_bend_q14),
+        .trem_en    (opt_trem_en && is_suona && (!guide_mode || hand_on)),
+        .vib_pitch  (opt_vib_en && is_suona && (!guide_mode || hand_on)),   // G3 颤音（音高） 唢呐
+        .vib_am     (opt_vib_en && is_dizi && (!guide_mode || hand_on)),    // G3 颤音（幅度） 笛子
+        .art_en     (opt_art  && is_harm && (!guide_mode || hand_on)),      // G7 顿音/吐音
+        .stop_hold  (opt_stop && is_harm && (!guide_mode || hand_on)),      // G8 急停
+        .hand_on    (guide_mode ? 1'b1 : opt_hand),                 // 有手才响
+        .opt_en     (guide_mode ? 1'b0 : opt_en),
         .opt_vel    (opt_vel),
         .sample_tick(tick),
         .sample_l   (sua_l),
@@ -1242,8 +1302,8 @@ module add_top #(
     reg        led_rst_s0,  led_rst_s1;     // 复位
 
     always @(posedge CLOCK_50) begin
-        led_kst_s0  <= note_key_state;
-        led_kvel_s0 <= note_key_vel;
+        led_kst_s0  <= guide_mode ? {1'b0,song_expected} : note_key_state;
+        led_kvel_s0 <= guide_mode ? {8{8'd180}} : note_key_vel;
         led_tmb_s0  <= timbre_r;
         led_fx_s0   <= fx_r;
         led_trl_s0  <= tr_led_on;
@@ -1415,6 +1475,10 @@ module add_top #(
         .nfiles      (ld_nfiles),
         .file_no     (ld_fileno),
 
+        .song_request(song_request),.song_request_index(song_selected),
+        .song_file_count(sd_song_count),.song_ids(sd_song_ids),.song_catalog_done(sd_song_catalog),
+        .song_busy(sd_song_busy),.song_byte(sd_song_byte),.song_byte_valid(sd_song_valid),
+        .song_begin(sd_song_begin),.song_end(sd_song_end),.song_error(sd_song_error),
         .uart_txd    (ld_uart_txd)
     );
 

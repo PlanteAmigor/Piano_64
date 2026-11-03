@@ -47,7 +47,7 @@ module sd_ddr_loader #(
     // ★ 版本号：每次改加载器就 +1，横幅会打出来。
     //   板子经常“配置假死”（烧了但 FPGA 还跑旧码流）——
     //   靠这个数立刻能分辨“代码没生效”还是“代码生效但逻辑不对”。
-    parameter integer VER       = 8,
+    parameter integer VER       = 9,
     // ★ DDR 命令地址步长（每个 256 位 beat 前进多少个 addr 单位）
     //   ★★ 实测 + 参数推导确定：必须 = 8 ★★
     //   gwmc_param.v: nCK_PER_CLK=4, DQ_WIDTH=32, APP_DATA_WIDTH=256,
@@ -101,7 +101,20 @@ module sd_ddr_loader #(
     output reg  [11:0]  file_no,
 
     // ── 串口（clk100 域）──
-    output wire         uart_txd
+    output wire         uart_txd,
+    // Song catalog/read interface, entirely in clk50. Request is a toggle;
+    // request_index is held stable until transfer_end changes.
+    input wire song_request,
+    input wire [3:0] song_request_index,
+    output reg [4:0] song_file_count,
+    output reg [127:0] song_ids,
+    output reg song_catalog_done,
+    output reg song_busy,
+    output wire [7:0] song_byte,
+    output wire song_byte_valid,
+    output reg song_begin,
+    output reg song_end,
+    output reg song_error
 );
 
 //==========================================================================
@@ -119,13 +132,16 @@ wire rst100_go = rst100 | ~calib_done;
 //==========================================================================
 //  第 1 部分：50 MHz 域 —— SD 栈 + FAT 状态机 + 入 FIFO
 //==========================================================================
-localparam [2:0]
+localparam [3:0]
     P_BOOT   = 3'd0,
     P_LS_RST = 3'd1,
     P_LS_RUN = 3'd2,
     P_RD_RST = 3'd3,
     P_RD_RUN = 3'd4,
-    P_DONE   = 3'd5;
+    P_DONE   = 3'd5,
+    P_SLS_RST = 3'd6, P_SLS_RUN = 3'd7,
+    P_SRD_RST = 4'd8, P_SRD_RUN = 4'd9;
+
 
 localparam integer BOOTD50 = CLK50_HZ / 1000 * BOOT_MS;
 localparam [31:0]  TMO_LS50 = 32'd30_000_000;    // 列目录超时 0.6 s
@@ -180,7 +196,7 @@ wire is_p64 = (lname[0] == 8'h50) && (lname[1] == 8'h36) && (lname[2] == 8'h34) 
 // 本拍（list_en 与命中同拍）就算找到 —— 用于规避非阻塞读后写
 wire found_hit = ln_en && is_p64 && (p_file_no == 12'hFFF);
 
-reg [2:0]  pst;
+reg [3:0]  pst;
 reg [31:0] pcnt;
 reg [11:0] p_nfiles, p_file_no;
 reg        p_found;
@@ -214,9 +230,25 @@ sd_async_fifo #(.AW(8)) u_fifo (
     .rempty(rempty)
 );
 
+// Reuse the proven SD host after P64 verification. Song traffic never
+// asserts win and therefore cannot enter the DDR image FIFO.
+reg [11:0] song_numbers[0:15];
+reg [1:0] load_ok_s, request_s;
+reg request_seen;
+// Reader returns the full filename: SONGxx.BIN is ten characters.
+wire is_song_bin = lnamelen == 10 &&
+    lname[0]=="S" && lname[1]=="O" && lname[2]=="N" && lname[3]=="G" &&
+    lname[4]>="0" && lname[4]<="9" && lname[5]>="0" && lname[5]<="9" &&
+    lname[6]=="." && lname[7]=="B" && lname[8]=="I" && lname[9]=="N";
+assign song_byte = o_byte;
+assign song_byte_valid = (pst == P_SRD_RUN) && o_en;
+
 always @(posedge clk50) begin
     if (rst50) begin
         pst       <= P_BOOT;
+        load_ok_s <= 0; request_s <= 0; request_seen <= 0;
+        song_file_count <= 0; song_ids <= 0; song_catalog_done <= 0;
+        song_busy <= 0; song_begin <= 0; song_end <= 0; song_error <= 0;
         pcnt      <= 32'd0;
         f_rstn    <= 1'b0;
         f_op      <= 1'b0;
@@ -232,6 +264,8 @@ always @(posedge clk50) begin
     end
     else begin
         win <= 1'b0;
+        load_ok_s <= {load_ok_s[0], load_ok};
+        request_s <= {request_s[0], song_request};
         rdy_s <= {rdy_s[0], rd_ready};    // 100MHz 就绪信号同步进来
 
         case (pst)
@@ -316,6 +350,59 @@ always @(posedge clk50) begin
 
         P_DONE: begin
             f_rstn <= 1'b1;
+            if (load_ok_s[1] && !song_catalog_done) begin
+                pcnt <= 0;
+                song_file_count <= 0;
+                song_ids <= 0;
+                pst <= P_SLS_RST;
+            end else if (song_catalog_done && request_s[1] != request_seen) begin
+                request_seen <= request_s[1];
+                song_error <= 0;
+                song_begin <= ~song_begin;
+                if ({1'b0,song_request_index} < song_file_count) begin
+                    f_num <= song_numbers[song_request_index];
+                    song_busy <= 1;
+                    pcnt <= 0;
+                    pst <= P_SRD_RST;
+                end else begin
+                    song_error <= 1;
+                    song_end <= ~song_end;
+                end
+            end
+        end
+        P_SLS_RST: begin
+            f_rstn <= 0; f_op <= 0;
+            if (pcnt == 31) begin pcnt <= 0; pst <= P_SLS_RUN; end
+            else pcnt <= pcnt + 1'b1;
+        end
+        P_SLS_RUN: begin
+            f_rstn <= 1; f_op <= 0;
+            pcnt <= pcnt + 1'b1;
+            if (ln_en && is_song_bin && song_file_count < 16) begin
+                song_numbers[song_file_count[3:0]] <= lfilenum;
+                song_ids[song_file_count[3:0]*8 +: 8] <= {lname[4][3:0],lname[5][3:0]};
+                song_file_count <= song_file_count + 1'b1;
+            end
+            if (f_done != 0 || pcnt >= TMO_LS50) begin
+                song_catalog_done <= 1;
+                song_error <= (pcnt >= TMO_LS50);
+                pst <= P_DONE;
+            end
+        end
+        P_SRD_RST: begin
+            f_rstn <= 0; f_op <= 1;
+            if (pcnt == 31) begin pcnt <= 0; pst <= P_SRD_RUN; end
+            else pcnt <= pcnt + 1'b1;
+        end
+        P_SRD_RUN: begin
+            f_rstn <= 1; f_op <= 1;
+            pcnt <= pcnt + 1'b1;
+            if (f_done != 0 || pcnt >= TMO_RD50) begin
+                song_error <= !f_found || pcnt >= TMO_RD50;
+                song_busy <= 0;
+                song_end <= ~song_end;
+                pst <= P_DONE;
+            end
         end
 
         default: pst <= P_BOOT;
@@ -493,6 +580,28 @@ always @(posedge clk100) begin
 end
 wire rdv = rdv_d;
 
+// Pipelined checksum tree: one 32-bit adder per stage at 100 MHz.
+reg [31:0] chk_pair[0:3], chk_half[0:1], chk_word;
+reg [2:0] chk_valid;
+reg verify_drained, verify_match, verify_timeout;
+integer ci;
+always @(posedge clk100) begin
+    if(rst100) begin
+        chk_valid<=0;verify_drained<=0;verify_match<=0;verify_timeout<=0;
+        chk_word<=0;for(ci=0;ci<4;ci=ci+1) chk_pair[ci]<=0;
+        chk_half[0]<=0;chk_half[1]<=0;
+    end else begin
+        for(ci=0;ci<4;ci=ci+1)
+            chk_pair[ci]<=rd_v[ci*64+:32]+rd_v[ci*64+32+:32];
+        chk_half[0]<=chk_pair[0]+chk_pair[1];chk_half[1]<=chk_pair[2]+chk_pair[3];
+        chk_word<=chk_half[0]+chk_half[1];
+        chk_valid<={chk_valid[1:0],rdv && rcnt!=0 && st==S_V_RD};
+        verify_drained<=st==S_V_RD && rcnt!=0 && rem_r==0 && !rd_cmd_req && !rdv && chk_valid==0;
+        verify_match<=(chk_v==hdr_chk) && (hdr_total==nwords);
+        verify_timeout<=cnt>=32'd400_000_000;
+    end
+end
+
 always @(posedge clk100) begin
     // ★ 这里只用 rst100（不门控 DDR 校准），否则校准不过就连横幅都发不出来
     if (rst100) begin
@@ -630,7 +739,7 @@ always @(posedge clk100) begin
                 hdr_total <= rd_v[95:64];
                 hdr_chk   <= rd_v[127:96];
             end
-            else chk_v <= chk_v + sum256(rd_v);
+
             if (rcnt == 32'd1) begin
                 dbg_d0 <= rd_v[31:0];
                 dbg_d1 <= rd_v[63:32];
@@ -639,6 +748,8 @@ always @(posedge clk100) begin
             if (rem_r != 32'd0) rem_r <= rem_r - 32'd1;   // ★ 防下溢
             if (ostd != 6'd0) ostd <= ostd - 6'd1;
         end
+
+        if(chk_valid[2]) chk_v<=chk_v+chk_word;
 
         //============================================ 主流程
         case (st)
@@ -784,12 +895,12 @@ always @(posedge clk100) begin
                     end
                 end
 
-                if ((rem_r == 32'd0) && !rd_cmd_req) begin
-                    v_ok      <= (chk_v == hdr_chk) && (hdr_total == nwords);
+                if (verify_drained) begin
+                    v_ok      <= verify_match;
                     load_done <= 1'b1;
                     st        <= S_REPORT;
                 end
-                else if (cnt >= 32'd400_000_000) begin
+                else if (verify_timeout) begin
                     v_ok      <= 1'b0;
                     load_done <= 1'b1;
                     st        <= S_REPORT;

@@ -62,3 +62,6 @@ ddr_bringup/impl/
 # 仿真 dump（几 MB，不入库）
 harm_hw_dump.txt
 *.vcd
+
+# Local verification and synthesis snapshots
+work/

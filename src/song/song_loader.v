@@ -53,7 +53,8 @@ module song_loader #(
     output reg  [1:0]   song_timbre,     // 0钢琴 1古筝 2唢呐 3笛子
     output reg  [7:0]   err_code,        // 0=OK，含义见文件末尾
     output reg          busy,            // 正在装填
-    output wire         frame_hit        // 调试：收到一个完整帧的脉冲
+    output wire         frame_hit,
+    output wire         stream_idle
 );
 
     //======================================================================
@@ -108,9 +109,11 @@ module song_loader #(
     wire [7:0]  payload_data, frame_error, frame_type, frame_seq;
     wire [15:0] frame_length, frame_crc;
     wire        frame_valid;
+    wire        frame_idle;
     reg         consume;
 
     assign frame_hit = frame_valid;
+    assign stream_idle = fifo_empty && !pend && frame_idle && st == S_IDLE;
 
     bt_frame_rx #(
         .CLK_HZ     (CLK_HZ),
@@ -130,6 +133,7 @@ module song_loader #(
         .seq         (frame_seq),
         .length      (frame_length),
         .frame_crc   (frame_crc)
+        ,.idle       (frame_idle)
     );
 
     //======================================================================
@@ -156,7 +160,7 @@ module song_loader #(
     reg [5:0]  event_index;     // 本帧内第几个事件
     reg [5:0]  frame_events;    // 本帧事件数
     reg [31:0] previous_start;  // 上一个事件的 start_ms（查排序）
-    reg  [10:0] wptr;            // 内部写计数 = 已写入事件数
+    reg  [15:0] wptr;            // Count includes 2048; address alone is 11 bits.
     reg  [10:0] waddr_q;         // 实际写地址（延迟一拍）
     assign ram_waddr = waddr_q;
     reg        uploading;       // BEGIN 已收到，正在等 DATA
@@ -233,6 +237,8 @@ module song_loader #(
                 header_bytes <= (frame_length > 16'd8) ? 4'd8 : frame_length[3:0];
                 if (frame_error != 8'd0) begin
                     err_code <= frame_error;
+                    uploading <= 1'b0;
+                    song_valid <= 1'b0;
                     st       <= S_DONE;
                 end
                 else if (frame_length == 16'd0) begin
@@ -292,10 +298,16 @@ module song_loader #(
                         err_code <= 8'd2;
                         st       <= S_DONE;
                     end
-                    else if (header[15:0] != {5'd0, wptr}) begin
+                    else if (header[15:0] != wptr) begin
                         // offset 必须等于已写入的事件数（wptr 就是计数器）
                         err_code <= 8'd7;
                         st       <= S_DONE;
+                    end
+                    else if (wptr + ((frame_length - 16'd2) >> 3) > song_count ||
+                             wptr + ((frame_length - 16'd2) >> 3) > MAX_EVENTS) begin
+                        err_code <= 8'd4;
+                        uploading <= 1'b0;
+                        st <= S_DONE;
                     end
                     else begin
                         frame_events <= (frame_length - 16'd2) >> 3;
@@ -311,7 +323,11 @@ module song_loader #(
                 8'h03: begin
                     if (frame_length != 16'd2)                               err_code <= 8'd2;
                     else if (!uploading ||
-                             header[15:0] != song_count)                      err_code <= 8'd3;
+                             header[15:0] != song_count || wptr != song_count) begin
+                        err_code <= 8'd3;
+                        uploading <= 1'b0;
+                        song_valid <= 1'b0;
+                    end
                     else begin
                         uploading  <= 1'b0;
                         song_valid <= 1'b1;                      // ★ 这一刻曲谱才算可用
@@ -356,8 +372,8 @@ module song_loader #(
                 end
                 else begin
                     ram_we         <= 1'b1;
-                    waddr_q        <= wptr;                  // 写【当前】地址
-                    wptr           <= wptr + 11'd1;          // 指针后移
+                    waddr_q        <= wptr[10:0];
+                    wptr           <= wptr + 16'd1;
                     ram_wdata      <= event_word;
                     previous_start <= ev_start;
                     if (chosen >= 0) end_ms[chosen] <= ev_end[31:0];
@@ -391,6 +407,22 @@ module song_loader #(
             endcase
 
             busy <= (st != S_IDLE) || frame_valid;
+            // A file is one transaction. Preserve its first diagnostic until
+            // the receiver resets us for the next file, even if END follows.
+            if (err_code != 0) begin
+                err_code <= err_code;
+                uploading <= 0;
+                song_valid <= 0;
+                ram_we <= 0;
+            end
+            // A transport error invalidates the complete upload, including
+            // frames still buffered after the fault. Reset before retrying.
+            if (byte_error || fifo_ovf) begin
+                uploading <= 1'b0;
+                song_valid <= 1'b0;
+                err_code <= 8'd8;
+                ram_we <= 1'b0;
+            end
         end
     end
 

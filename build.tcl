@@ -40,6 +40,11 @@ add_file src/sd/uart_tx.v
 add_file src/sd/sd_async_fifo.v
 # ── SD → DDR3 加载器 ──
 add_file src/sd_ddr_loader.v
+add_file src/song/bt_frame_rx.v
+add_file src/song/bt_song_player.v
+add_file src/song/song_fifo.v
+add_file src/song/song_loader.v
+add_file src/song/song_system.v
 
 add_file src/piano64.cst
 add_file src/piano64.sdc

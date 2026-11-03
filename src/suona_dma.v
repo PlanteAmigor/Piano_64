@@ -108,15 +108,8 @@ module suona_dma #(
 
     always @(*) begin
         elem32 = beat[31:0]; elem16 = beat[15:0]; elem8 = beat[7:0];
-        if (seg == 4'd0 || seg == 4'd1 || seg == 4'd7) begin
-            elem32 = beat[ (beat_cnt[2:0] * 32) +: 32 ];
-        end
-        else if (seg == 4'd2 || seg == 4'd5 || seg == 4'd6) begin
-            elem16 = beat[ (beat_cnt[3:0] * 16) +: 16 ];
-        end
-        else begin
-            elem8  = beat[ (beat_cnt[4:0] * 8)  +: 8  ];
-        end
+        // Consume the low element then shift. Avoid a beat_cnt driven
+        // 16:1/32:1 mux on the 100 MHz memory write-data path.
     end
 
     // ── 状态机 ──────────────────────────────────────────────────────
@@ -282,6 +275,9 @@ module suona_dma #(
 
                 //──────────────────────────────────────────────────
                 S_WR: begin
+                    if (seg == 4'd0 || seg == 4'd1 || seg == 4'd7) beat <= beat >> 32;
+                    else if (seg == 4'd2 || seg == 4'd5 || seg == 4'd6) beat <= beat >> 16;
+                    else beat <= beat >> 8;
                     // 写一个元素
                     case (seg)
                         4'd0: begin ab_we <= 1'b1; ab_a <= wptr[5:0]; ab_d <= elem32; end

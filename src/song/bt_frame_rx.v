@@ -5,11 +5,13 @@ module bt_frame_rx #(parameter integer CLK_HZ=50000000, TIMEOUT_MS=2000)(
     input wire byte_valid, byte_error, consume,
     input wire [8:0] payload_addr, output wire [7:0] payload_data,
     output reg valid, output reg [7:0] error_code, frame_type, seq,
-    output reg [15:0] length, frame_crc
+    output reg [15:0] length, frame_crc,
+    output wire idle
 );
     reg [7:0] payload[0:257];
     assign payload_data=payload[payload_addr];
     reg [3:0] state;
+    assign idle = state == 0 && !valid;
     reg [8:0] index;
     reg [15:0] crc;
     reg [7:0] crc_low, version;

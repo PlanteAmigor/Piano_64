@@ -8,7 +8,7 @@
 //  三个页面
 //    page 0 主页面  状态栏 + 32 段频谱 + 64 分量高度(占位) + 李萨如(占位) + 信息框
 //    page 1 测试    满幅 32 段频谱（8 路纯正弦，频谱上能数出 8 个独立峰）
-//    page 2 教学    骨架：8 条轨道 + 判定线 + "PENDING"
+//    page 2 教学    选歌 / 自动演奏 / 跟弹判定与倒计时
 //
 //  为什么不用帧缓冲
 //    逐像素组合计算。75 MHz 像素时钟 → 每像素 13.3 ns。
@@ -53,6 +53,9 @@ module hdmi_ui3_top (
     // ── 来自 add_top 的状态总线（clk_sys 域，慢变量）─────────────────
     //    [1:0] ui_mode  [3:2] timbre  [6:4] fx  [18:11] transpose
     input  wire [18:0]     UI_INFO,
+    input wire [255:0] SONG_UI,
+    input wire SONG_UI_TOGGLE,
+    output reg SONG_UI_ACK,
 
     // ── COMPONENT 64：最近触发声部的 64 根分量柱高度 ────────────────
     input  wire [64*8-1:0] COMP_AMP,
@@ -122,6 +125,29 @@ module hdmi_ui3_top (
         end
     end
 
+    // Atomic status mailbox from the audio clock domain.
+    reg [2:0] song_toggle_sync;
+    reg [255:0] song_status;
+    always @(posedge clk_p) begin
+        if(!rst_n) begin song_toggle_sync<=0; SONG_UI_ACK<=0; song_status<=0; end
+        else begin
+            song_toggle_sync<={song_toggle_sync[1:0],SONG_UI_TOGGLE};
+            if(song_toggle_sync[2]!=SONG_UI_ACK) begin
+                song_status<=SONG_UI;
+                SONG_UI_ACK<=song_toggle_sync[2];
+            end
+        end
+    end
+    wire guide_catalog_ready=song_status[232];
+    wire [4:0] guide_count=song_status[132:128];
+    wire [3:0] guide_selected=song_status[136:133];
+    wire [2:0] guide_state=song_status[139:137];
+    wire guide_teach=song_status[140];
+    wire [1:0] guide_countdown=song_status[143:142];
+    wire [6:0] guide_expected=song_status[150:144];
+    wire [6:0] guide_matched=song_status[157:151];
+    wire [7:0] guide_error=song_status[165:158];
+    wire [31:0] guide_ms=song_status[197:166];
     wire [1:0]        page_req = info_s1[1:0];
     wire [1:0]        timbre   = info_s1[3:2];
     wire [2:0]        fx       = info_s1[6:4];   // 0=NONE 1=REVERB 2=DELAY 3=SUSTAIN 4=CHORUS
@@ -738,6 +764,72 @@ module hdmi_ui3_top (
     wire [7:0] tr_ten10 = {tr_tens, 3'b000} + {2'b00, tr_tens, 1'b0};  // tens*10
     wire [3:0] tr_ones = tr_abs[3:0] - tr_ten10[3:0];
 
+    function [255:0] guide_line;
+        input [5:0] ln;
+        begin
+            guide_line={32{8'h20}};
+            case(ln)
+                4:case(guide_state)
+                    0:guide_line={"SELECT SONG",{21{8'h20}}};
+                    1:guide_line={"SELECT MODE",{21{8'h20}}};
+                    2:guide_line={"LOADING SONG",{20{8'h20}}};
+                    3:guide_line=guide_teach ? {"TEACHING",{24{8'h20}}} : {"AUTO PLAY",{23{8'h20}}};
+                    default:guide_line={"READ ERROR",{22{8'h20}}};
+                endcase
+                8:case(guide_state)
+                    0:if(guide_count==0) guide_line=guide_catalog_ready ?
+                        {"NO SONG FILES ON SD CARD",{8{8'h20}}} : {"WAITING FOR SD CATALOG",{10{8'h20}}};
+                    1:guide_line=guide_teach ? {"AUTO PLAY    > TEACHING",{9{8'h20}}} :
+                        {"> AUTO PLAY    TEACHING",{9{8'h20}}};
+                    3:guide_line=guide_teach ? {"C D E F G A B   FOLLOW LED",{6{8'h20}}} :
+                        {"AUTOMATIC PERFORMANCE",{11{8'h20}}};
+                    4:guide_line={"ERROR:",{26{8'h20}}};
+                    default:;
+                endcase
+                12:if(guide_state==3) guide_line={"C D E F G A B",{19{8'h20}}};
+                37:guide_line={"R1 KEY9: NEXT / CHANGE MODE",{5{8'h20}}};
+                39:guide_line={"R2 KEY9: SELECT / START / STOP",{2{8'h20}}};
+                41:guide_line={"HOLD R2 KEY9: BACK",{14{8'h20}}};
+                default:;
+            endcase
+        end
+    endfunction
+    // These belong to t1, alongside the existing x/y/character coordinates.
+    // Stage t2 only extracts one character and addresses the glyph RAM.
+    reg [255:0] guide_line1;
+    reg [3:0] guide_row1;
+    reg [7:0] guide_id1;
+    wire [3:0] guide_row0={guide_selected[3],3'd0} | ((tln-6'd6)>>1);
+    always @(posedge clk_p) begin
+        guide_line1<=guide_line(tln);
+        guide_row1<=guide_row0;
+        guide_id1<=song_status[guide_row0*8+:8];
+    end
+    function [5:0] guide_text;
+        input [5:0] ln;
+        input [7:0] col;
+        reg [3:0] row;
+        begin
+            guide_text=6'd36;row=0;
+            if(col>=4 && col<36) guide_text=gch(guide_line1,col-4);
+            if(ln==0 && col>=2 && col<12) guide_text=gch(S_GUIDE,col-2);
+            if(guide_state==0 && ln>=6 && ln<=20 && !ln[0] && {1'b0,guide_row1}<guide_count) begin
+                if(col==4 && guide_row1==guide_selected) guide_text=a2i(">");
+                if(col>=6 && col<10) guide_text=gch({"SONG",{28{8'h20}}},col-6);
+                if(col==10) guide_text={2'b0,guide_id1[7:4]};
+                if(col==11) guide_text={2'b0,guide_id1[3:0]};
+                if(col>=12 && col<16) guide_text=gch({".BIN",{28{8'h20}}},col-12);
+            end
+            if(guide_state==3 && ln==10 && col==4 && guide_countdown!=0)
+                guide_text={4'd0,guide_countdown};
+            if(guide_state==3 && ln==13 && col>=4 && col<=16 && !col[0]) begin
+                row=(col-4)>>1;
+                guide_text=guide_matched[row] ? a2i("+") : guide_expected[row] ? a2i("*") : a2i("-");
+            end
+            if(guide_state==4 && ln==8 && col==11) guide_text={2'd0,guide_error[3:0]};
+        end
+    endfunction
+
     // ══════════════════════════════════════════════════════════════
     //  文字查表：某一行的某一列是什么字
     // ══════════════════════════════════════════════════════════════
@@ -823,11 +915,7 @@ module hdmi_ui3_top (
                     txt = gch(S_TEST, col - 8'd2);
             end
             else begin
-                // ═══ 教学页面（骨架）═══
-                if (ln == 6'd0 && col >= 8'd2 && col < 8'd12)
-                    txt = gch(S_GUIDE, col - 8'd2);
-                if (ln == 6'd31 && col >= 8'd70 && col < 8'd77)
-                    txt = gch(S_PEND, col - 8'd70);
+                txt = guide_text(ln,col);
             end
         end
     endfunction
@@ -998,7 +1086,7 @@ module hdmi_ui3_top (
     wire edge_box  = (page_show == 2'd0) ? edge_main :
                      (page_show == 2'd1) ? e_test   : e_guide;
 
-    wire edge_lane = (page_show == 2'd2) && (e_lane | e_jline);
+    wire edge_lane = 1'b0; // menu replaces the old empty note lanes
 
     // ══════════════════════════════════════════════════════════════
     //  COMPONENT 64 柱图 + 坐标轴（仅主页面）

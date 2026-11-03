@@ -34,7 +34,7 @@ import sys
 # ─────────────────────────────────────────────────────────────────────
 VERSION = 3
 BEGIN, DATA, END = 1, 2, 3
-MAX_EVENTS = 8192
+MAX_EVENTS = 2048  # piano64_3 event RAM capacity
 MAX_PAYLOAD = 258
 EVENTS_PER_FRAME = 32
 

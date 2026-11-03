@@ -47,6 +47,11 @@ add_file src/sd/sdcmd_ctrl.sv
 add_file src/sd/uart_tx.v
 add_file src/sd/sd_async_fifo.v
 add_file src/sd_ddr_loader.v
+add_file src/song/bt_frame_rx.v
+add_file src/song/bt_song_player.v
+add_file src/song/song_fifo.v
+add_file src/song/song_loader.v
+add_file src/song/song_system.v
 
 #══════════════════════════════════════════════════════════════════
 #  HDMI 720p 频谱显示（复用 ir4 已验证的 DVI 栈）

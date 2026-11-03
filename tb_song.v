@@ -11,7 +11,7 @@
 //    [2] count / duration / timbre 与 Python 解析一致（47 / 6690 / 0）
 //    [3] 事件表逐条与 Python 解析一致
 //    [4] 播放 0 ms 时刻 4 个声部同时 gate=1（36/48/60/64）
-//    [5] 850 ms 后这 4 个 gate 全部释放
+//    [5] 950 ms 时声部与真实事件时长一致
 //
 //  运行：
 //    cd piano64_3
@@ -23,7 +23,7 @@
 
 module tb_song;
 
-    localparam integer CLK_HZ     = 50_000_000;
+    parameter integer CLK_HZ     = 50_000; // accelerated ms clock in simulation
     localparam integer MAX_EVENTS = 2048;
     localparam integer BMAX       = 4096;
 
@@ -178,19 +178,53 @@ module tb_song;
 
     task setup_expect;
         begin
-            // 前 12 条（其余由 count/总时长 + 单调性间接覆盖）
-            exp_start[ 0]=32'd0;    exp_note[ 0]=8'd36; exp_dur[ 0]=16'd1290; exp_vel[ 0]=8'd72;
-            exp_start[ 1]=32'd0;    exp_note[ 1]=8'd48; exp_dur[ 1]=16'd400;  exp_vel[ 1]=8'd86;
-            exp_start[ 2]=32'd0;    exp_note[ 2]=8'd60; exp_dur[ 2]=16'd400;  exp_vel[ 2]=8'd100;
-            exp_start[ 3]=32'd0;    exp_note[ 3]=8'd64; exp_dur[ 3]=16'd400;  exp_vel[ 3]=8'd78;
-            exp_start[ 4]=32'd450;  exp_note[ 4]=8'd48; exp_dur[ 4]=16'd400;  exp_vel[ 4]=8'd86;
-            exp_start[ 5]=32'd450;  exp_note[ 5]=8'd60; exp_dur[ 5]=16'd400;  exp_vel[ 5]=8'd100;
-            exp_start[ 6]=32'd450;  exp_note[ 6]=8'd64; exp_dur[ 6]=16'd400;  exp_vel[ 6]=8'd78;
-            exp_start[ 7]=32'd900;  exp_note[ 7]=8'd55; exp_dur[ 7]=16'd400;  exp_vel[ 7]=8'd86;
-            exp_start[ 8]=32'd900;  exp_note[ 8]=8'd67; exp_dur[ 8]=16'd400;  exp_vel[ 8]=8'd100;
-            exp_start[ 9]=32'd900;  exp_note[ 9]=8'd71; exp_dur[ 9]=16'd400;  exp_vel[ 9]=8'd78;
-            exp_start[10]=32'd1350; exp_note[10]=8'd41; exp_dur[10]=16'd1290; exp_vel[10]=8'd72;
-            exp_start[11]=32'd1350; exp_note[11]=8'd55; exp_dur[11]=16'd400;  exp_vel[11]=8'd86;
+            exp_start[0]=0; exp_note[0]=36; exp_dur[0]=1290; exp_vel[0]=72;
+            exp_start[1]=0; exp_note[1]=48; exp_dur[1]=400; exp_vel[1]=86;
+            exp_start[2]=0; exp_note[2]=60; exp_dur[2]=400; exp_vel[2]=100;
+            exp_start[3]=0; exp_note[3]=64; exp_dur[3]=400; exp_vel[3]=78;
+            exp_start[4]=450; exp_note[4]=48; exp_dur[4]=400; exp_vel[4]=86;
+            exp_start[5]=450; exp_note[5]=60; exp_dur[5]=400; exp_vel[5]=100;
+            exp_start[6]=450; exp_note[6]=64; exp_dur[6]=400; exp_vel[6]=78;
+            exp_start[7]=900; exp_note[7]=55; exp_dur[7]=400; exp_vel[7]=86;
+            exp_start[8]=900; exp_note[8]=67; exp_dur[8]=400; exp_vel[8]=100;
+            exp_start[9]=900; exp_note[9]=71; exp_dur[9]=400; exp_vel[9]=78;
+            exp_start[10]=1350; exp_note[10]=41; exp_dur[10]=1290; exp_vel[10]=72;
+            exp_start[11]=1350; exp_note[11]=55; exp_dur[11]=400; exp_vel[11]=86;
+            exp_start[12]=1350; exp_note[12]=67; exp_dur[12]=400; exp_vel[12]=100;
+            exp_start[13]=1350; exp_note[13]=71; exp_dur[13]=400; exp_vel[13]=78;
+            exp_start[14]=1800; exp_note[14]=57; exp_dur[14]=400; exp_vel[14]=86;
+            exp_start[15]=1800; exp_note[15]=69; exp_dur[15]=400; exp_vel[15]=100;
+            exp_start[16]=1800; exp_note[16]=72; exp_dur[16]=400; exp_vel[16]=78;
+            exp_start[17]=2250; exp_note[17]=57; exp_dur[17]=400; exp_vel[17]=86;
+            exp_start[18]=2250; exp_note[18]=69; exp_dur[18]=400; exp_vel[18]=100;
+            exp_start[19]=2250; exp_note[19]=72; exp_dur[19]=400; exp_vel[19]=78;
+            exp_start[20]=2700; exp_note[20]=43; exp_dur[20]=1290; exp_vel[20]=72;
+            exp_start[21]=2700; exp_note[21]=55; exp_dur[21]=400; exp_vel[21]=86;
+            exp_start[22]=2700; exp_note[22]=67; exp_dur[22]=400; exp_vel[22]=100;
+            exp_start[23]=2700; exp_note[23]=71; exp_dur[23]=400; exp_vel[23]=78;
+            exp_start[24]=3150; exp_note[24]=53; exp_dur[24]=400; exp_vel[24]=86;
+            exp_start[25]=3150; exp_note[25]=65; exp_dur[25]=400; exp_vel[25]=100;
+            exp_start[26]=3150; exp_note[26]=69; exp_dur[26]=400; exp_vel[26]=78;
+            exp_start[27]=3600; exp_note[27]=53; exp_dur[27]=400; exp_vel[27]=86;
+            exp_start[28]=3600; exp_note[28]=65; exp_dur[28]=400; exp_vel[28]=100;
+            exp_start[29]=3600; exp_note[29]=69; exp_dur[29]=400; exp_vel[29]=78;
+            exp_start[30]=4050; exp_note[30]=36; exp_dur[30]=1290; exp_vel[30]=72;
+            exp_start[31]=4050; exp_note[31]=52; exp_dur[31]=400; exp_vel[31]=86;
+            exp_start[32]=4050; exp_note[32]=64; exp_dur[32]=400; exp_vel[32]=100;
+            exp_start[33]=4050; exp_note[33]=67; exp_dur[33]=400; exp_vel[33]=78;
+            exp_start[34]=4500; exp_note[34]=52; exp_dur[34]=400; exp_vel[34]=86;
+            exp_start[35]=4500; exp_note[35]=64; exp_dur[35]=400; exp_vel[35]=100;
+            exp_start[36]=4500; exp_note[36]=67; exp_dur[36]=400; exp_vel[36]=78;
+            exp_start[37]=4950; exp_note[37]=50; exp_dur[37]=400; exp_vel[37]=86;
+            exp_start[38]=4950; exp_note[38]=62; exp_dur[38]=400; exp_vel[38]=100;
+            exp_start[39]=4950; exp_note[39]=65; exp_dur[39]=400; exp_vel[39]=78;
+            exp_start[40]=5400; exp_note[40]=36; exp_dur[40]=1290; exp_vel[40]=72;
+            exp_start[41]=5400; exp_note[41]=50; exp_dur[41]=400; exp_vel[41]=86;
+            exp_start[42]=5400; exp_note[42]=62; exp_dur[42]=400; exp_vel[42]=100;
+            exp_start[43]=5400; exp_note[43]=65; exp_dur[43]=400; exp_vel[43]=78;
+            exp_start[44]=5850; exp_note[44]=48; exp_dur[44]=400; exp_vel[44]=86;
+            exp_start[45]=5850; exp_note[45]=60; exp_dur[45]=400; exp_vel[45]=100;
+            exp_start[46]=5850; exp_note[46]=64; exp_dur[46]=400; exp_vel[46]=78;
         end
     endtask
 
@@ -254,9 +288,9 @@ module tb_song;
         end
 
         //------------------------------------------------------------------
-        $display("\n=== [2] 事件表（前 12 条与 Python 解析比对）===");
+        $display("\n=== [2] 事件表（全部 47 条与 Python CRC 解析比对）===");
         for (i = 0; i < NEXP; i = i + 1) begin
-            if (i < 12) begin
+            if (i < NEXP) begin
                 if (ram[i][31:0]    !== exp_start[i] ||
                     ram[i][39:32]   !== exp_note[i]  ||
                     ram[i][55:40]   !== exp_dur[i]   ||
@@ -296,6 +330,7 @@ module tb_song;
             $display("  FAIL: playing 应为 1"); errs = errs + 1;
         end
         if (popcount8(v_gate) !== 4) begin
+            errs = errs + 1;
             // 36/48/60/64 四个音同时起
             $display("  WARN: 0 ms 并发声部数 = %0d（期望 4）", popcount8(v_gate));
         end
@@ -321,8 +356,9 @@ module tb_song;
         repeat (T1MS * 750) @(posedge clk);     // 950 ms
 
         $display("  950ms: gate=%b  popcount=%0d", v_gate, popcount8(v_gate));
-        if (!has_note(7'd55) && !has_note(7'd67) && !has_note(7'd71)) begin
-            $display("  WARN: 950 ms 时第三个和弦(55/67/71)没在响");
+        if (!has_note(7'd55) || !has_note(7'd67) || !has_note(7'd71)) begin
+            errs = errs + 1;
+            $display("  FAIL: 950 ms 时第三个和弦(55/67/71)没在响");
         end
         else $display("   ok 第三个和弦正在响");
 
@@ -344,6 +380,7 @@ module tb_song;
 
         //------------------------------------------------------------------
         $display("\n==== %0d FAIL ====", errs);
+        if (errs != 0) $fatal(1, "song regression failed");
         if (errs == 0) $display("★ 全链路通过：SD 字节 → 帧解析 → 事件表 → 4 声部播放");
         $finish;
     end

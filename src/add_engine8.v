@@ -104,7 +104,12 @@ module add_engine8 #(
 
     // 滑音 + 揉弦合成一个音高比，限幅后分发给所有声部
     wire signed [16:0] bend_s  = $signed({1'b0, bend_q14}) + vib_off;
-    wire        [15:0] bend_gz = (bend_s < 17'sd2048) ? 16'd2048 : bend_s[15:0];
+    // Control changes are slow; register before the per-component multiply.
+    reg [15:0] bend_gz;
+    always @(posedge clk) begin
+        if (!rst_n) bend_gz <= 16'd16384;
+        else bend_gz <= (bend_s < 17'sd2048) ? 16'd2048 : bend_s[15:0];
+    end
 
     // ════════════════════════════════════════════════════════════════
     //  G7 顿音 / G8 急停：整个乐器（所有声部）快速静音
@@ -116,7 +121,7 @@ module add_engine8 #(
         if (!rst_n)                    fm_hold <= 18'd0;
         else if (stop_hold)            fm_hold <= 18'd1000;   // 手不回来就一直静音
         else if (art_en)               fm_hold <= 18'd1600;   // 33 ms（“吐”）
-        else if (fm_hold != 18'd0)     fm_hold <= fm_hold - 18'd1;
+        else if (sample_tick && fm_hold != 18'd0) fm_hold <= fm_hold - 18'd1;
     end
     wire mute_fast = (fm_hold != 18'd0);
 

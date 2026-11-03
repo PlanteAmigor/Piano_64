@@ -33,6 +33,7 @@
 `default_nettype none
 
 module add_engine_harm #(
+    parameter integer SCORE_VELOCITY = 0,
     parameter integer NVOICE    = 4,
     parameter integer MIX_SHIFT = 2,        // 输出再右移几位（4 声部取 2 = /4）
     parameter integer SOFT      = 1
@@ -53,6 +54,7 @@ module add_engine_harm #(
     input  wire [NVOICE-1:0]       v_trig,
     input  wire [NVOICE-1:0]       v_gate,
     input  wire [NVOICE*8-1:0]     v_vel,          // ★ 力度（只调音量）
+    input wire score_mode,
     input  wire                    sustain,        // ★ 1 = 延音：松键后逐渐消失
     // ── 光学前端（2026-11-02 新增）──────────────────────────────
     input  wire [15:0]             bend_q14,       // Q2.14 音高比，16384 = 1.0（不弯）
@@ -580,7 +582,8 @@ module add_engine_harm #(
     //     没有手 = 没有声音，也不再有“回退到键盘 128”这种回光返照。
     //     ★ hand_on 由 position_control 用【即时 rho_raw】算出，
     //       不能用 opt_vel（源自 rho_dc，慢 300~400 ms）。
-    wire [7:0]  vel_all = hand_on ? opt_vel_eff : 8'd0;
+    wire [7:0] vel_all = SCORE_VELOCITY && score_mode ? v_vel[7:0] :
+        hand_on ? opt_vel_eff : 8'd0;
     wire [7:0]  vel_eff  = sus_rel ? rel_gain : vel_all;
     // ★ G3 幅度颤音（笛子）：vel_eff × am_q8(Q7)，再乘 G7/G8 的快速静音闸门。
     //   先算好并打一拍再送进 ST_DRAIN，不然输出路径上会串两个乘法。
@@ -594,10 +597,10 @@ module add_engine_harm #(
         end else begin
             if (stop_hold || !hand_on)     fm_hold <= 13'd1200;   // 手不在/急停：静音（0.33 ms 落下，不咔喑）
             else if (art_en)               fm_hold <= 13'd1600;   // 33 ms 静音 → “吐”
-            else if (fm_hold != 13'd0)     fm_hold <= fm_hold - 13'd1;
-            if (fm_hold != 13'd0)
+            else if (sample_tick && fm_hold != 13'd0) fm_hold <= fm_hold - 13'd1;
+            if (sample_tick && fm_hold != 13'd0)
                 fm_g <= (fm_g > 9'd15) ? (fm_g - 9'd16) : 9'd0;    // 0.33 ms 落下
-            else
+            else if (sample_tick)
                 fm_g <= (fm_g < 9'd240) ? (fm_g + 9'd16) : 9'd256; // 0.33 ms 恢复
         end
     end
