@@ -39,7 +39,21 @@ module add_top #(
     input  wire       SD_DAT0,
 
     // ── 调试串口（115200 8N1，报告加载结果）────────────────────
+    //    ★ DDR 加载完成后这根线改由光敏前端输出六路 mV（见文件末尾）
     output wire       UART_TX,
+
+    // ── 六路光敏前端（F407 那一套：TDM 发射 + AD7606 双串行）────────
+    //    球号：EMIT = P16 R17 T18 R19 P19 U21
+    //          CS=U17  SCLK=R16  RST=P15  CONVST=R14  BUSY=U18
+    //          DOUTA=P14  DOUTB=Y19
+    output wire [5:0] IR_EMIT,     // 六路红外发射（one-hot，高电平点亮）
+    output wire       ADC_CSN,
+    output wire       ADC_SCLK,
+    output wire       ADC_RST,     // 高有效
+    output wire       ADC_CONVST,
+    input  wire       ADC_BUSY,
+    input  wire       ADC_DOUTA,   // DB7 → V1..V4
+    input  wire       ADC_DOUTB,   // DB8 → V5..V8
 
     // ── DDR3 1 GiB（板载焊死，走专用 IOLOGIC 引脚，与 J13 无任何关系）──
     output wire [14:0] ddr_addr,
@@ -118,6 +132,16 @@ module add_top #(
 
     wire por_n       = (por_cnt == STARTUP[21:0] - 22'd1);
     wire engine_rst_n = por_n & RESET_n & pll_lock;
+
+    // ══════════════════════════════════════════════════════════════
+    //  光学前端控制量（在文件末尾 position_control 产生）
+    //    opt_bend : Q2.14 音高比（16384 = 不弯）
+    //    opt_vel  : 0..255 力度
+    //    opt_en   : 手在传感器上方时才为 1；手离开 6 s 后自动回退到键盘力度
+    // ══════════════════════════════════════════════════════════════
+    wire signed [15:0] opt_bend_q14;
+    wire        [7:0]  opt_vel;
+    wire               opt_en;
 
     //======================================================================
     //  板上 KEY.0（AA13）→ 三模式页面循环
@@ -737,6 +761,10 @@ module add_top #(
         .v_vel      ({{24{1'b0}}, sua_vel}),
         // ★ 延音：与钢琴/古筝共用同一个效果器档位（SUSTAIN / DELAY+SUSTAIN）
         .sustain    (fx_sus_on),
+        // ★ 光学前端（步骤 1：先接常量，保证与改动前逐位等价）
+        .bend_q14   (opt_bend_q14),
+        .opt_en     (opt_en),
+        .opt_vel    (opt_vel),
         .sample_tick(tick),
         .sample_l   (sua_l),
         .sample_r   (sua_r),
@@ -1363,7 +1391,7 @@ module add_top #(
         .nfiles      (ld_nfiles),
         .file_no     (ld_fileno),
 
-        .uart_txd    (UART_TX)
+        .uart_txd    (ld_uart_txd)
     );
 
     //======================================================================
@@ -1520,6 +1548,212 @@ module add_top #(
     assign ddr_app_wdf_end  = ddr_sel_arb ? arb_app_wdf_end  : ld_app_wdf_end;
     assign ddr_app_wdf_mask = ddr_sel_arb ? arb_app_wdf_mask : ld_app_wdf_mask;
     assign ddr_app_burst    = 1'b0;
+
+    //======================================================================
+    //  六路光敏前端：TDM 发射 + AD7606 双串行 + 亮暗差分 + 串口上报
+    //
+    //  时序完全复现 F407（队友已调好）：
+    //      时隙 2 ms / 六路一轮 12 ms
+    //      0.4 ms 采亮值、0.7 ms 关发射管、1.7 ms 采暗值
+    //      每路 diff = 亮 − 暗，再做 4 点滑动平均
+    //
+    //  ★ ADC 上电需要 1 ms 的 RESET 脉冲，这段时间发 start 会被丢掉。
+    //    所以先锁存一个 opt_go（ADC 说 ready 之后才放行），再用它当 TDM 的复位，
+    //    这样第一帧不会丢。
+    //======================================================================
+    wire         opt_ready;
+    reg          opt_go;
+    always @(posedge clk_sys) begin
+        if (!engine_rst_n)    opt_go <= 1'b0;
+        else if (opt_ready)   opt_go <= 1'b1;
+    end
+    wire opt_tdm_rst_n = engine_rst_n & opt_go;
+
+    wire [5:0]        opt_emit;
+    wire              opt_conv_on, opt_conv_off, opt_round_stb;
+    wire [2:0]        opt_slot;
+    wire [15:0]       opt_round;
+
+    ir_tdm_ctrl #(
+        .CLK_HZ        (50_000_000),
+        .SLOT_MS       (2),
+        .ON_US         (400),
+        .EMITOFF_US    (700),
+        .DARK_US       (1700),
+        .NCH           (6)
+    ) u_ir_tdm (
+        .clk       (clk_sys),
+        .rst_n     (opt_tdm_rst_n),
+        .emitter   (opt_emit),
+        .conv_on   (opt_conv_on),
+        .conv_off  (opt_conv_off),
+        .slot_idx  (opt_slot),
+        .round_stb (opt_round_stb),
+        .round_cnt (opt_round)
+    );
+
+    // ★ 发射管极性：默认高有效。若板子是低有效，把下面这行的 ~ 打开。
+    assign IR_EMIT = opt_emit;
+    // assign IR_EMIT = ~opt_emit;
+
+    wire [127:0] opt_ch_flat;
+    wire         opt_done;
+    wire [2:0]   opt_hw_err;
+
+    ad7606_serial #(
+        .SCLK_HALF   (4),          // 6.25 MHz
+        .CONVST_CYC  (12),
+        .CS_SETUP    (8)
+    ) u_ad7606 (
+        .clk        (clk_sys),
+        .rst_n      (engine_rst_n),
+        .start      (opt_conv_on | opt_conv_off),
+        .ch_flat    (opt_ch_flat),
+        .done       (opt_done),
+        .ready      (opt_ready),
+        .hw_err     (opt_hw_err),
+        .adc_convst (ADC_CONVST),
+        .adc_reset  (ADC_RST),
+        .adc_cs_n   (ADC_CSN),
+        .adc_sclk   (ADC_SCLK),
+        .adc_busy   (ADC_BUSY),
+        .adc_douta  (ADC_DOUTA),
+        .adc_doutb  (ADC_DOUTB)
+    );
+
+    wire [107:0] opt_diff_flat, opt_flt_flat;
+    wire         opt_frame_valid;
+    wire [15:0]  opt_frame_cnt;
+
+    ir_diff_filter #(.NCH(6)) u_ir_diff (
+        .clk         (clk_sys),
+        .rst_n       (engine_rst_n),
+        .done        (opt_done),
+        .ch_flat     (opt_ch_flat),
+        .slot_idx    (opt_slot),
+        .is_on       (|opt_emit),
+        .diff_flat   (opt_diff_flat),
+        .flt_flat    (opt_flt_flat),
+        .frame_valid (opt_frame_valid),
+        .frame_cnt   (opt_frame_cnt)
+    );
+
+    wire [7:0] opt_uart_char;
+    wire       opt_uart_vld, opt_uart_busy, opt_uart_txd;
+
+    uart_tx #(.CLK_HZ(50_000_000), .BAUD(115_200)) u_opt_uart (
+        .clk   (clk_sys),
+        .rst_n (engine_rst_n),
+        .dbyte (opt_uart_char),
+        .send  (opt_uart_vld),
+        .busy  (opt_uart_busy),
+        .txd   (opt_uart_txd)
+    );
+
+    //======================================================================
+    //  光学控制律：Σ/质心 → 弯音 + 力度
+    //======================================================================
+    wire signed [23:0] opt_rho_raw, opt_rho_dc, opt_rho_ac, opt_ac_env;
+    wire [15:0]        opt_half_period;
+
+    opt_feat #(
+        .NCH(6), .LP_SHIFT(3), .ENV_SHIFT(2), .AC_DB(256)
+    ) u_opt_feat (
+        .clk         (clk_sys),
+        .rst_n       (engine_rst_n),
+        .frame_valid (opt_frame_valid),
+        .raw_flat    (opt_diff_flat),
+        .rho_raw     (opt_rho_raw),
+        .rho_dc      (opt_rho_dc),
+        .rho_ac      (opt_rho_ac),
+        .ac_env      (opt_ac_env),
+        .half_period (opt_half_period),
+        .frame_cnt   ()
+    );
+
+    wire [15:0] opt_x_q8;
+    wire [23:0] opt_pos_sum;
+    wire        opt_x_valid;
+
+    opt_pos #(.NCH(6)) u_opt_pos (
+        .clk         (clk_sys),
+        .rst_n       (engine_rst_n),
+        .frame_valid (opt_frame_valid),
+        .raw_flat    (opt_diff_flat),
+        .x_q8        (opt_x_q8),
+        .sum_pos     (opt_pos_sum),
+        .x_valid     (opt_x_valid),
+        .x_frame     ()
+    );
+
+    wire signed [15:0] opt_bend_cent;
+    wire        [15:0] opt_bend_q14_ctl;
+
+    position_control u_opt_ctl (
+        .clk         (clk_sys),
+        .rst_n       (engine_rst_n),
+        .frame_valid (opt_frame_valid),
+        .x_q8        (opt_x_q8),
+        .x_valid     (opt_x_valid),
+        .rho_dc      (opt_rho_dc),
+        .bend        (opt_bend_cent),
+        .bend_q14    (opt_bend_q14_ctl),  // ★ 2^(cent/1200) 查表得到，不再用线性近似
+        .vel         (opt_vel)
+    );
+
+    // ★★★ 临时诊断（DIAG_FORCE_BEND=1）：把音高比钉死成常量，绕开控制器。
+    //   24602/16384 = 1.5017 → +702 音分 ≈ 纯五度。
+    //   ★ 2026-11-03 用它二分出真因：弯音比乘在【已回绕的相位】上 → 音高不变
+    //     只变噪（旧算法得到 frac(r·frac(f·t))，周期仍是 1/f）。
+    //     add_engine_harm 已改成乘在【相位增量】上，本开关恢复正常。
+    localparam integer DIAG_FORCE_BEND = 0;
+    assign opt_bend_q14 = DIAG_FORCE_BEND ? 16'd24602 : opt_bend_q14_ctl;
+
+    // 手离开 6 s（512 帧 ≈ 6.1 s）后自动回退到键盘力度，避免没手时音量被锁死。
+    //
+    // ★★ 计数必须【按帧】递减，不能按时钟！
+    //    原来写成 if (opt_hold != 0) opt_hold <= opt_hold - 1;
+    //    在 posedge clk_sys 下是每 20 ns 减一次：512 拍 = 10.2 us，
+    //    而帧周期是 12 ms → opt_en 占空比只有 0.08%，
+    //    opt_act 几乎永远为 0，光学力度从来没生效过（弯音不走 opt_en，所以弯音正常）。
+    reg [9:0] opt_hold;
+    always @(posedge clk_sys) begin
+        if (!engine_rst_n)                                 opt_hold <= 10'd0;
+        else if (!opt_frame_valid)                         opt_hold <= opt_hold;
+        else if (opt_vel > 8'd8)                           opt_hold <= 10'd512;
+        else if (opt_hold != 10'd0)                        opt_hold <= opt_hold - 10'd1;
+    end
+    assign opt_en = (opt_hold != 10'd0);
+
+    report_feat u_report_feat (
+        .clk         (clk_sys),
+        .rst_n       (engine_rst_n),
+        .frame_valid (opt_frame_valid),
+        .rho_raw     (opt_rho_raw),
+        .rho_dc      (opt_rho_dc),
+        .rho_ac      (opt_rho_ac),
+        .ac_env      (opt_ac_env),
+        .half_period (opt_half_period),
+        .x_q8        (opt_x_q8),
+        .bend        (opt_bend_cent),
+        .vel         (opt_vel),
+        .hw_err      (opt_hw_err),
+        .uart_char   (opt_uart_char),
+        .uart_valid  (opt_uart_vld),
+        .uart_ready  (~opt_uart_busy)
+    );
+
+    //----------------------------------------------------------------------
+    //  UART 复用：DDR 加载期间给加载器，加载完成后给光敏前端
+    //  （加载器在 ld_done 之后永久空闲，txd 保持高电平，无冲突）
+    //----------------------------------------------------------------------
+    wire ld_uart_txd;
+    // ★★ 调试：强制光学上报占用 UART_TX，不再等 ld_done。
+    //    反复抳插 USB 后串口一直 0 字节，怀疑是 ld_done 没拉高导致
+    //    UART_TX 一直挂在加载器的空闲高电平上。加载器只用 RX 收命令，
+    //    TX 只是它回话，占掉不影响功能。调完改回复用。
+    assign UART_TX = opt_uart_txd;
+    // assign UART_TX = ld_done ? opt_uart_txd : ld_uart_txd; (原版)
 
 endmodule
 

@@ -41,6 +41,16 @@ module piano64_top #(
 
     output wire       UART_TX,
 
+    // ── 六路光敏前端（TDM 发射 + AD7606 双串行）──────────────────
+    output wire [5:0] IR_EMIT,
+    output wire       ADC_CSN,
+    output wire       ADC_SCLK,
+    output wire       ADC_RST,
+    output wire       ADC_CONVST,
+    input  wire       ADC_BUSY,
+    input  wire       ADC_DOUTA,
+    input  wire       ADC_DOUTB,
+
     output wire [14:0] ddr_addr,
     output wire [2:0]  ddr_bank,
     output wire        ddr_cs,
@@ -94,6 +104,14 @@ module piano64_top #(
         .SD_CMD     (SD_CMD),
         .SD_DAT0    (SD_DAT0),
         .UART_TX    (UART_TX),
+        .IR_EMIT    (IR_EMIT),
+        .ADC_CSN    (ADC_CSN),
+        .ADC_SCLK   (ADC_SCLK),
+        .ADC_RST    (ADC_RST),
+        .ADC_CONVST (ADC_CONVST),
+        .ADC_BUSY   (ADC_BUSY),
+        .ADC_DOUTA  (ADC_DOUTA),
+        .ADC_DOUTB  (ADC_DOUTB),
         .ddr_addr   (ddr_addr),
         .ddr_bank   (ddr_bank),
         .ddr_cs     (ddr_cs),

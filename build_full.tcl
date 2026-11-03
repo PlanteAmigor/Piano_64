@@ -81,6 +81,16 @@ add_file src/fx/fx_chorus.v
 add_file src/fx/fx_delay.v
 add_file src/fx/fx_reverb.v
 
+# ── 六路光敏前端（TDM 发射 + AD7606 双串行 + 亮暗差分 + 串口上报）──
+add_file src/optical/ir_tdm_ctrl.v
+add_file src/optical/ad7606_serial.v
+add_file src/optical/ir_diff_filter.v
+add_file src/optical/report6.v
+add_file src/optical/opt_feat.v
+add_file src/optical/opt_pos.v
+add_file src/optical/position_control.v
+add_file src/optical/report_feat.v
+
 # ★ 只用拼接后的约束文件（= piano64.cst + TMDS 四对差分）
 add_file src/piano64_hdmi.cst
 add_file src/piano64_hdmi.sdc
@@ -91,7 +101,8 @@ set_option -use_cpu_as_gpio  1
 set_option -use_sspi_as_gpio 1
 set_option -use_mspi_as_gpio 1
 set_option -verilog_std sysv2017
-# ★ 实测：1/1 比默认好很多（违规 18 vs 49），不要删
+# ★ 布局/布线档位（0/1/2，越大越费时）
+#   实测：2/2 → 0 违例（好解）；1/1 → 413 条违例（差解）。固定用 2/2。
 set_option -place_option 2
 set_option -route_option 2
 

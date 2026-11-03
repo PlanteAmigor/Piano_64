@@ -54,6 +54,10 @@ module add_engine_harm #(
     input  wire [NVOICE-1:0]       v_gate,
     input  wire [NVOICE*8-1:0]     v_vel,          // ★ 力度（只调音量）
     input  wire                    sustain,        // ★ 1 = 延音：松键后逐渐消失
+    // ── 光学前端（2026-11-02 新增）──────────────────────────────
+    input  wire [15:0]             bend_q14,       // Q2.14 音高比，16384 = 1.0（不弯）
+    input  wire                    opt_en,         // 1 = 用光学力度
+    input  wire [7:0]              opt_vel,        // 0..255
     input  wire                    sample_tick,
 
     output wire signed [15:0]      sample_l,
@@ -208,7 +212,9 @@ module add_engine_harm #(
     // ════════════════════════════════════════════════════════════════
     reg [19:0]       v_ts [0:NVOICE-1];
     reg [31:0]       v_ua [0:NVOICE-1];      // u_acc（Q0.32）
-    reg [18:0]       v_pf [0:NVOICE-1];      // Φ 的 19 位小数部分
+    reg [18:0]       v_pf [0:NVOICE-1];      // Φ 相位累加器（19 位 = 模一圈）
+    reg [18:0]       v_php[0:NVOICE-1];      // 上上一拍的 Φ（求增量用）
+    reg [18:0]       v_phl[0:NVOICE-1];      // 上一拍插值出的 Φ（流水线寄存器）
     reg [7:0]        v_k  [0:NVOICE-1];
     reg [AB_AW-1:0]  v_ab [0:NVOICE-1];
     reg [15:0]       v_eb [0:NVOICE-1];
@@ -389,6 +395,42 @@ module add_engine_harm #(
     wire signed [31:0] s4_snf = r3_sn0 + (($signed(r3_sn1 - r3_sn0)
                                 * $signed({24'd0, r3_frac}) + 64'sd128) >>> 8);
 
+    // ── 预取相位：插值 Φ → 乘光学弯音比（Q2.14）──────────────────────
+    //   只在 ST_PRE 的 pp==3'd6 使用。原式是
+    //       v_pf <= (phi_a + ((rom_ph-phi_a)*frac + 32768) >>> 16) & 0x7FFFF
+    //   这里拆成 wire 以便末尾再乘 bend_q14（16384 = 不弯）。
+    //   ★ 必须是【无符号】乘法：phi 与 ratio 都是纯正的量，不能引入 $signed，
+    //     否则 >>> 会变算术移位。
+    wire signed [63:0] pre_dphi = ($signed(rom_ph) - $signed(phi_a))
+                                * $signed({16'd0, v_pfx[hv]});
+    wire [18:0]        pre_phi  = (phi_a + ((pre_dphi + 64'sd32768) >>> 16)) & 32'h7FFFF;
+
+    // ★★★ 弯音必须乘在【相位增量】上，不能乘在【已回绕的相位值】上！
+    //
+    //   Φ 是模一圈（2^19 = 524288）的相位，每过一个音周期就回绕一次。
+    //   若直接算 (Φ × r) mod 2^19，得到的是 frac(r · frac(f·t))：
+    //   它随 t 的**周期仍然是 1/f**，只是波形被折叠变形 —— 音高根本没变，
+    //   只多了谐波失真（听感：音高不动 + 唢呐变噪）。这是之前"弯音完全不生效"
+    //   的真正原因，仿真里因为只看数值有没有变，所以没发现。
+    //
+    //   正确做法：ΔΦ = Φ[n] − Φ[n−1]（小量，不会回绕），
+    //             phase_acc += (ΔΦ × r) >> 14
+    //   这样音高真的变成 r·f，且 Φ 表里原有的音高曲线/颤音全部保留。
+    //
+    //  ★★ 流水线（必须！）：插值乘法与 ratio 乘法串在同一个 20 ns 周期里
+    //     实测 22.6 ns → 133 条 setup 违例。拆成两级：
+    //       pp==6 : v_phl <= 插值后的 Φ      （第一级出口，和原来 v_pf 同长）
+    //       pp==0 : 用上一拍采到的 Φ 求增量、乘 ratio、累加进 v_pf
+    //     相位因此固定滞后 1 个样点，对音高无影响。
+    //  ★ dphi 位宽：引擎最高音约 2 kHz → 每样点 ΔΦ ≈ 21484 < 2^15，
+    //    16 位有符号足够，乘法更小。
+    wire [18:0]        dphi   = v_phl[hv] - v_php[hv];      // 模 2^19 的差
+    wire signed [15:0] dphi_s = dphi[15:0];                 // 解成有符号小量
+    // 音高比下限保护：万一 bend_q14 变成 0（未驱动），相位会冻死成直流
+    wire        [15:0] ratio  = (bend_q14 < 16'd2048) ? 16'd2048 : bend_q14;
+    wire signed [31:0] dphi_r = dphi_s * $signed({1'b0, ratio});
+    wire signed [19:0] dphi_s2 = (dphi_r + 32'sd8192) >>> 14;   // 带四舍五入
+
     // ════════════════════════════════════════════════════════════════
     //  地址（组合）—— 用当前拍要发的声部 hv
     // ════════════════════════════════════════════════════════════════
@@ -444,7 +486,24 @@ module add_engine_harm #(
     reg  [7:0]  rel_gain;                      // 255 = 满，0 = 静音
     reg  [17:0] rel_cnt;
     wire        sus_rel  = sustain && any_act && !(|v_gate);
-    wire [7:0]  vel_eff  = sus_rel ? rel_gain : v_vel[7:0];
+    // 光学力度：平方律映射（gain ∝ vel²），动态范围比线性大得多
+    //   vel=64 → 16，vel=128 → 64，vel=192 → 144，vel=255 → 254
+    //   ★ 乘法必须放到 16 位中间变量：8 位×8 位的结果宽度是 8 位，会溢出
+    //  ★ 平方律（听感上力度差更明显）。注意必须用 9 位中间量再饱和：
+    //     vel=255 时 sq[15:8]=254，8 位下 16+254=270 会溢出回绕成 14 → 最大力度几乎静音。
+    wire [15:0] opt_vel_sq  = opt_vel * opt_vel;            // 0..65025
+    //  >>7：实测 1 cm 高 vel≈190、2 cm≈130、4 cm≈42、10 cm≈25，
+    //  → 音量 255/156/37/28，抬落有 17~19 dB 动态（>>8 太小、会一直偏轻）
+    wire [9:0]  opt_vel_g9  = 10'd24 + opt_vel_sq[15:7];    // 24..532
+    wire [7:0]  opt_vel_eff = (opt_vel_g9 > 10'd255) ? 8'd255 : opt_vel_g9[7:0];
+
+    //  ★ 只有【真的看到手】（opt_vel > 8）才切到光学力度。
+    //     opt_en 是「手离开后延迟 6 s 才放开」，若只按 opt_en 切，
+    //     手一拿走 opt_vel 立刻归 0 → 这 6 秒里音量是 24/256 ≈ 9%，
+    //     弹琴会突然没声。所以两个条件都得满足。
+    wire        opt_act = opt_en && (opt_vel > 8'd8);
+    wire [7:0]  vel_all = opt_act ? opt_vel_eff : v_vel[7:0];
+    wire [7:0]  vel_eff  = sus_rel ? rel_gain : vel_all;
 
     function signed [15:0] sat16; input signed [63:0] x;
         begin
@@ -470,7 +529,7 @@ module add_engine_harm #(
             pv0 <= 0; pv1 <= 0; pv2 <= 0; pv3 <= 0; pv4 <= 0;
             for (i = 0; i < NVOICE; i = i + 1) begin
                 v_ts[i] <= 20'd0;
-                v_ua[i] <= 32'd0; v_pf[i] <= 19'd0;
+                v_ua[i] <= 32'd0; v_pf[i] <= 19'd0; v_php[i] <= 19'd0; v_phl[i] <= 19'd0;
                 v_k[i]  <= 8'd0;  v_ab[i] <= 0;     v_eb[i] <= 16'd0;
                 v_pb[i] <= 16'd0; v_fb[i] <= 0;     v_act[i] <= 1'b0;
                 v_px[i] <= 15'd0; v_pfx[i] <= 16'd0;
@@ -589,6 +648,11 @@ module add_engine_harm #(
                     end
                     else begin
                         case (pp)
+                        3'd0: begin
+                                  // ★ 第二级：用上一拍采到的 Φ 求增量、乘弯音比、累加
+                                  v_pf[hv]  <= v_pf[hv] + dphi_s2[18:0];
+                                  v_php[hv] <= v_phl[hv];
+                              end
                         3'd1: begin
                                   pre_u0   <= rom_u;
                                   v_fb[hv] <= 32'd0;   // ★ 按音预取：phi 段内相对
@@ -618,9 +682,8 @@ module add_engine_harm #(
                         3'd4: v_pb[hv] <= 16'd0;   // ★ 按音预取：psi 段内相对
                         3'd5: phi_a <= rom_ph;
                         3'd6: begin
-                                  v_pf[hv] <= (phi_a + ((($signed(rom_ph) - $signed(phi_a))
-                                              * $signed({16'd0, v_pfx[hv]}) + 64'sd32768) >>> 16))
-                                              & 32'h7FFFF;
+                                  // ★ 第一级：插值得到 Φ，先存起来
+                                  v_phl[hv] <= pre_phi;
                               end
                         default: ;
                         endcase
