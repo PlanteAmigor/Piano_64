@@ -106,12 +106,19 @@ SONG05 是约 34 秒的多乐器《小星星》：笛子→古筝→唢呐→钢
 固件 SHA-256：`{manifest['bitstreams']['piano64_full.fs']}`。
 ''')
     subprocess.run(['python3','tools/check_build.py'],cwd=repo,check=True)
-    # Verify the standalone tree, including its local P64 fallback, before
-    # sealing it. Keep the result, not the generated simulation executables.
-    with (folder/'验证记录/独立工程复验.log').open('w') as log:
-        subprocess.run(['python3','-u','tools/check_all.py','--bt'],cwd=repo,stdout=log,stderr=subprocess.STDOUT,check=True)
-    subprocess.run(['python3','tools/check_build.py'],cwd=repo,check=True)
-    shutil.rmtree(repo/'work')
+    # The delivered sources are byte-identical to the already tested inputs.
+    # Verify the copied tree and its local instrument image without rerunning
+    # unchanged audio simulations a second time.
+    matched=[]
+    for name in files:
+        if name:
+            relative=name.decode();assert sha(ROOT/relative)==sha(repo/relative),relative
+            matched.append(relative)
+    assert sha(repo/'P64.BIN')==sha(ROOT.parent/'P64.BIN')
+    with (folder/'验证记录/工程一致性复验.log').open('w') as log:
+        subprocess.run(['python3','tools/check_build.py'],cwd=repo,stdout=log,stderr=subprocess.STDOUT,check=True)
+        log.write(f'PASS {len(matched)} tracked files identical to tested project; local P64.BIN exact\n')
+    shutil.rmtree(repo/'work',ignore_errors=True)
     copy(args.build/'work/inputs.json',repo/'work/build_inputs.json')
     checks=[]
     for p in sorted(folder.rglob('*')):
