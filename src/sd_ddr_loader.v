@@ -528,6 +528,12 @@ reg [31:0] wcnt, rcnt;
 //   SETUP −1.532 ns。改成 rem_w != 0 / rem_r == 0 后只剩一个 32 输入
 //   归约或，深度从「32 位减法/比较器」降到 3 级 LUT。
 reg [31:0] rem_w, rem_r;        // 还没发的读命令数 / 还没收回的数据数
+wire [31:0] rem_r_dec;
+assign rem_r_dec[7:0]=rem_r[7:0]-8'd1;
+genvar rb;
+generate for(rb=1;rb<4;rb=rb+1)begin:g_read_remaining
+    assign rem_r_dec[rb*8+:8]=rem_r[rb*8+:8]-(rem_r[rb*8-1:0]==0);
+end endgenerate
 reg [5:0]  ostd;                // 已发未回的读命令数（代替 wcnt-rcnt 的 32 位减法）
 
 // ★ DDR 读数据在本模块打一拍（理由见下面「读数据收回」那段注释）
@@ -753,7 +759,7 @@ always @(posedge clk100) begin
                 dbg_d1 <= rd_v[63:32];
             end
             rcnt <= rcnt + 32'd1;
-            if (rem_r != 32'd0) rem_r <= rem_r - 32'd1;   // ★ 防下溢
+            if (rem_r != 32'd0) rem_r <= rem_r_dec;   // Parallel byte borrows; retain saturation.
             if (ostd != 6'd0) ostd <= ostd - 6'd1;
         end
 

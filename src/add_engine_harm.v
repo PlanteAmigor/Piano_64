@@ -239,9 +239,9 @@ module add_engine_harm #(
     // ════════════════════════════════════════════════════════════════
     //  调度
     // ════════════════════════════════════════════════════════════════
-    localparam [1:0] ST_IDLE = 2'd0, ST_PRE = 2'd1, ST_HARM = 2'd2, ST_DRAIN = 2'd3;
+    localparam [2:0] ST_IDLE = 3'd0, ST_PRE = 3'd1, ST_HARM = 3'd2, ST_DRAIN = 3'd3, ST_PHASE = 3'd4;
 
-    reg [1:0]  st;
+    reg [2:0]  st;
     reg [2:0]  pp;
     reg [1:0]  hv;
     reg [7:0]  hm;
@@ -524,7 +524,13 @@ module add_engine_harm #(
     // 反向读表只反转音色变化的时间，不反转声波。两端没有坐标跳变，
     // 相邻 Φ 的差取正值后累加，原生颤音继续，转向也不会突然定住基频。
     wire signed [15:0] phase_step = (dphi_s < 16'sd0) ? -dphi_s : dphi_s;
-    wire signed [32:0] dphi_r = phase_step * ratio_q;
+    reg signed [15:0] phase_step_q;
+    reg signed [32:0] dphi_r;
+    reg [1:0] phase_wait;
+    always @(posedge clk)begin
+        if(!rst_n)begin phase_step_q<=0;dphi_r<=0;end
+        else begin phase_step_q<=phase_step;dphi_r<=phase_step_q*ratio_q;end
+    end
     wire signed [19:0] dphi_s2 = (dphi_r + 33'sd8192) >>> 14;   // 带四舍五入
 
     // ════════════════════════════════════════════════════════════════
@@ -661,7 +667,7 @@ module add_engine_harm #(
     integer i;
     always @(posedge clk) begin
         if (!rst_n) begin
-            st <= ST_IDLE; pp <= 3'd0; hv <= 2'd0; hm <= 8'd0; dr <= 4'd0;
+            st <= ST_IDLE; pp <= 3'd0; hv <= 2'd0; hm <= 8'd0; dr <= 4'd0;phase_wait<=0;
             cnt <= 10'd0; acc <= 64'sd0; smp <= 16'sd0; v_idle_r <= {NVOICE{1'b1}};
             pre_u0 <= 32'd0;
             phi_a <= 32'd0;
@@ -789,18 +795,24 @@ module add_engine_harm #(
             // ── 调度 ─────────────────────────────────────────────
             if (cnt == 10'd0) begin
                 if (any_act) begin
-                    st <= ST_PRE; pp <= 3'd0; hv <= 2'd0; hm <= 8'd0;
+                    st <= ST_PHASE;phase_wait<=0;pp <= 3'd0; hv <= 2'd0; hm <= 8'd0;
                 end
                 else st <= ST_IDLE;
             end
             else begin
                 case (st)
+                ST_PHASE: begin
+                    // Settle the selected voice, absolute phase step and DSP
+                    // product before the existing per-voice preparation.
+                    if(phase_wait==2)begin st<=ST_PRE;phase_wait<=0;end
+                    else phase_wait<=phase_wait+1'b1;
+                end
                 ST_PRE: begin
                     if (!cur_act) begin
                         // 不活动的声部直接跳过
                         pp <= 3'd0;
                         if (hv == NVOICE - 1) begin st <= ST_HARM; hv <= 2'd0; hm <= 8'd0; end
-                        else                  hv <= hv + 2'd1;
+                        else begin hv <= hv + 2'd1;st<=ST_PHASE;phase_wait<=0;end
                     end
                     else begin
                         case (pp)
@@ -808,7 +820,7 @@ module add_engine_harm #(
                                   // ★ 第二级：用上一拍采到的 Φ 求增量、乘弯音比、累加
                                   v_pf[hv]  <= v_pf[hv] + dphi_s2[18:0];
                                   v_php[hv] <= v_phl[hv];
-                                  v_step[hv] <= phase_step;
+                                  v_step[hv] <= phase_step_q;
                               end
                         3'd1: begin
                                   pre_u0   <= rom_u;
@@ -847,7 +859,7 @@ module add_engine_harm #(
                         if (pp == NPRE - 1) begin
                             pp <= 3'd0;
                             if (hv == NVOICE - 1) begin st <= ST_HARM; hv <= 2'd0; hm <= 8'd0; end
-                            else                       hv <= hv + 2'd1;
+                            else begin hv <= hv + 2'd1;st<=ST_PHASE;phase_wait<=0;end
                         end
                         else pp <= pp + 3'd1;
                     end

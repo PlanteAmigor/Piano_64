@@ -1165,54 +1165,9 @@ module add_top #(
     // 任意一个声部被触发 → 立即清空重画
     wire comp_clr = (|eng_trig) | sua_trig;
 
-    reg [7:0] comp_bar [0:63];
-    reg [7:0] pmax;
-    reg [6:0] fdiv;
-    reg [7:0] mx;
-    integer   cbi;
-
-    always @(posedge clk_sys) begin
-        if (!engine_rst_n) begin
-            pmax <= 8'd0;
-            fdiv <= 7'd0;
-            for (cbi = 0; cbi < 64; cbi = cbi + 1) comp_bar[cbi] <= 8'd0;
-        end
-        else begin
-            // ── ③ 回落：每 COMP_FALL_STEP 个样点全部降 1 级 ────────
-            //    先写，下面峰值更新的优先级更高（同拍冲突时峰值赢）
-            if (tick) begin
-                if (fdiv >= COMP_FALL_STEP[6:0] - 7'd1) begin
-                    fdiv <= 7'd0;
-                    for (cbi = 0; cbi < 64; cbi = cbi + 1)
-                        if (comp_bar[cbi] != 8'd0)
-                            comp_bar[cbi] <= comp_bar[cbi] - 8'd1;
-                end
-                else fdiv <= fdiv + 7'd1;
-            end
-
-            // ── ① note-on 清空 ──────────────────────────────────
-            if (comp_clr)
-                for (cbi = 0; cbi < 64; cbi = cbi + 1) comp_bar[cbi] <= 8'd0;
-
-            // ── ② 峰值保持（放最后 → 同拍冲突时它赢）──────────────
-            if (s_vld_r) begin
-                if (!s_idx_r[0]) pmax <= s_amp_r;
-                else begin
-                    mx = (s_amp_r > pmax) ? s_amp_r : pmax;
-                    if (mx > comp_bar[s_idx_r[6:1]])
-                        comp_bar[s_idx_r[6:1]] <= mx;
-                    pmax <= 8'd0;
-                end
-            end
-        end
-    end
-
-    genvar cgi;
-    generate
-        for (cgi = 0; cgi < 64; cgi = cgi + 1) begin : g_comp
-            assign COMP_AMP[cgi*8 +: 8] = comp_bar[cgi];
-        end
-    endgenerate
+    ui_component_bars #(.FALL_STEP(COMP_FALL_STEP)) u_component_bars(
+        .clk(clk_sys),.rst_n(engine_rst_n),.tick(tick),.clear(comp_clr),
+        .index(s_idx_r),.amplitude(s_amp_r),.valid(s_vld_r),.bars(COMP_AMP));
 
     //======================================================================
     //  李萨如（相位图）取样

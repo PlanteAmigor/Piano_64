@@ -54,9 +54,9 @@ module tb_song_ui;
         // Let the real scope and decimal display settle before the captured frame.
         if(SHOT==5)begin wait(dut.vcnt==1124);wait(dut.vcnt==0);end
         else begin @(negedge clk);force dut.frame_tick=1;@(negedge clk);release dut.frame_tick;repeat(160)@(negedge clk);end
-        wait(!dut.vis_d8);wait(dut.vis_d8);capture=1;
+        wait(!dut.vis_d9);wait(dut.vis_d9);capture=1;
     end
-    always @(posedge clk) if(capture && dut.vis_d8) begin
+    always @(posedge clk) if(capture && dut.vis_d9) begin
         if((^dut.rgb_r)===1'bx) $fatal(1,"unknown UI pixel");
         $fwrite(f,"%c%c%c",dut.rgb_r[23:16],dut.rgb_r[15:8],dut.rgb_r[7:0]);
         if(x<1919) x=x+1;

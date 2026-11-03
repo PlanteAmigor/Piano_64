@@ -6,12 +6,12 @@ module tb_ui_timing;
         .SONG_UI(384'd0),.SONG_ROLL(1024'd0),.SONG_UI_TOGGLE(1'b0),.COMP_AMP(512'd0),
         .SCOPE_SMP(16'sd0),.SCOPE_TOG(1'b0),.SCOPE_TRG(1'b0));
     integer pixels=0,hswidth=0,cycles=0;
-    reg [8:0] de=0,hs=0,vs=0;
+    reg [9:0] de=0,hs=0,vs=0;
     always @(posedge clk)begin
-        de<={de[7:0],dut.vis};hs<={hs[7:0],dut.hsync};vs<={vs[7:0],dut.vsync};
+        de<={de[8:0],dut.vis};hs<={hs[8:0],dut.hsync};vs<={vs[8:0],dut.vsync};
     end
     always @(negedge clk)if(dut.rst_n && cycles>10)begin
-        if(dut.vis_d8!==de[8] || dut.hs_d8!==hs[8] || dut.vs_d8!==vs[8])$fatal(1,"pixel/sync pipeline alignment");
+        if(dut.vis_d9!==de[9] || dut.hs_d9!==hs[9] || dut.vs_d9!==vs[9])$fatal(1,"pixel/sync pipeline alignment");
     end
     initial begin
         repeat(20)@(negedge clk);resetn=1;wait(dut.rst_n);repeat(10)@(negedge clk);

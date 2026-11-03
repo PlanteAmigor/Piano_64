@@ -13,7 +13,8 @@ SOURCES=['sim/tb_song_ui.v','src/hdmi/hdmi_ui3_top.v','src/hdmi/ui/ui_liss_ram.v
 ASSETS=['src/hdmi/ui/ui1080_font.hex','src/hdmi/ui/ui1080_tiles.hex','src/hdmi/ui/ui1080_assets.json','src/hdmi/ui/ui1080_decimal.vh']
 def fingerprints():return {p:hashlib.sha256((ROOT/p).read_bytes()).hexdigest() for p in SOURCES+ASSETS}
 def main():
-    ap=argparse.ArgumentParser();ap.add_argument('--out',type=Path,default=ROOT/'work/ui1080/screens_final');args=ap.parse_args()
+    ap=argparse.ArgumentParser();ap.add_argument('--out',type=Path,default=ROOT/'work/ui1080/screens_final')
+    ap.add_argument('--jobs',type=int,choices=range(1,10),default=4);args=ap.parse_args()
     out=args.out.resolve();out.mkdir(parents=True,exist_ok=True);before=fingerprints()
     frozen=out/'inputs';frozen.mkdir(exist_ok=True)
     for relative in SOURCES+ASSETS:
@@ -31,7 +32,7 @@ def main():
             assert im.getpixel((39,192))==(9,15,25),'background pixel alignment'
         if shot not in [5,6]:assert im.getpixel((760,864))==(246,199,126),'judgment line alignment'
         im.save(out/f'ui{shot}.png');print(f'PASS actual 1080p RTL screenshot {shot}',flush=True)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:list(pool.map(capture,range(9)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:list(pool.map(capture,range(9)))
     # Captures always use their saved source bundle. A delivery must compare
     # sources.json with its final source files before claiming a current image.
     canvas=Image.new('RGB',(1920,1080))

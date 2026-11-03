@@ -93,6 +93,7 @@ def main():
         'src/sd/sd_async_fifo.v','src/sd/uart_tx.v','src/ddr/ddr_ui_pipeline.v',*songs],
         parameters=['-Ptb_song_sd.BACKPRESSURE=1','-Ptb_song_sd.PIPELINE=1'])
     results+=bench('tb_soft_limiter',['sim/tb_soft_limiter.v','src/audio_soft_limiter.v'])
+    results+=bench('tb_component_bars',['sim/tb_component_bars.v','src/ui_component_bars.v'])
     results+=bench('tb_sd_longname',['sim/tb_sd_longname.v','src/sd/sd_file_list_reader.v','src/sd/sd_reader.sv','src/sd/sdcmd_ctrl.sv'])
     # Run the real FAT parser, SD command engine and a read-only SDHC card model.
     run([sys.executable,ROOT/'tools/make_test_card.py'])

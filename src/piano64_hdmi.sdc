@@ -73,7 +73,7 @@ set_false_path -from [get_clocks {CLK_SYS}] -to [get_clocks {clk_ser}]
 set_false_path -from [get_clocks {clk_ser}] -to [get_clocks {CLK_SYS}]
 
 # Per-clock diagnostics: prevent one failing domain hiding all other paths.
-report_timing -setup -from_clock [get_clocks {CLOCK_50}] -to_clock [get_clocks {CLOCK_50}] -max_paths 30
-report_timing -setup -from_clock [get_clocks {CLK_SYS}] -to_clock [get_clocks {CLK_SYS}] -max_paths 30
-report_timing -setup -from_clock [get_clocks {sysclk}] -to_clock [get_clocks {sysclk}] -max_paths 30
-report_timing -setup -from_clock [get_clocks {clk_pix}] -to_clock [get_clocks {clk_pix}] -max_paths 30
+report_timing -setup -from_clock [get_clocks {CLOCK_50}] -to_clock [get_clocks {CLOCK_50}] -max_paths 200
+report_timing -setup -from_clock [get_clocks {CLK_SYS}] -to_clock [get_clocks {CLK_SYS}] -max_paths 200
+report_timing -setup -from_clock [get_clocks {sysclk}] -to_clock [get_clocks {sysclk}] -max_paths 200
+report_timing -setup -from_clock [get_clocks {clk_pix}] -to_clock [get_clocks {clk_pix}] -max_paths 200

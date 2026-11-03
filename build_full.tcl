@@ -15,6 +15,7 @@ set_device GW5AST-LV138PG484AC1/I0 -name GW5AST-138 -device_version C
 #══════════════════════════════════════════════════════════════════
 add_file src/add_top.v
 add_file src/audio_soft_limiter.v
+add_file src/ui_component_bars.v
 add_file src/add_engine8.v
 add_file src/add_engine_harm.v
 add_file src/harm_buf.v

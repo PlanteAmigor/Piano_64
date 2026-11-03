@@ -95,7 +95,12 @@ module tb_harm_hold;
                 if(dut.v_reverse[0] || dut.v_step[0]<=0)$fatal(1,"lower loop seam");
                 // Live optical pitch control must still reach the carrier.
                 bend=18432;repeat(3) sample;
-                if(dut.dphi_s2<=saved_step) $fatal(1,"held bend ignored");
+                // The shared phase multiplier now visits inactive voices too.
+                // Check the audible voice's applied phase between samples,
+                // rather than whichever scratch product is currently selected.
+                last_phase=dut.v_pf[0];sample;
+                if(((dut.v_pf[0]-last_phase)&19'h7ffff)<=saved_step)
+                    $fatal(1,"held bend ignored");
                 // At the 29-bit clock wrap, dm phase must be continuous modulo one turn.
                 @(negedge clk);dut.v_clock[0]=29'h1fffffff;
                 force dut.dq_vo=0;

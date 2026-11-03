@@ -1,7 +1,7 @@
 // Native 1920x1080p60: performance, eight-key test, score/teaching pages.
 // 16x32 glyphs, integer-scaled titles, live spectrum/components and 256x256
 // persistence plot. Sample DSP uses CLK_SCOPE (global 50 MHz); only complete
-// coordinates cross into the 148.5 MHz pixel domain. Registered coordinates and nine pixel stages align
+// coordinates cross into the 148.5 MHz pixel domain. Registered coordinates and ten pixel stages align
 // the text/geometry, graph overlays, palette and fade with DE/HS/VS.
 `default_nettype none
 
@@ -212,6 +212,13 @@ module hdmi_ui3_top (
     localparam integer V_TOTAL=1125,V_FP=4,V_SYNC=5,V_BP=36,V_VIS=1080;
     localparam integer H_START=280,V_START=45;
     reg [11:0] hcnt,vcnt;
+    // Keep local coordinate registers for four descriptors per bank. Shared
+    // low coordinate bits otherwise drive every wide comparison across the
+    // device and routing, rather than arithmetic, dominates the pixel path.
+    (* syn_preserve=1, syn_keep=1 *) reg [11:0] roll_x[0:7],roll_y[0:7];
+    always @(posedge clk_p)for(integer bank=0;bank<8;bank=bank+1)begin
+        roll_x[bank]<=hcnt-H_START;roll_y[bank]<=vcnt-V_START;
+    end
     always @(posedge clk_p) begin
         if(!rst_n)begin hcnt<=0;vcnt<=0;end
         else if(hcnt==H_TOTAL-1)begin hcnt<=0;vcnt<=vcnt==V_TOTAL-1?0:vcnt+1'b1;end
@@ -271,6 +278,8 @@ module hdmi_ui3_top (
     reg [5:0] decimal_left;
     reg [1:0] decimal_field;
     reg decimal_busy;
+    reg decimal_rst_n;
+    always @(posedge clk_p)decimal_rst_n<=rst_n;
     integer dc;
     always @(*)begin
         decimal_adjust=decimal_work;
@@ -279,7 +288,7 @@ module hdmi_ui3_top (
     end
     wire [39:0] decimal_next={decimal_adjust[38:0],decimal_bin[31]};
     always @(posedge clk_p)begin
-        if(!rst_n)begin decimal_busy<=0;decimal_field<=0;decimal_left<=0;decimal_work<=0;
+        if(!decimal_rst_n)begin decimal_busy<=0;decimal_field<=0;decimal_left<=0;decimal_work<=0;
             decimal_bin<=0;time_bcd<=0;total_bcd<=0;miss_bcd<=0;wrong_bcd<=0;end
         else if(frame_tick && !decimal_busy)begin
             decimal_busy<=1;decimal_field<=0;decimal_left<=32;decimal_bin<=guide_ms;decimal_work<=0;
@@ -429,6 +438,8 @@ endcase end endfunction
     wire [11:0] band_phase=page_show==1?{6'd0,test_band_phase}:((px-12'd64)&12'd31);
     reg band_on1,band_on2;
     wire [11:0] comp_x=px-64;
+    reg [2:0] component_low0;
+    always @(posedge clk_p)component_low0<=(hcnt-H_START-64)>>4;
     reg comp_on1,comp_on2;
     reg [3:0] roll_column[0:31];
     reg [10:0] roll_bottom_edge[0:31];
@@ -442,7 +453,12 @@ endcase end endfunction
     wire [3:0] lane0=(px-768)>>7;
     wire lane_in0=px>=768 && px<1792 && py>=256 && py<880 && px[6:0]>=16 && px[6:0]<112;
     reg roll_area1;
-    reg [31:0] roll_above1,roll_below1,roll_lane1,roll_outline1;
+    reg [31:0] above_gt1,above_eq1,above_ge_low1,above_eq_low1;
+    reg [31:0] below_lt1,below_eq1,below_lt_low1;
+    reg [31:0] edge_gt1,edge_eq1,edge_ge_low1,edge_x1,roll_lane1;
+    wire [31:0] roll_above1=above_gt1 | (above_eq1 & above_ge_low1);
+    wire [31:0] roll_below1=below_lt1 | (below_eq1 & below_lt_low1);
+    wire [31:0] roll_outline1=(above_eq1 & above_eq_low1) | edge_gt1 | (edge_eq1 & edge_ge_low1) | edge_x1;
     reg [4:0] roll_meta1[0:31];
     wire [31:0] roll_rect1=roll_above1 & roll_below1 & roll_lane1 & {32{roll_area1}};
     integer r;
@@ -451,15 +467,23 @@ endcase end endfunction
         text1<=text_rom[tile_addr];
         // Split wide live-bar lookups over the existing two pixel stages.
         for(integer g=0;g<4;g=g+1)band_group[g]<=bands_cap[g*64+band_index[2:0]*8+:8];
-        for(integer g=0;g<8;g=g+1)component_group[g]<=comp_cap[g*64+comp_x[6:4]*8+:8];
+        for(integer g=0;g<8;g=g+1)component_group[g]<=comp_cap[g*64+component_low0*8+:8];
         band1<=band_index[4:0];band_on1<=px>=band_origin && band_index<32 && band_phase<band_pitch-8;
         component1<=comp_x[9:4];comp_on1<=px>=64 && px<1088 && comp_x[3:0]<11;
         roll_area1<=lane_in0;
         for(r=0;r<32;r=r+1)begin
-            roll_above1[r]<=py>=roll_status[r*32+12+:11];
-            roll_below1[r]<=py<roll_status[r*32+1+:11];
-            roll_lane1[r]<=px[10:7]==roll_column[r];
-            roll_outline1[r]<=py==roll_status[r*32+12+:11] || py>=roll_bottom_edge[r] || px[6:0]<19 || px[6:0]>=109;
+            above_gt1[r]<=roll_y[r/4][11:6]>{1'b0,roll_status[r*32+18+:5]};
+            above_eq1[r]<=roll_y[r/4][11:6]=={1'b0,roll_status[r*32+18+:5]};
+            above_ge_low1[r]<=roll_y[r/4][5:0]>=roll_status[r*32+12+:6];
+            above_eq_low1[r]<=roll_y[r/4][5:0]==roll_status[r*32+12+:6];
+            below_lt1[r]<=roll_y[r/4][11:6]<{1'b0,roll_status[r*32+7+:5]};
+            below_eq1[r]<=roll_y[r/4][11:6]=={1'b0,roll_status[r*32+7+:5]};
+            below_lt_low1[r]<=roll_y[r/4][5:0]<roll_status[r*32+1+:6];
+            edge_gt1[r]<=roll_y[r/4][11:6]>{1'b0,roll_bottom_edge[r][10:6]};
+            edge_eq1[r]<=roll_y[r/4][11:6]=={1'b0,roll_bottom_edge[r][10:6]};
+            edge_ge_low1[r]<=roll_y[r/4][5:0]>=roll_bottom_edge[r][5:0];
+            edge_x1[r]<=roll_x[r/4][6:0]<19 || roll_x[r/4][6:0]>=109;
+            roll_lane1[r]<=roll_x[r/4][10:7]==roll_column[r];
             roll_meta1[r]<=roll_status[r*32+27+:5];
             roll_lead1[r]<=roll_rect1[r] && roll_meta1[r][4] && roll_meta1[r][3];
             roll_auto1[r]<=roll_rect1[r] && roll_meta1[r][4] && !roll_meta1[r][3];
@@ -512,10 +536,15 @@ endcase end endfunction
     wire [11:0] spectrum_height={2'd0,scaled_height2};
     wire spectrum_lit=band_on2 && y2<spectrum_base && y2+spectrum_height>=spectrum_base && y2>=(page_show==1?256:288);
     wire component_lit=comp_on2 && y2<928 && y2+{4'd0,scaled_component2}>=12'd928 && y2>=696;
-    wire [2:0] key_lane=(x2-768)>>7;
-    wire key_region=x2>=768 && x2<1792 && y2>=888 && y2<944;
-    wire key_expected=key_lane<7 && guide_expected[key_lane];
-    wire key_matched=key_lane<7 && guide_matched[key_lane];
+    wire [2:0] key_lane1c=x1c[9:7]-3'd6;
+    reg [2:0] key_lane;
+    reg key_region,key_expected,key_matched;
+    always @(posedge clk_p)begin
+        key_lane<=key_lane1c;
+        key_region<=x1c>=768 && x1c<1792 && y1c>=888 && y1c<944;
+        key_expected<=key_lane1c<7 && guide_expected[key_lane1c];
+        key_matched<=key_lane1c<7 && guide_matched[key_lane1c];
+    end
     wire [23:0] accent=timbre==0?24'h55D8F0:timbre==1?24'hF7C47A:timbre==2?24'hF18F9F:24'h9BCB94;
     wire [23:0] note_color=note_color2==0?24'h55D8F0:note_color2==1?24'hF7C47A:note_color2==2?24'hF18F9F:24'h9BCB94;
     reg [23:0] rgb,background;
@@ -538,51 +567,56 @@ endcase end endfunction
     reg testkey_any,testkey_down,testind_any,testind_down,card_any,card_selected,card_stripe;
     reg [11:0] level_end,progress_end;
     reg [7:0] visible_cards;
+    (* syn_preserve=1, syn_keep=1 *) reg [11:0] bg_x[0:3],bg_y[0:3];
+    always @(posedge clk_p)for(integer bank=0;bank<4;bank=bank+1)begin
+        bg_x[bank]<=x1c;bg_y[bank]<=y1c;
+    end
+    reg [7:0] testkey_rect2,testind_rect2,card_rect2,card_stripe2;
+    always @(posedge clk_p)for(integer k=0;k<8;k=k+1)begin
+        testkey_rect2[k]<=box(x1c,y1c,1504,304+k*64,1856,352+k*64);
+        testind_rect2[k]<=box(x1c,y1c,1512,316+k*64,1520,340+k*64);
+        card_rect2[k]<=box(x1c,y1c,64,280+k*64,536,336+k*64);
+        card_stripe2[k]<=box(x1c,y1c,64,280+k*64,70,336+k*64);
+    end
     always @(posedge clk_p)for(integer k=0;k<8;k=k+1)visible_cards[k]<=({guide_selected[3],3'b000}+k)<guide_count;
     always @(posedge clk_p)begin level_end<=1272+({4'd0,perf_level}<<1);progress_end<=768+guide_progress;end
     // Independent geometry flags, then a balanced priority mask. No serial
     // chain through every panel/key/card comparator in one pixel clock.
     always @(*)begin
         bg_flags=0;bg_flags[0]=1;
-        testkey_any=0;testkey_down=0;testind_any=0;testind_down=0;
-        card_any=0;card_selected=0;card_stripe=0;
-        for(integer k=0;k<8;k=k+1)begin
-            testkey_any=testkey_any|box(x2,y2,1504,304+k*64,1856,352+k*64);
-            testkey_down=testkey_down|(box(x2,y2,1504,304+k*64,1856,352+k*64)&&perf_keys[k]);
-            testind_any=testind_any|box(x2,y2,1512,316+k*64,1520,340+k*64);
-            testind_down=testind_down|(box(x2,y2,1512,316+k*64,1520,340+k*64)&&perf_keys[k]);
-            card_any=card_any|(box(x2,y2,64,280+k*64,536,336+k*64)&&visible_cards[k]);
-            card_selected=card_selected|(box(x2,y2,64,280+k*64,536,336+k*64)&&guide_selected[2:0]==k&&visible_cards[k]);
-            card_stripe=card_stripe|(box(x2,y2,64,280+k*64,70,336+k*64)&&guide_selected[2:0]==k&&visible_cards[k]);
-        end
-        bg_flags[1]=box(x2,y2,40,24,1880,164)||box(x2,y2,40,992,1880,1056);
-        bg_flags[2]=y2==163 && x2>=40 && x2<1880;
-        bg_flags[3]=page_show==0 && (box(x2,y2,40,192,1160,576)||box(x2,y2,40,608,1160,960)||box(x2,y2,1192,192,1880,984));
-        bg_flags[4]=page_show==0 && ((box(x2,y2,64,288,1088,545)&&y2[5:0]==32)||
+        testkey_any=|testkey_rect2;testkey_down=|(testkey_rect2 & perf_keys);
+        testind_any=|testind_rect2;testind_down=|(testind_rect2 & perf_keys);
+        card_any=|(card_rect2 & visible_cards);
+        card_selected=card_rect2[guide_selected[2:0]] && visible_cards[guide_selected[2:0]];
+        card_stripe=card_stripe2[guide_selected[2:0]] && visible_cards[guide_selected[2:0]];
+        bg_flags[1]=box(bg_x[0],bg_y[0],40,24,1880,164)||box(bg_x[0],bg_y[0],40,992,1880,1056);
+        bg_flags[2]=bg_y[0]==163 && bg_x[0]>=40 && bg_x[0]<1880;
+        bg_flags[3]=page_show==0 && (box(bg_x[0],bg_y[0],40,192,1160,576)||box(bg_x[0],bg_y[0],40,608,1160,960)||box(bg_x[0],bg_y[0],1192,192,1880,984));
+        bg_flags[4]=page_show==0 && ((box(bg_x[0],bg_y[0],64,288,1088,545)&&bg_y[0][5:0]==32)||
             (box(x2,y2,64,696,1088,929)&&y2[5:0]==32)||(box(x2,y2,1272,304,1784,816)&&(x2==1528||y2==560)));
-        bg_flags[5]=page_show==0 && box(x2,y2,1272,832,1784,840);
-        bg_flags[6]=page_show==0 && box(x2,y2,1272,832,level_end,840);
-        bg_flags[7]=page_show==0 && (border(x2,y2,40,192,1160,576)||border(x2,y2,40,608,1160,960)||border(x2,y2,1192,192,1880,984));
-        bg_flags[8]=page_show==1 && (box(x2,y2,40,192,1448,960)||box(x2,y2,1480,192,1880,960));
-        bg_flags[9]=page_show==1 && box(x2,y2,96,256,1376,897)&&y2[6:0]==0;
+        bg_flags[5]=page_show==0 && box(bg_x[0],bg_y[0],1272,832,1784,840);
+        bg_flags[6]=page_show==0 && box(bg_x[0],bg_y[0],1272,832,level_end,840);
+        bg_flags[7]=page_show==0 && (border(bg_x[0],bg_y[0],40,192,1160,576)||border(bg_x[0],bg_y[0],40,608,1160,960)||border(bg_x[0],bg_y[0],1192,192,1880,984));
+        bg_flags[8]=page_show==1 && (box(bg_x[1],bg_y[1],40,192,1448,960)||box(bg_x[1],bg_y[1],1480,192,1880,960));
+        bg_flags[9]=page_show==1 && box(bg_x[1],bg_y[1],96,256,1376,897)&&bg_y[1][6:0]==0;
         bg_flags[10]=page_show==1 && testkey_any;bg_flags[11]=page_show==1 && testkey_down;
         bg_flags[12]=page_show==1 && testind_any;bg_flags[13]=page_show==1 && testind_down;
-        bg_flags[14]=page_show==2 && (box(x2,y2,40,192,560,960)||box(x2,y2,592,192,1880,976));
+        bg_flags[14]=page_show==2 && (box(bg_x[1],bg_y[1],40,192,560,960)||box(bg_x[1],bg_y[1],592,192,1880,976));
         bg_flags[15]=page_show==2 && card_any;bg_flags[16]=page_show==2 && card_selected;bg_flags[17]=page_show==2 && card_stripe;
-        bg_flags[18]=page_show==2 && box(x2,y2,768,256,1792,880);
-        bg_flags[19]=bg_flags[18] && !x2[7];
-        bg_flags[20]=bg_flags[18] && (x2[6:0]==0 || y2[6:0]==0);
-        bg_flags[21]=bg_flags[18] && y2>=834 && y2<894;
-        bg_flags[22]=page_show==2 && box(x2,y2,752,862,1808,866);
+        bg_flags[18]=page_show==2 && box(bg_x[2],bg_y[2],768,256,1792,880);
+        bg_flags[19]=bg_flags[18] && !bg_x[2][7];
+        bg_flags[20]=bg_flags[18] && (bg_x[2][6:0]==0 || bg_y[2][6:0]==0);
+        bg_flags[21]=bg_flags[18] && bg_y[2]>=834 && bg_y[2]<894;
+        bg_flags[22]=page_show==2 && box(bg_x[2],bg_y[2],752,862,1808,866);
         bg_flags[23]=page_show==2 && key_region;
         bg_flags[24]=bg_flags[23] && key_expected;
         bg_flags[25]=bg_flags[23] && key_matched;
         bg_flags[26]=bg_flags[23] && key_lane==7;
-        bg_flags[27]=bg_flags[23] && (x2[6:0]<4 || x2[6:0]>123);
-        bg_flags[28]=page_show==2 && ((box(x2,y2,64,864,536,896)&&!guide_teach)||(box(x2,y2,64,928,536,960)&&guide_teach));
-        bg_flags[29]=page_show==2 && box(x2,y2,768,982,1792,987);
-        bg_flags[30]=page_show==2 && box(x2,y2,768,982,progress_end,987);
-        bg_flags[31]=page_show==2 && guide_state==4 && box(x2,y2,64,552,536,616);
+        bg_flags[27]=bg_flags[23] && (bg_x[3][6:0]<4 || bg_x[3][6:0]>123);
+        bg_flags[28]=page_show==2 && ((box(bg_x[3],bg_y[3],64,864,536,896)&&!guide_teach)||(box(bg_x[3],bg_y[3],64,928,536,960)&&guide_teach));
+        bg_flags[29]=page_show==2 && box(bg_x[3],bg_y[3],768,982,1792,987);
+        bg_flags[30]=page_show==2 && box(bg_x[3],bg_y[3],768,982,progress_end,987);
+        bg_flags[31]=page_show==2 && guide_state==4 && box(bg_x[3],bg_y[3],64,552,536,616);
     end
     function [23:0] background_color(input integer index);
         begin case(index)
@@ -642,21 +676,25 @@ endcase end endfunction
         if(text5)rgb=text_color5;
     end
     // Separate palette/geometry from fade multiplication at 148.5 MHz.
-    reg [23:0] rgb_base,rgb_r;
+    reg [23:0] rgb_base,rgb_faded,rgb_direct,rgb_r;
+    reg fade_full;
     wire [11:0] fade_r=rgb_base[23:16]*fade_lvl;
     wire [11:0] fade_g=rgb_base[15:8]*fade_lvl;
     wire [11:0] fade_b=rgb_base[7:0]*fade_lvl;
-    reg vis_d0,vis_d1,vis_d2,vis_d3,vis_d4,vis_d5,vis_d6,vis_d7,vis_d8;
-    reg hs_d0,hs_d1,hs_d2,hs_d3,hs_d4,hs_d5,hs_d6,hs_d7,hs_d8,vs_d0,vs_d1,vs_d2,vs_d3,vs_d4,vs_d5,vs_d6,vs_d7,vs_d8;
+    reg vis_d0,vis_d1,vis_d2,vis_d3,vis_d4,vis_d5,vis_d6,vis_d7,vis_d8,vis_d9;
+    reg hs_d0,hs_d1,hs_d2,hs_d3,hs_d4,hs_d5,hs_d6,hs_d7,hs_d8,hs_d9,vs_d0,vs_d1,vs_d2,vs_d3,vs_d4,vs_d5,vs_d6,vs_d7,vs_d8,vs_d9;
     always @(posedge clk_p)begin
-        rgb_base<=rgb;rgb_r<=fade_lvl==15?rgb_base:{fade_r[11:4],fade_g[11:4],fade_b[11:4]};
+        rgb_base<=rgb;
+        rgb_faded<={fade_r[11:4],fade_g[11:4],fade_b[11:4]};rgb_direct<=rgb_base;fade_full<=fade_lvl==15;
+        rgb_r<=fade_full?rgb_direct:rgb_faded;
         vis_d0<=vis;vis_d1<=vis_d0;vis_d2<=vis_d1;vis_d3<=vis_d2;vis_d4<=vis_d3;vis_d5<=vis_d4;vis_d6<=vis_d5;vis_d7<=vis_d6;vis_d8<=vis_d7;
         hs_d0<=hsync;hs_d1<=hs_d0;hs_d2<=hs_d1;hs_d3<=hs_d2;hs_d4<=hs_d3;hs_d5<=hs_d4;hs_d6<=hs_d5;hs_d7<=hs_d6;hs_d8<=hs_d7;
         vs_d0<=vsync;vs_d1<=vs_d0;vs_d2<=vs_d1;vs_d3<=vs_d2;vs_d4<=vs_d3;vs_d5<=vs_d4;vs_d6<=vs_d5;vs_d7<=vs_d6;vs_d8<=vs_d7;
+        vis_d9<=vis_d8;hs_d9<=hs_d8;vs_d9<=vs_d8;
     end
 `ifndef SIM_UI3
     dvi_tx_top u_dvi(.pixel_clock(clk_p),.ddr_bit_clock(clk_p5),.reset(dvi_reset),
-        .den(vis_d8),.hsync(hs_d8),.vsync(vs_d8),.pixel_data(rgb_r),
+        .den(vis_d9),.hsync(hs_d9),.vsync(vs_d9),.pixel_data(rgb_r),
         .tmds_clk({tmds_clk_p_0,tmds_clk_n_0}),.tmds_d0({tmds_d_p_0[0],tmds_d_n_0[0]}),
         .tmds_d1({tmds_d_p_0[1],tmds_d_n_0[1]}),.tmds_d2({tmds_d_p_0[2],tmds_d_n_0[2]}));
 `endif
