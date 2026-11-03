@@ -1,3 +1,4 @@
+`include "src/hdmi/ui_video_mode.vh"
 // Native 1080p60. Both PLLs stay inside GW5AST-138C PFD/VCO limits.
 // Reference: 50 MHz *22 /40 =27.5 MHz (VCO1100, PFD50).
 // Video: 27.5 MHz *27 =742.5 MHz VCO; /5 pixels, /1 serializer.
@@ -6,7 +7,13 @@ module Gowin_PLL_720P(output lock,output clkout0,output clkout1,input clkin);
     wire ref_clk,ref_lock,pixel_lock;
     ui_pll_core #(.FREQ("50"),.MDIV(22),.FRAC(0),.DIV0(40),.DIV1(40),.OUT1("FALSE"))
         u_ref(.clkin(clkin),.reset(1'b0),.clkout0(ref_clk),.clkout1(),.lock(ref_lock));
-    ui_pll_core u_pixel(.clkin(ref_clk),.reset(!ref_lock),.clkout0(clkout0),.clkout1(clkout1),.lock(pixel_lock));
+`ifdef UI_VIDEO_720P
+    // 742.5 MHz VCO /10 pixels, /2 serializer: exact 720p60.
+    ui_pll_core #(.DIV0(10),.DIV1(2)) u_pixel(
+`else
+    ui_pll_core u_pixel(
+`endif
+.clkin(ref_clk),.reset(!ref_lock),.clkout0(clkout0),.clkout1(clkout1),.lock(pixel_lock));
     assign lock=ref_lock && pixel_lock;
 endmodule
 

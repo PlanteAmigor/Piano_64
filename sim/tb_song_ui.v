@@ -1,19 +1,29 @@
 // Capture the actual HDMI RGB pipeline, bypassing only vendor PLL/DVI cells.
 `timescale 1ns/1ps
+`include "src/hdmi/ui_video_mode.vh"
 `default_nettype none
 module tb_song_ui;
     parameter integer SHOT=0;
+`ifdef UI_VIDEO_720P
+    localparam WIDTH=1280,HEIGHT=720,VTOTAL=750,AUDIO_DIV=1520;
+`else
+    localparam WIDTH=1920,HEIGHT=1080,VTOTAL=1125,AUDIO_DIV=3040;
+`endif
     integer shot;
     reg clk=0,scope_clk=0,resetn=0,toggle=0;
     always #10 scope_clk=~scope_clk;
+    `ifdef UI_VIDEO_720P
+    always #6.734 clk=~clk;
+`else
     always #3.367 clk=~clk;
+`endif
     reg [383:0] status=0;
     reg [1023:0] roll=0;
     reg [255:0] bands=0;reg [511:0] components=0;
     reg signed [15:0] sample=0;reg scope_tog=0,scope_trg=0;
     integer audio_div=0,audio_n=0,j;
     always @(negedge clk)begin
-     if(audio_div==3040)begin audio_div=0;audio_n=audio_n+1;sample=$rtoi(20000*$sin(6.283185307*440*audio_n/48828.125));scope_tog=~scope_tog;end
+     if(audio_div==AUDIO_DIV)begin audio_div=0;audio_n=audio_n+1;sample=$rtoi(20000*$sin(6.283185307*440*audio_n/48828.125));scope_tog=~scope_tog;end
      else audio_div=audio_div+1;
     end
     wire ack;
@@ -29,7 +39,7 @@ module tb_song_ui;
         if(!$value$plusargs("SHOT=%d",shot))shot=SHOT;
         if(!$value$plusargs("OUT=%s",output_path)) output_path="work/song_checks/ui.ppm";
         f=$fopen(output_path,"wb");if(!f) $fatal(1,"UI output");
-        $fwrite(f,"P6\n1920 1080\n255\n");
+        $fwrite(f,"P6\n%0d %0d\n255\n",WIDTH,HEIGHT);
         repeat(20) @(negedge clk);resetn=1;repeat(30) @(negedge clk);
         for(j=0;j<32;j=j+1)bands[j*8+:8]=(j%8==0?220:40+j*3);
         for(j=0;j<64;j=j+1)components[j*8+:8]=220-j*3;
@@ -58,17 +68,17 @@ module tb_song_ui;
         force dut.fade_lvl=15;
         scope_trg=1;
         // Let the real scope and decimal display settle before the captured frame.
-        if(shot==5)begin wait(dut.vcnt==1124);wait(dut.vcnt==0);end
+        if(shot==5)begin wait(dut.vcnt==VTOTAL-1);wait(dut.vcnt==0);end
         else begin @(negedge clk);force dut.frame_tick=1;@(negedge clk);release dut.frame_tick;repeat(160)@(negedge clk);end
         wait(!dut.vis_d9);wait(dut.vis_d9);capture=1;
     end
     always @(posedge clk) if(capture && dut.vis_d9) begin
         if((^dut.rgb_r)===1'bx) $fatal(1,"unknown UI pixel");
         $fwrite(f,"%c%c%c",dut.rgb_r[23:16],dut.rgb_r[15:8],dut.rgb_r[7:0]);
-        if(x<1919) x=x+1;
-        else if(y<1079) begin x=0;y=y+1;end
+        if(x<WIDTH-1) x=x+1;
+        else if(y<HEIGHT-1) begin x=0;y=y+1;end
         else begin
-            $fclose(f);$display("PASS UI snapshot %0d: mailbox and 1920x1080 RGB pixels",shot);$finish;
+            $fclose(f);$display("PASS UI snapshot %0d: mailbox and %0dx%0d RGB pixels",shot,WIDTH,HEIGHT);$finish;
         end
     end
     initial begin #120000000;$fatal(1,"UI timeout");end

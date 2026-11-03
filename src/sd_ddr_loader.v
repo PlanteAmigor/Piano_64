@@ -558,6 +558,22 @@ generate for(rb=0;rb<4;rb=rb+1)begin:g_read_remaining
     assign rem_r_byte_zero[rb]=~|rem_r[rb*8+:8];
     assign rem_r_dec[rb*8+:8]=rem_r[rb*8+:8]-{7'd0,rem_r_borrow[rb]};
 end endgenerate
+// Byte-sliced counters avoid 32-bit carry chains in the 100 MHz domain.
+wire [3:0] rcnt_full /* synthesis syn_keep=1 */;
+wire [3:0] rem_w_empty /* synthesis syn_keep=1 */;
+wire [31:0] rcnt_inc /* synthesis syn_keep=1 */;
+wire [31:0] rem_w_dec /* synthesis syn_keep=1 */;
+generate for(genvar cb=0;cb<4;cb=cb+1)begin:g_verify_counters
+    assign rcnt_full[cb]=&rcnt[cb*8+:8];
+    assign rem_w_empty[cb]=~|rem_w[cb*8+:8];
+    if(cb==0)begin
+        assign rcnt_inc[cb*8+:8]=rcnt[cb*8+:8]+8'd1;
+        assign rem_w_dec[cb*8+:8]=rem_w[cb*8+:8]-8'd1;
+    end else begin
+        assign rcnt_inc[cb*8+:8]=rcnt[cb*8+:8]+{7'd0,(&rcnt_full[cb-1:0])};
+        assign rem_w_dec[cb*8+:8]=rem_w[cb*8+:8]-{7'd0,(&rem_w_empty[cb-1:0])};
+    end
+end endgenerate
 reg [5:0]  ostd;                // 已发未回的读命令数（代替 wcnt-rcnt 的 32 位减法）
 
 // ★ DDR 读数据在本模块打一拍（理由见下面「读数据收回」那段注释）
@@ -588,6 +604,15 @@ reg        v_ok;
 reg [6:0]  olen;
 reg [3:0]  ret_st;
 reg [1:0]  sphase;          // 0=发 send  1=等 busy 拉高  2=等 busy 落下
+wire [26:0] bwait_inc /* synthesis syn_keep=1 */;
+wire [2:0] bwait_full /* synthesis syn_keep=1 */;
+assign bwait_full[0]=&bwait[7:0];
+assign bwait_full[1]=&bwait[15:8];
+assign bwait_full[2]=&bwait[23:16];
+assign bwait_inc[7:0]=bwait[7:0]+8'd1;
+assign bwait_inc[15:8]=bwait[15:8]+{7'd0,bwait_full[0]};
+assign bwait_inc[23:16]=bwait[23:16]+{7'd0,(&bwait_full[1:0])};
+assign bwait_inc[26:24]=bwait[26:24]+{2'd0,(&bwait_full)};
 reg [26:0] bwait;           // 等 DDR 校准时横幅重发计时
 
 // ★ DDR 读数据打一拍（纯扇入，无逻辑）。Gowin 会把 rd_v 放到 DDR IP 输出
@@ -782,7 +807,7 @@ always @(posedge clk100) begin
                 dbg_d0 <= rd_v[31:0];
                 dbg_d1 <= rd_v[63:32];
             end
-            rcnt <= rcnt + 32'd1;
+            rcnt <= rcnt_inc;
             if (!rem_r_zero) rem_r <= rem_r_dec;
             if (ostd != 6'd0) ostd <= ostd - 6'd1;
         end
@@ -834,7 +859,7 @@ always @(posedge clk100) begin
                 ret_st <= S_BWATT;
                 st     <= S_BANNER;
             end
-            else bwait <= bwait + 27'd1;
+            else bwait <= bwait_inc;
         end
 
         // 等 DDR 校准 + 等 50MHz 侧给结论（边沿 1）
@@ -852,7 +877,7 @@ always @(posedge clk100) begin
                 ret_st <= S_WAIT;
                 st     <= S_BANNER;
             end
-            else bwait <= bwait + 27'd1;
+            else bwait <= bwait_inc;
         end
 
         // 持续出队 → 拼字 → 写 DDR
@@ -927,7 +952,7 @@ always @(posedge clk100) begin
                         rd_cmd_req  <= 1'b1;
                         rd_cmd_addr <= wcnt[28:0] << ADDR_SHIFT;   // 常量移位，避免综合出真乘法器
                         wcnt        <= wcnt + 32'd1;
-                        rem_w       <= rem_w - 32'd1;
+                        rem_w       <= rem_w_dec;
                         ostd        <= ostd + 6'd1;
                     end
                 end
@@ -1033,7 +1058,7 @@ always @(posedge clk100) begin
                 ret_st <= S_STAY;
                 st     <= S_BANNER;
             end
-            else bwait <= bwait + 27'd1;
+            else bwait <= bwait_inc;
         end
 
         default: st <= S_BANNER;

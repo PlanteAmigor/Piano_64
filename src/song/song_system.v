@@ -107,7 +107,7 @@ module song_system #(
     reg [63:0] read_data;
     always @(posedge clk) begin
         if(ram_we) events[ram_waddr]<=ram_wdata;
-        read_data<=events[read_addr[10:0]];
+        else read_data<=events[read_addr[10:0]];
     end
     wire player_overflow;
     assign dropped=player_overflow;
@@ -121,12 +121,11 @@ module song_system #(
         .wrong_count(wrong_count),.missed_count(missed_count)
     );
     // Independent synchronous display port: playback never waits for rendering.
-    reg [63:0] preview_events[0:2047];
+    // Port B shares the loaded score with playback port A.
     reg [10:0] preview_addr;
     reg [63:0] preview_data, preview_word;
     always @(posedge clk) begin
-        if(ram_we) preview_events[ram_waddr]<=ram_wdata;
-        preview_data<=preview_events[preview_addr];
+        preview_data<=events[preview_addr];
     end
     reg [3:0] scan_state;
     reg publish_preview;

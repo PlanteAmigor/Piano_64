@@ -3,6 +3,7 @@
 // persistence plot. Sample DSP uses CLK_SCOPE (global 50 MHz); only complete
 // coordinates cross into the 148.5 MHz pixel domain. Registered coordinates and ten pixel stages align
 // the text/geometry, graph overlays, palette and fade with DE/HS/VS.
+`include "src/hdmi/ui_video_mode.vh"
 `default_nettype none
 
 module hdmi_ui3_top (
@@ -211,11 +212,26 @@ module hdmi_ui3_top (
         end
     end
 
+    // CEA-861 60 Hz. The 720p output samples the complete logical 1920x1080
+    // layout at 3:2; no panel, status line or teaching lane is cropped.
+`ifdef UI_VIDEO_720P
+    localparam integer H_TOTAL=1650,H_FP=110,H_SYNC=40,H_BP=220,H_VIS=1280;
+    localparam integer V_TOTAL=750,V_FP=5,V_SYNC=5,V_BP=20,V_VIS=720;
+    localparam integer H_START=370,V_START=30;
+`else
     // CEA-861 1920x1080p60: 148.5 MHz / (2200 * 1125).
     localparam integer H_TOTAL=2200,H_FP=88,H_SYNC=44,H_BP=148,H_VIS=1920;
     localparam integer V_TOTAL=1125,V_FP=4,V_SYNC=5,V_BP=36,V_VIS=1080;
     localparam integer H_START=280,V_START=45;
+`endif
     reg [11:0] hcnt,vcnt;
+    wire [11:0] physical_x=hcnt-H_START,physical_y=vcnt-V_START;
+`ifdef UI_VIDEO_720P
+    wire [11:0] logical_x=physical_x+(physical_x>>1);
+    wire [11:0] logical_y=physical_y+(physical_y>>1);
+`else
+    wire [11:0] logical_x=physical_x,logical_y=physical_y;
+`endif
     // Keep local coordinate registers for four descriptors per bank. Shared
     // low coordinate bits otherwise drive every wide comparison across the
     // device and routing, rather than arithmetic, dominates the pixel path.
@@ -225,7 +241,7 @@ module hdmi_ui3_top (
         reg [11:0] y_q /* synthesis syn_preserve=1 */;
         wire [11:0] x_keep /* synthesis syn_keep=1 */;
         wire [11:0] y_keep /* synthesis syn_keep=1 */;
-        always @(posedge clk_p)begin x_q<=hcnt-H_START;y_q<=vcnt-V_START;end
+        always @(posedge clk_p)begin x_q<=logical_x;y_q<=logical_y;end
         assign x_keep=x_q;assign y_keep=y_q;
         assign roll_x[bank]=x_keep;assign roll_y[bank]=y_keep;
     end endgenerate
@@ -240,7 +256,7 @@ module hdmi_ui3_top (
         vis<=hcnt>=H_START && hcnt<H_START+H_VIS && vcnt>=V_START && vcnt<V_START+V_VIS;
         hsync<=hcnt>=H_FP && hcnt<H_FP+H_SYNC;
         vsync<=vcnt>=V_FP && vcnt<V_FP+V_SYNC;
-        px<=hcnt-H_START;py<=vcnt-V_START;
+        px<=logical_x;py<=logical_y;
         frame_tick<=rst_n && hcnt==H_TOTAL-1 && vcnt==V_TOTAL-1;
     end
     reg [3:0] boot_cnt;
@@ -441,6 +457,13 @@ endcase end endfunction
     wire [4:0] main_band_index=px[9:5]-5'd2;
     wire [11:0] band_origin=page_show==1?96:64;
     wire [11:0] band_pitch=page_show==1?40:32;
+`ifdef UI_VIDEO_720P
+    // A 720p pixel advances one or two logical pixels. Derive the test bars
+    // from coordinates so their 40-pixel logical spacing cannot drift.
+    wire [11:0] test_band_x=px-12'd96;
+    wire [5:0] test_band_column=test_band_x/12'd40;
+    wire [5:0] test_band_phase=test_band_x%12'd40;
+`else
     reg [5:0] test_band_column,test_band_phase;
     always @(posedge clk_p)begin
         if(!rst_n || px==95)begin test_band_column<=0;test_band_phase<=0;end
@@ -451,10 +474,15 @@ endcase end endfunction
     end
     wire [11:0] band_index=page_show==1?{6'd0,test_band_column}:((px-12'd64)>>5);
     wire [11:0] band_phase=page_show==1?{6'd0,test_band_phase}:((px-12'd64)&12'd31);
+`endif
+`ifdef UI_VIDEO_720P
+    wire [11:0] band_index=page_show==1?{6'd0,test_band_column}:((px-12'd64)>>5);
+    wire [11:0] band_phase=page_show==1?{6'd0,test_band_phase}:((px-12'd64)&12'd31);
+`endif
     reg band_on1,band_on2;
     wire [11:0] comp_x=px-64;
     reg [2:0] component_low0;
-    always @(posedge clk_p)component_low0<=(hcnt-H_START-64)>>4;
+    always @(posedge clk_p)component_low0<=(logical_x-64)>>4;
     reg comp_on1,comp_on2;
     reg [3:0] roll_column[0:31];
     reg [10:0] roll_bottom_edge[0:31];

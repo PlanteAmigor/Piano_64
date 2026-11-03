@@ -8,7 +8,7 @@ module song_file_encode(
  input wire [1:0] timbre,input wire [7:0] flags,
  output reg [10:0] read_addr,input wire [63:0] read_data,
  output wire valid,input wire ready,output reg [7:0] data,
- output reg done,output wire [15:0] file_size
+ output reg done,output reg [15:0] file_size
 );
  localparam IDLE=0,WAIT0=1,WAIT1=2,CAPTURE=3,SEND=4,CRC=5;
  reg [2:0] state;
@@ -21,8 +21,16 @@ module song_file_encode(
  wire [8:0] payload_pos=pos-9'd7;
  wire [8:0] event_pos=payload_pos-9'd2;
  wire [63:0] begin_word={flags,6'd0,timbre,duration_ms,count};
- wire [15:0] frame_count=(count+16'd31)>>5;
- assign file_size=16'd28+(count<<3)+(frame_count<<3)+(frame_count<<1)+frame_count;
+ reg [15:0] frame_count,event_bytes,frame_bytes;
+ always @(posedge clk)begin
+  if(!rst_n)begin frame_count<=0;event_bytes<=0;frame_bytes<=0;file_size<=0;end
+  else begin
+   frame_count<=(count+16'd31)>>5;
+   event_bytes<=count<<3;
+   frame_bytes<=(frame_count<<3)+(frame_count<<1)+frame_count;
+   file_size<=16'd28+event_bytes+frame_bytes;
+  end
+ end
  assign valid=state==SEND;
  wire [15:0] crc_next=crc_work[15]?(crc_work<<1)^16'h1021:crc_work<<1;
  always @(*)begin

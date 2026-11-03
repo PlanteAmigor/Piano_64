@@ -145,7 +145,7 @@ def main():
             ppm=OUT/f'ui{shot}.ppm'
             results+=bench('tb_song_ui',['sim/tb_song_ui.v','src/hdmi/hdmi_ui3_top.v','src/hdmi/ui/ui_liss_ram.v','src/hdmi/ui/ui_scope_points.v'],
                 extra=['-DSIM_UI3'],parameters=[f'-Ptb_song_ui.SHOT={shot}'],args=[f'+OUT={ppm}'])
-            im=Image.open(ppm);assert im.size==(1920,1080);assert im.getbbox() is not None,'Blank screenshot'
+            im=Image.open(ppm);assert im.size==((1280,720) if "`define UI_VIDEO_720P" in (ROOT/"src/hdmi/ui_video_mode.vh").read_text() else (1920,1080));assert im.getbbox() is not None,'Blank screenshot'
             im.save(OUT/f'ui{shot}.png');images.append(im.copy())
         contact=Image.new('RGB',(1920,1080),(20,20,20))
         for i,im in enumerate(images):contact.paste(im.resize((640,360)),((i%3)*640,(i//3)*360))

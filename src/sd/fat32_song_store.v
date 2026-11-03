@@ -27,11 +27,15 @@ module fat32_song_store #(parameter integer CLK_HZ=50000000,TIMEOUT_MS=3800)(
  reg verify_mode,verify_pending,mismatch;
  reg [7:0] verify_data;
  wire [8:0] buffer_ra=verify_mode?raddr:waddr;
+ // One physical write port. SD receive wins, as in the original ordered
+ // assignments; parser patches and sector receive occur in separate states.
+ wire receive_we=rvalid && !verify_mode;
+ wire [8:0] buffer_write_addr=receive_we?raddr:buffer_wa;
+ wire [7:0] buffer_write_data=receive_we?rdata:buffer_wd;
  assign wdata=buffer_q;
  always @(posedge clk)begin
   buffer_q<=buffer[buffer_ra];
-  if(buffer_we)buffer[buffer_wa]<=buffer_wd;
-  if(rvalid && !verify_mode)buffer[raddr]<=rdata;
+  if(buffer_we || receive_we)buffer[buffer_write_addr]<=buffer_write_data;
   if(!rst_n)begin verify_pending<=0;verify_data<=0;end
   else begin verify_pending<=rvalid && verify_mode;verify_data<=rdata;end
  end
