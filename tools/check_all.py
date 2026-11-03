@@ -49,6 +49,7 @@ def main():
     songs=[str(p.relative_to(ROOT)) for p in (ROOT/'src/song').glob('*.v')]
     results+=bench('tb_song_keys',['sim/tb_song_keys.v','src/key_scan.v','src/sd/sd_async_fifo.v',*songs])
     results+=bench('tb_key_scan_bounce',['sim/tb_key_scan_bounce.v','src/key_scan.v'])
+    results+=bench('tb_vibrato_replay',['sim/tb_vibrato_replay.v','src/optical/position_control.v'])
     results+=bench('tb_note_alloc_release',['sim/tb_note_alloc_release.v','src/note_alloc.v'])
     results+=bench('tb_song',['tb_song.v',*songs])
     for name in ['tb_song_teach','tb_song_repeat','tb_song_overlap']:
@@ -69,6 +70,7 @@ def main():
     engine=['add_engine8','add_engine_harm','add_voice8','param_cache','param_dma','ddr_param_dma',
         'add_param_rom','add_sine_lut','mix_sum','harm_buf','suona_dma']
     results+=bench('tb_audio_controls',['sim/tb_audio_controls.v',*['src/'+x+'.v' for x in engine]])
+    results+=bench('tb_guzheng_vibrato',['sim/tb_guzheng_vibrato.v',*['src/'+x+'.v' for x in engine]])
     results+=bench('tb_harm_hold',['sim/tb_harm_hold.v','src/add_engine_harm.v','src/harm_buf.v','src/suona_dma.v','src/mix_sum.v'])
     # Existing optical gesture regression returns zero even on failed assertions:
     # inspect its explicit failure count instead of trusting the process status.

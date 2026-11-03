@@ -11,7 +11,7 @@ module tb_harm_hold;
     reg [7:0] inf=0;
     reg [28:0] base=69064;
     reg [3:0] trig=0,gate=0;
-    reg hand=1,score=0,sustain=0;
+    reg hand=1,score=0,sustain=0,vib_am=0;
     reg [15:0] bend=16384;
     wire en;wire [28:0] addr;
     reg pending=0,valid=0;
@@ -32,7 +32,7 @@ module tb_harm_hold;
         .clk(clk),.rst_n(rst_n),.clk100(clk),.rst100_n(rst_n),
         .note_lo(lo),.note_hi(hi),.inf_base(inf),.desc_base(base),
         .v_note({21'd0,note}),.v_trig(trig),.v_gate(gate),.v_vel(32'd220),.score_mode(score),
-        .bend_q14(bend),.trem_en(1'b0),.vib_pitch(1'b0),.vib_am(1'b0),
+        .bend_q14(bend),.trem_en(1'b0),.vib_pitch(1'b0),.vib_am(vib_am),
         .art_en(1'b0),.stop_hold(1'b0),.hand_on(hand),.opt_en(1'b1),.opt_vel(8'd180),
         .sustain(sustain),.sample_tick(dut.cnt==0),.sample_l(pcm),
         .app_en(en),.app_addr(addr),.app_rdy(!pending),.app_rd_data_valid(valid),.app_rd_data(data)
@@ -45,12 +45,17 @@ module tb_harm_hold;
             @(negedge clk);@(negedge clk);
         end
     endtask
-    integer inst,n,k,nonzero,reads_before,phase_changes,pcm_min,pcm_max;
+    integer inst,n,k,nonzero,reads_before,phase_changes,pcm_min,pcm_max,age_prev,am_min,am_max;
     reg [18:0] last_phase;
     reg signed [15:0] saved_step;
     reg signed [63:0] before_dmt,after_dmt;
     initial begin
         repeat(5) @(negedge clk);rst_n=1;
+        // Unsigned Q13.19 phase may cross bit31 on high sustained notes.
+        force dut.phi_a=32'h7fff0000;force dut.rom_ph=32'h80010000;
+        dut.v_pfx[0]=16'd10001;#1;
+        if(dut.pre_phi!==19'h74e22)$fatal(1,"unsigned phase interpolation at bit31");
+        release dut.phi_a;release dut.rom_ph;
         for(inst=0;inst<2;inst=inst+1) begin
             lo=inst==0?69:67;hi=inst==0?96:91;inf=inst==0?0:112;
             base=inst==0?69064:176352;
@@ -60,12 +65,12 @@ module tb_harm_hold;
                 wait(dut.dma_done_p);repeat(3) @(negedge clk);
                 // Approach the default steady-state boundary using real tables.
                 wait(dut.cnt==200);@(negedge clk);
-                dut.v_ts[0]=dut.HOLD_SAMPLES-64;
-                dut.v_clock[0]=dut.HOLD_SAMPLES-64;
+                dut.v_ts[0]=dut.LOOP_END-64;
+                dut.v_clock[0]=dut.LOOP_END-64;
                 repeat(80) sample;
-                if(dut.v_step[0]<=0 || dut.v_ts[0]!=dut.HOLD_SAMPLES)
+                if(dut.v_step[0]<=0 || !dut.v_reverse[0])
                     $fatal(1,"no sustained oscillator inst=%d note=%d step=%d age=%d",inst,n,dut.v_step[0],dut.v_ts[0]);
-                saved_step=dut.v_step[0];reads_before=requests;
+                saved_step=dut.v_step[0];reads_before=requests;age_prev=dut.v_ts[0];
                 // Beyond the former 5s cutoff, with the original gate still high.
                 @(negedge clk);dut.v_clock[0]=488281;
                 nonzero=0;phase_changes=0;pcm_min=32767;pcm_max=-32768;last_phase=dut.v_pf[0];
@@ -77,11 +82,17 @@ module tb_harm_hold;
                     if(pcm>pcm_max) pcm_max=pcm;
                     if(dut.v_pf[0]!=last_phase) phase_changes=phase_changes+1;
                     last_phase=dut.v_pf[0];
-                    if(!dut.v_act[0] || dut.v_step[0]!=saved_step || requests!=reads_before)
+                    if((dut.v_ts[0]-age_prev!=1)&&(age_prev-dut.v_ts[0]!=1)) $fatal(1,"loop age jumped");
+                    age_prev=dut.v_ts[0];
+                    if(!dut.v_act[0] || dut.v_step[0]<=0 || requests!=reads_before)
                         $fatal(1,"held note stopped or retriggered inst=%d note=%d",inst,n);
                 end
                 if(nonzero<100 || phase_changes<120 || pcm_min>=0 || pcm_max<=0)
                     $fatal(1,"silent/frozen sustained PCM inst=%d note=%d nonzero=%d changes=%d",inst,n,nonzero,phase_changes);
+                // The other turning point must also stay adjacent and forward-sounding.
+                @(negedge clk);dut.v_ts[0]=dut.HOLD_SAMPLES+64;dut.v_reverse[0]=1;
+                repeat(80)sample;
+                if(dut.v_reverse[0] || dut.v_step[0]<=0)$fatal(1,"lower loop seam");
                 // Live optical pitch control must still reach the carrier.
                 bend=18432;repeat(3) sample;
                 if(dut.dphi_s2<=saved_step) $fatal(1,"held bend ignored");
@@ -97,6 +108,12 @@ module tb_harm_hold;
                 release dut.dq_vo;
                 dut.v_clock[0]=29'h1fffffff;sample;
                 if(dut.v_clock[0]!=0) $fatal(1,"phase clock did not wrap");
+                // Even a stale gesture input cannot add a second flute vibrato.
+                if(inst==1 && n==lo)begin
+                    vib_am=1;repeat(64)sample;
+                    if(dut.am_q8!=128 || dut.vib_off!=0)$fatal(1,"extra flute vibrato");
+                    vib_am=0;
+                end
                 // No hand must mute; returning hand resumes this same held note.
                 if(n==lo) begin
                     hand=0;repeat(20) sample;
@@ -117,7 +134,7 @@ module tb_harm_hold;
                 if(pcm!=0) $fatal(1,"release did not settle to zero");
             end
         end
-        $display("PASS harmonic hold: all 53 real P64 notes, steady boundary, >10s age, nonzero moving PCM, live bend, clock wrap, hand mute/resume, gate release; no DMA retrigger");
+        $display("PASS harmonic hold: all 53 real P64 notes, both smooth loop turns, >10s age, nonzero moving PCM, native flute vibrato only, live bend, clock wrap, hand mute/resume, gate release; no DMA retrigger");
         $finish;
     end
     initial begin #1000000000;$fatal(1,"hold timeout");end

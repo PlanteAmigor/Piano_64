@@ -153,9 +153,30 @@ module position_control (
     //    所以靠 ac_env 快速衰减（τ=4 帧）来收尾。
     //  ★ 与 G5 指颤互斥：左右大幅摇手优先级更高。
     //======================================================================
-    wire signed [23:0] vib_thr = rho_dc >>> 3;
+    // 实测 3_vibrato.csv：env/dc 中位数 4.4%，hp 中位数 17 帧。
+    // 旧 12.5% + [5,11] 把 499 帧全部挡住。扩窗后仍须连续交替，
+    // 静止噪声与单次慢移不能凭一个陈旧 half_period 触发。
+    wire signed [23:0] vib_thr = ((rho_dc >>> 5) > 24'sd256) ? (rho_dc >>> 5) : 24'sd256;
     wire vib_amp  = (ac_env > vib_thr) && (rho_dc > 24'sd4000);
-    wire vib_rate = (half_period >= 16'd5) && (half_period <= 16'd11);
+    wire vib_rate = (half_period >= 16'd4) && (half_period <= 16'd24);
+    reg vib_pos;
+    reg [5:0] vib_gap;
+    reg [1:0] vib_cycles;
+    wire vib_cross = (rho_ac > 24'sd256 && !vib_pos) ||
+                     (rho_ac < -24'sd256 && vib_pos);
+    always @(posedge clk) begin
+        if (!rst_n) begin vib_pos<=0;vib_gap<=63;vib_cycles<=0;end
+        else if (frame_valid) begin
+            if(vib_gap!=63) vib_gap<=vib_gap+1'b1;
+            if(vib_gap>24) vib_cycles<=0;
+            if(vib_cross) begin
+                vib_pos<=!vib_pos;vib_gap<=0;
+                if(vib_gap>=4 && vib_gap<=24 && vib_amp && vib_rate) begin
+                    if(vib_cycles!=3) vib_cycles<=vib_cycles+1'b1;
+                end else vib_cycles<=0;
+            end
+        end
+    end
     // 总开关：门限是估的（串口挂了没法实测 ac_env），现场如果误触发就改 0
     localparam integer G3_EN = 1;
 
@@ -168,7 +189,7 @@ module position_control (
     always @(posedge clk) begin
         if (!rst_n)                    vib_hold <= 5'd0;
         else if (!frame_valid)         vib_hold <= vib_hold;
-        else if (vib_amp && vib_rate)  vib_hold <= 5'd16;
+        else if (vib_amp && vib_rate && vib_cycles>=2 && vib_gap<=24) vib_hold <= 5'd16;
         else if (vib_hold != 5'd0)     vib_hold <= vib_hold - 5'd1;
     end
 

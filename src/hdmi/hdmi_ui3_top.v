@@ -291,13 +291,14 @@ module hdmi_ui3_top (
 
     wire [15:0] ax = smp_q[15] ? (~smp_q + 16'd1) : smp_q;
     wire [15:0] ay = smp_d[15] ? (~smp_d + 16'd1) : smp_d;
+    wire [15:0] peak_xy = (ax > ay) ? ax : ay;
 
     reg [15:0] pk;
     always @(posedge clk_p) begin
         if (!rst_n)       pk <= 16'd0;
         else if (noteon)  pk <= 16'd0;          // 新音：重新起峰
         else if (plot) begin
-            if (ax >= pk)          pk <= ax;
+            if (peak_xy >= pk)     pk <= peak_xy;
             else if (pk > AGC_DEC) pk <= pk - AGC_DEC;
             else                   pk <= 16'd0;
         end
@@ -450,7 +451,8 @@ module hdmi_ui3_top (
     end
 
     // pk==0（刚复位/刚触发）时增益未建立，这一拍不打点，避免画出边界角点
-    wire liss_plot = plot && settle_ok && (pk != 16'd0);
+    // 不把已经衰减到量化噪声的尾部重新放大成满屏轨迹。
+    wire liss_plot = plot && settle_ok && (pk >= 16'd128);
 
     // 第 5 级：坐标送位图
     reg [7:0] px_pt, py_pt;
@@ -558,7 +560,7 @@ module hdmi_ui3_top (
         if (!rst_n)                 boot_cnt <= 4'd0;
         else if (boot_cnt != 4'd15) boot_cnt <= boot_cnt + 4'd1;
     end
-    wire liss_clr   = (boot_cnt == 4'd8);
+    wire liss_clr   = (boot_cnt == 4'd8) || noteon;
     wire liss_decay = (vcnt == 12'd1) && (hcnt == 12'd0);
 
     // ── 余辉档位（add_top 用 KEY_R2[0] 切换，经 UI_INFO[7:6] 传过来）──

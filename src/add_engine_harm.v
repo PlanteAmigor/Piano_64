@@ -103,8 +103,10 @@ module add_engine_harm #(
     localparam integer PSI_E = 151;
     localparam integer ENV_E = 76;
     localparam integer NPRE  = 7;
-    // 约 1 s 后保持稳态音色，不能继续走到录音包络末尾。
+    // 稳态段往返读：保留原音色的气颤/包络，坐标每次只走一个样点。
+    // 不跳回起点、不重放音头；载波仍正向积分，dm 时钟仍单调推进。
     localparam integer HOLD_SAMPLES = 48832;
+    localparam integer LOOP_END = 97664;
 
     // ════════════════════════════════════════════════════════════════
     //  ROM
@@ -220,6 +222,7 @@ module add_engine_harm #(
     //  每声部状态
     // ════════════════════════════════════════════════════════════════
     reg [19:0]       v_ts [0:NVOICE-1];
+    reg             v_reverse [0:NVOICE-1];
     reg [28:0]       v_clock [0:NVOICE-1]; // dm 相位时钟，模 2^29 回绕连续
     reg signed [15:0] v_step [0:NVOICE-1]; // 稳态基频增量（弯音前）
     reg [31:0]       v_ua [0:NVOICE-1];      // u_acc（Q0.32）
@@ -414,7 +417,7 @@ module add_engine_harm #(
     //   这里拆成 wire 以便末尾再乘 bend_q14（16384 = 不弯）。
     //   ★ 必须是【无符号】乘法：phi 与 ratio 都是纯正的量，不能引入 $signed，
     //     否则 >>> 会变算术移位。
-    wire signed [63:0] pre_dphi = ($signed(rom_ph) - $signed(phi_a))
+    wire signed [63:0] pre_dphi = ($signed({1'b0,rom_ph}) - $signed({1'b0,phi_a}))
                                 * $signed({16'd0, v_pfx[hv]});
     wire [18:0]        pre_phi  = (phi_a + ((pre_dphi + 64'sd32768) >>> 16)) & 32'h7FFFF;
 
@@ -455,7 +458,7 @@ module add_engine_harm #(
         else if (sample_tick) lfo_ph <= lfo_ph + LFO_INC;
     end
     // 三角波：0 → 2^23-1 → 0，中心 2^22
-    wire [23:0]        lfo_tri = lfo_ph[23] ? ~{1'b0, lfo_ph[22:0]} : {1'b0, lfo_ph[22:0]};
+    wire [23:0]        lfo_tri = lfo_ph[23] ? {1'b0, ~lfo_ph[22:0]} : {1'b0, lfo_ph[22:0]};
     wire signed [24:0] lfo_c   = $signed({1'b0, lfo_tri}) - 25'sd4194304;
     wire signed [13:0] trem_a  = lfo_c[24:11];                 // ±2048
 
@@ -478,7 +481,7 @@ module add_engine_harm #(
         if (!rst_n)           vib_ph <= 24'd0;
         else if (sample_tick) vib_ph <= vib_ph + VIB_INC;
     end
-    wire [23:0]        vib_tri = vib_ph[23] ? ~{1'b0, vib_ph[22:0]} : {1'b0, vib_ph[22:0]};
+    wire [23:0]        vib_tri = vib_ph[23] ? {1'b0, ~vib_ph[22:0]} : {1'b0, vib_ph[22:0]};
     wire signed [24:0] vib_c   = $signed({1'b0, vib_tri}) - 25'sd4194304;
     wire signed [15:0] vib_a   = vib_c[24:10];                 // ±4096,
 
@@ -489,9 +492,9 @@ module add_engine_harm #(
         else vib_off <= vib_pitch ? (vib_a >>> 4) : 16'sd0;    // ±256 ≈ ±27 音分
     end
 
-    // 幅度颤音：Q7（128 = 1.0），96..160 = 0.75..1.25
-    wire signed [15:0] am_off = vib_am ? (vib_a >>> 7) : 16'sd0;   // ±32
-    wire        [7:0]  am_q8  = 8'd128 + am_off[7:0];
+    // 笛子只保留音色表原生气颤；不叠加独立手势 AM/FM。
+    // vib_am 端口保留接口兼容，顶层固定为 0。
+    wire [7:0] am_q8 = 8'd128;
 
     // 比值叠加（带下限保护，不能让总比变 0/负）
     //  ★ 平均音高补偿：±12.5% 的频率摆幅在【音分】上不对称
@@ -508,7 +511,9 @@ module add_engine_harm #(
         else        ratio_q <= ratio_use;
     end
 
-    wire signed [15:0] phase_step = (v_ts[hv] >= HOLD_SAMPLES) ? v_step[hv] : dphi_s;
+    // 反向读表只反转音色变化的时间，不反转声波。两端没有坐标跳变，
+    // 相邻 Φ 的差取正值后累加，原生颤音继续，转向也不会突然定住基频。
+    wire signed [15:0] phase_step = (dphi_s < 16'sd0) ? -dphi_s : dphi_s;
     wire signed [32:0] dphi_r = phase_step * ratio_q;
     wire signed [19:0] dphi_s2 = (dphi_r + 33'sd8192) >>> 14;   // 带四舍五入
 
@@ -659,6 +664,7 @@ module add_engine_harm #(
             pv0 <= 0; pv1 <= 0; pv2 <= 0; pv3 <= 0; pv4 <= 0;
             for (i = 0; i < NVOICE; i = i + 1) begin
                 v_ts[i] <= 20'd0;
+                v_reverse[i] <= 1'b0;
                 v_clock[i] <= 29'd0;
                 v_step[i] <= 16'sd0;
                 v_ua[i] <= 32'd0; v_pf[i] <= 19'd0; v_php[i] <= 19'd0; v_phl[i] <= 19'd0;
@@ -734,9 +740,15 @@ module add_engine_harm #(
                         //   延音档下改成等释放增益衰到 0 再停。
                         if (!v_gate[i] && (!sustain || rel_gain == 8'd0))
                             v_act[i] <= 1'b0;
-                        // 包络/残差相位保持稳态，但载波和 dm 相位继续运行。
-                        // 停音由真实 gate / 延音释放决定，不设长按超时。
-                        if (v_ts[i] < HOLD_SAMPLES)
+                        if (!v_reverse[i] && v_ts[i] >= LOOP_END) begin
+                            v_reverse[i] <= 1'b1;
+                            v_ts[i] <= v_ts[i] - 20'd1;
+                        end else if (v_reverse[i] && v_ts[i] <= HOLD_SAMPLES) begin
+                            v_reverse[i] <= 1'b0;
+                            v_ts[i] <= v_ts[i] + 20'd1;
+                        end else if (v_reverse[i])
+                            v_ts[i] <= v_ts[i] - 20'd1;
+                        else
                             v_ts[i] <= v_ts[i] + 20'd1;
                         v_clock[i] <= v_clock[i] + 29'd1;
                     end
@@ -755,6 +767,7 @@ module add_engine_harm #(
                 sd_pend <= 1'b0;
                 v_act[0]  <= 1'b1;
                 v_ts[0]   <= 20'd0;
+                v_reverse[0] <= 1'b0;
                 v_clock[0] <= 29'd0;
                 v_step[0] <= 16'sd0;
                 v_ua[0]   <= 32'd0;
@@ -785,8 +798,7 @@ module add_engine_harm #(
                                   // ★ 第二级：用上一拍采到的 Φ 求增量、乘弯音比、累加
                                   v_pf[hv]  <= v_pf[hv] + dphi_s2[18:0];
                                   v_php[hv] <= v_phl[hv];
-                                  if (v_ts[hv] < HOLD_SAMPLES)
-                                      v_step[hv] <= dphi_s;
+                                  v_step[hv] <= phase_step;
                               end
                         3'd1: begin
                                   pre_u0   <= rom_u;

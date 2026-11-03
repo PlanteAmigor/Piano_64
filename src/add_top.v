@@ -455,7 +455,8 @@ module add_top #(
     reg [1:0] agl_sel;
 
     always @(posedge clk_sys) begin
-        if (!engine_rst_n)              agl_sel <= 2'd0;
+        if (!engine_rst_n)              agl_sel <= 2'd3;
+        else if (timbre_r != display_timbre) agl_sel <= timbre_r[1] ? 2'd0 : 2'd3;
         else if (r2_press[0])           agl_sel <= (agl_sel == 2'd3) ? 2'd0
                                                          : agl_sel + 2'd1;
     end
@@ -468,9 +469,16 @@ module add_top #(
     reg [1:0] flt_sel;
 
     always @(posedge clk_sys) begin
-        if (!engine_rst_n)              flt_sel <= 2'd0;
+        if (!engine_rst_n)              flt_sel <= 2'd1;
+        else if (timbre_r != display_timbre) flt_sel <= timbre_r[1] ? 2'd0 : 2'd1;
         else if (r2_press[1])           flt_sel <= (flt_sel == 2'd2) ? 2'd0
                                                          : flt_sel + 2'd1;
+    end
+
+    reg [1:0] display_timbre;
+    always @(posedge clk_sys) begin
+        if(!engine_rst_n) display_timbre<=0;
+        else display_timbre<=timbre_r;
     end
 
     // ★ 古筝判定必须写【== 1】，不能再用 timbre_r[0]
@@ -851,7 +859,7 @@ module add_top #(
         .bend_q14   (guide_mode && !hand_on ? 16'd16384 : opt_bend_q14),
         .trem_en    (opt_trem_en && is_suona && (!guide_mode || hand_on)),
         .vib_pitch  (opt_vib_en && is_suona && (!guide_mode || hand_on)),   // G3 颤音（音高） 唢呐
-        .vib_am     (opt_vib_en && is_dizi && (!guide_mode || hand_on)),    // G3 颤音（幅度） 笛子
+        .vib_am     (1'b0),                  // 笛子只用音色自带气颤
         .art_en     (opt_art  && is_harm && (!guide_mode || hand_on)),      // G7 顿音/吐音
         .stop_hold  (opt_stop && is_harm && (!guide_mode || hand_on)),      // G8 急停
         .hand_on    (guide_mode ? 1'b1 : opt_hand),                 // 有手才响

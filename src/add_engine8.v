@@ -98,7 +98,7 @@ module add_engine8 #(
         if (!rst_n)           vib_ph <= 24'd0;
         else if (sample_tick) vib_ph <= vib_ph + VIB_INC;
     end
-    wire [23:0]        vib_tri = vib_ph[23] ? ~{1'b0, vib_ph[22:0]} : {1'b0, vib_ph[22:0]};
+    wire [23:0]        vib_tri = vib_ph[23] ? {1'b0, ~vib_ph[22:0]} : {1'b0, vib_ph[22:0]};
     wire signed [24:0] vib_c   = $signed({1'b0, vib_tri}) - 25'sd4194304;
     wire signed [16:0] vib_off = vib_en ? {{5{vib_c[24]}}, vib_c[24:13]} : 17'sd0;
 
