@@ -60,6 +60,7 @@ module add_voice8 #(
     input  wire [6:0]          note_off,     // 保留（旧接口，现由 DMA 使用）
     input  wire [7:0]          vel_gain,     // ★ 力度增益 2..254（来自双触点 Δt）
     input  wire [15:0]         bend_q14,     // ★ 音高比 Q2.14（16384 = 不弯，古筝滑音）
+    input  wire                mute_fast,    // ★ G7/G8：强制快速静音（ramp −8/样点）
     output wire [6:0]          rom_addr,     // ★ 改成“分量号 p”：cache 里就是本音的数据
 
     output reg  signed [15:0]  sample,       // 本声部在本样点的和（保持到下一个样点）
@@ -394,7 +395,10 @@ module add_voice8 #(
                     //    手指贴近光敏管时 opt_vel 饱和到 255 就会触发（实测：
                     //    钢琴/古筝有噪声，唢呐/笛子没有——后者不走 ramp）。
                     //    键盘力度上限是 254，所以以前从未暴露。
-                    if (ramp < vel_gain)
+                    // ★ G7 顿音 / G8 急停：强制快速静音（0.5 ms 落到 0，无咔喑）
+                    if (mute_fast)
+                        ramp <= (ramp > 8'd8) ? (ramp - 8'd8) : 8'd0;
+                    else if (ramp < vel_gain)
                         ramp <= (ramp_nx >= {1'b0, vel_gain}) ? vel_gain
                                                               : ramp_nx[7:0];
                     else if (ramp > vel_gain)

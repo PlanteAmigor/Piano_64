@@ -143,9 +143,11 @@ module add_top #(
     wire        [7:0]  opt_vel;
     wire               opt_en;
 
-    // ★ 光学力度生效条件：手在传感器上方，且力度不是噪声底
-    //   （opt_vel ≤ 8 时当作“没有手”，回退到键盘双触点力度）
-    wire opt_act = opt_en && (opt_vel > 8'd8);
+    // ★★ 有手在才响：键盘只决定音名与触发，不贡献音量。
+    //    没有手 → 力度 0（真的没声音），不再回退到键盘常量 128。
+    //    ★ opt_hand 由 position_control 用【即时 rho_raw】算出（1 帧响应），
+    //      不能用 opt_vel —— 它源自 rho_dc 慢基线，会在急停后造成“回光返照”。
+    wire hand_on = opt_hand;
 
     //======================================================================
     //  板上 KEY.0（AA13）→ 三模式页面循环
@@ -516,8 +518,7 @@ module add_top #(
     //   add_voice8 里 vel_gain 是【实时目标值】（ramp 每次 +2/−1 向它收敛），
     //   不是按下的瞬间锁存，所以这里连续覆盖就能当「音量踏瓣」用：
     //   按住琴键不动、手抬起来 → 声音渐弱；压下去 → 渐强。
-    //   opt_act 为假（手拿开 6 s 以上）时回退到键盘双触点力度。
-    wire [NVOICE*8-1:0] vel_eng = opt_act ? {NVOICE{opt_vel}} : v_vel;
+    wire [NVOICE*8-1:0] vel_eng = hand_on ? {NVOICE{opt_vel}} : {NVOICE{8'd0}};
 
     //======================================================================
     //  ★ 每个乐器独立的按键映射（键名位置固定，但音高与可用键不同）
@@ -662,6 +663,8 @@ module add_top #(
         //    二者共用同一个 add_engine8 实例，所以在顶层按音色选。
         .bend_q14   (is_gz ? opt_bend_q14 : 16'd16384),
         .vib_en     (opt_vib_en && is_gz),   // G3 揉弦（古筝）
+        .art_en     (opt_art  && is_gz),     // G7 顿音
+        .stop_hold  (opt_stop && is_gz),     // G8 急停
         // ★ 延音：由效果器档位控制（SUSTAIN 单独一档，也可与 DELAY 叠加）——
         //   松键后按每个音自己的自然衰减率继续响，而不是 0.30 s 一刀煞掉。
         .sustain    (fx_sus_on),
@@ -781,6 +784,9 @@ module add_top #(
         .trem_en    (opt_trem_en && is_suona),
         .vib_pitch  (opt_vib_en && is_suona),   // G3 颤音（音高） 唢呐
         .vib_am     (opt_vib_en && is_dizi),    // G3 颤音（幅度） 笛子
+        .art_en     (opt_art  && is_harm),      // G7 顿音/吐音
+        .stop_hold  (opt_stop && is_harm),      // G8 急停
+        .hand_on    (opt_hand),                 // 有手才响
         .opt_en     (opt_en),
         .opt_vel    (opt_vel),
         .sample_tick(tick),
@@ -1708,6 +1714,9 @@ module add_top #(
     wire        [15:0] opt_bend_q14_ctl;
     wire               opt_trem_en;
     wire               opt_vib_en;
+    wire               opt_art;
+    wire               opt_stop;
+    wire               opt_hand;
 
     position_control u_opt_ctl (
         .clk         (clk_sys),
@@ -1716,6 +1725,7 @@ module add_top #(
         .x_q8        (opt_x_q8),
         .x_valid     (opt_x_valid),
         .rho_dc      (opt_rho_dc),
+        .rho_raw     (opt_rho_raw),
         .rho_ac      (opt_rho_ac),
         .ac_env      (opt_ac_env),
         .half_period (opt_half_period),
@@ -1723,7 +1733,10 @@ module add_top #(
         .bend_q14    (opt_bend_q14_ctl),  // ★ 2^(cent/1200) 查表得到，不再用线性近似
         .vel         (opt_vel),
         .trem_en     (opt_trem_en),
-        .vib_en      (opt_vib_en)
+        .vib_en      (opt_vib_en),
+        .art_pulse   (opt_art),
+        .stop_hold   (opt_stop),
+        .hand_on     (opt_hand)
     );
 
     // ★★★ 临时诊断（DIAG_FORCE_BEND=1）：把音高比钉死成常量，绕开控制器。

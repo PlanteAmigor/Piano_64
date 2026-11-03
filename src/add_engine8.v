@@ -62,6 +62,8 @@ module add_engine8 #(
     input  wire [NVOICE*8-1:0]     v_vel,
     input  wire [15:0]             bend_q14,     // ★ 音高比 Q2.14（16384 = 不弯）
     input  wire                    vib_en,       // ★ G3 揉弦（古筝），±53 音分 5 Hz
+    input  wire                    art_en,       // ★ G7 顿音（单时钟脉冲）
+    input  wire                    stop_hold,    // ★ G8 急停（电平）
     input  wire                    sustain,      // ★ 延音开关（1 = 松键后继续自然衰减）
     input  wire                    timbre,
     input  wire                    sample_tick,
@@ -103,6 +105,20 @@ module add_engine8 #(
     // 滑音 + 揉弦合成一个音高比，限幅后分发给所有声部
     wire signed [16:0] bend_s  = $signed({1'b0, bend_q14}) + vib_off;
     wire        [15:0] bend_gz = (bend_s < 17'sd2048) ? 16'd2048 : bend_s[15:0];
+
+    // ════════════════════════════════════════════════════════════════
+    //  G7 顿音 / G8 急停：整个乐器（所有声部）快速静音
+    //    G7 = 33 ms 静音后立即恢复 → 听感是“吐”的一声
+    //    G8 = 57 ms 静音 → 急停（比自然衰减快得多）
+    // ════════════════════════════════════════════════════════════════
+    reg [17:0] fm_hold;
+    always @(posedge clk) begin
+        if (!rst_n)                    fm_hold <= 18'd0;
+        else if (stop_hold)            fm_hold <= 18'd1000;   // 手不回来就一直静音
+        else if (art_en)               fm_hold <= 18'd1600;   // 33 ms（“吐”）
+        else if (fm_hold != 18'd0)     fm_hold <= fm_hold - 18'd1;
+    end
+    wire mute_fast = (fm_hold != 18'd0);
 
     // ════════════════════════════════════════════════════════════════
     //  音域钳位 → 表内偏移（每声部独立）
@@ -379,6 +395,7 @@ module add_engine8 #(
                 .sustain  (sustain),
                 .vel_gain (v_vel[g*8 +: 8]),
                 .bend_q14 (bend_gz),            // ★ 滑音 + 揉弦
+                .mute_fast(mute_fast),          // ★ G7/G8
                 .rd0      (c_d0),
                 .rd1      (c_d1),
                 .rd2      (c_d2),

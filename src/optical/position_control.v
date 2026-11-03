@@ -34,6 +34,7 @@ module position_control (
     input  wire [15:0]       x_q8,
     input  wire              x_valid,
     input  wire signed [23:0] rho_dc,
+    input  wire signed [23:0] rho_raw,    // 逐帧原始差分（G7/G8 必须用它）
     input  wire signed [23:0] rho_ac,     // rho_raw − rho_dc（opt_feat）
     input  wire signed [23:0] ac_env,     // |rho_ac| 的包络（opt_feat）
     input  wire [15:0]       half_period, // rho_ac 两次过零之间的帧数
@@ -42,7 +43,10 @@ module position_control (
     output wire        [7:0]  vel,      // 0..255
     output wire        [15:0] bend_q14, // 音高比 Q2.14（16384 = 不弯）
     output wire               trem_en,  // G5 指颤：检测到左右大幅快速摇手
-    output wire               vib_en    // G3 颤音：检测到上下轻摇
+    output wire               vib_en,   // G3 颤音：检测到上下轻摇
+    output reg                art_pulse,// G7 顿音/吐音（单帧脉冲）
+    output wire               stop_hold, // G8 急停（电平：手抽走期间一直为 1）
+    output reg                hand_on   // 手是否在传感器上方（即时，用于“有手才响”）
 );
 
     localparam signed [16:0] X_CENTER = 17'sd1894;   // 7.40 cm
@@ -128,6 +132,12 @@ module position_control (
     //   然后当成【无驱动】处理（EX3671/EX1998），iverilog 直接报错。
     assign trem_en = (xa_gap_l >= 6'd5) && (xa_gap_l <= 6'd20) && (xa_gap <= 6'd24);
 
+    // 横向正在移动中（|x 快分量| > 1 cm）：滑音/指颤期间，
+    // 纵向的顿音/急停判定要禁用（见 G7/G8 处说明）
+    // ★ 阈值取 256（1 cm）而不是 xac_big 的 384：横向扫动时 x_dc 滞后，
+    //   |xac| 一般在 300~600，用 256 更稳地把它识别为"正在滑音"。
+    wire lateral_mv = (xac > 18'sd256) || (xac < -18'sd256);
+
     //======================================================================
     //  G3 颤音检测：上下轻摇
     //
@@ -163,6 +173,129 @@ module position_control (
     end
 
     assign vib_en = G3_EN && (vib_hold != 5'd0) && !trem_en;
+
+    //======================================================================
+    //  手在不在（用于“有手才响”）—— 必须用【即时】rho_raw
+    //
+    //  ★★ 不能用 opt_vel（它源自 rho_dc，两级低通 τ≈96 ms）：
+    //     手抽走后 rho_raw 在 1 帧（12 ms）内就掉到无手电平（2068），
+    //     而 rho_dc 要 300~400 ms 才跟上。用 opt_vel 判会有 200~400 ms
+    //     的空窗：急停先静音，rho_ac 恢复后静音解除但 rho_dc 还虚高
+    //     → 声音“回光返照”响一下，然后才真的掉下去。
+    //
+    //  定标：无手 ρ≈2068±88，10 cm≈7251。取 3500（16σ 以上，很安全）。
+    //  连续 3 帧（36 ms）低于门限才判“手走了”，防单帧毛刺。
+    //======================================================================
+    localparam signed [23:0] HAND_TH = 24'sd3400;
+    reg [1:0] hand_cnt;
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            hand_cnt <= 2'd0;
+            hand_on  <= 1'b0;
+        end else if (frame_valid) begin
+            if (rho_raw > HAND_TH) begin
+                hand_cnt <= 2'd0;
+                hand_on  <= 1'b1;
+            end else if (hand_cnt != 2'd3) begin
+                hand_cnt <= hand_cnt + 2'd1;
+            end else begin
+                hand_on  <= 1'b0;
+            end
+        end
+    end
+
+    //======================================================================
+    //  G7 顿音/吐音  +  G8 急停：ρ 的快速瞬态
+    //
+    //  ★★ 必须用 rho_raw（逐帧原始差分），不能用 rho_dc：
+    //     rho_dc 是两级 IIR（τ≈96 ms），30~80 ms 的顿音会被完全抹平。
+    //
+    //  ★ 阈值按实测标定定（ρ 每 cm 的变化量）：
+    //      1→2 cm  7696 码/cm      ← 近距离非常敏感
+    //      2→4 cm  5616 码/cm
+    //      4→10cm   373 码/cm      ← 远距离迟钝 20 倍
+    //    所以手贴很近时信号反而最大，不需要担心触发不到。
+    //    真正的限制是物理空间（已贴 1 cm 时压不下去），因此判据同时接受
+    //    【先压后抬】和【先抬后压】两种极性顺序。
+    //
+    //  ★ 判据用【两帧平均差分】压噪声（rho_raw 噪声 σ≈88 码）：
+    //      dv = (rho_raw[n] − rho_raw[n−2]) / 2
+    //======================================================================
+    // ★ 阈值 1200 而不是 700：5 Hz 颤音（幅度 20%）本身就有
+    //    1898×2π×5/83.3 ≈ 716 码/帧 的变化，阈值太低会把颤音当成顿音。
+    //    ✓ 远处顿音（8→5 cm，3 帧）≈ 1722 码/帧，仍有足够余量
+    //    ✓ 近处顿音（2→1 cm，3 帧）≈ 2565 码/帧
+    localparam signed [24:0] DV_HI = 25'sd1200;      // 码/帧
+
+    reg signed [23:0] rr_p, rr_p2;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            rr_p  <= 24'sd0;
+            rr_p2 <= 24'sd0;
+        end else if (frame_valid) begin
+            rr_p  <= rho_raw;
+            rr_p2 <= rr_p;
+        end
+    end
+
+    wire signed [24:0] dv = ($signed({rho_raw[23], rho_raw})
+                           - $signed({rr_p2[23], rr_p2})) >>> 1;
+    wire dv_up = (dv >  DV_HI);
+    wire dv_dn = (dv < -DV_HI);
+
+    // ★★ G8 急停改成【相对量】判据：rho_raw 跌到慢基线以下 25% → 手真的抽走了
+    //
+    //   为什么不用单帧斜率：真实的「快速抬手」大约要 100 ms，
+    //   摊到每帧只有 ~950 码，低于「能挡住 5 Hz 颤音（716 码/帧）」所必需的
+    //   1200 → 现场永远触发不了（这就是第一次实测的问题）。
+    //   而相对量自动适应远近：
+    //     5 Hz 颤音 幅度 20%  → rho_ac 最低 −0.20·rho_dc，打不到 −0.25·rho_dc ✓
+    //     手真的抽走          → rho_ac 能到 −0.8·rho_dc 以下 ✓
+    //     ★ 阈值取 0.3125·rho_dc（=1/4+1/16，两次移位相加）：
+    //       颤音幅度最大 30% → rho_ac 最低 −0.30·rho_dc，仍在门限之外 ✓
+    //       手真的抽走 → rho_ac 能到 −0.58·rho_dc 以下 ✓
+    wire signed [23:0] stop_thr = -((rho_dc >>> 2) + (rho_dc >>> 4));
+    // ★ 输出【电平】而不是脉冲：手拿开后慢基线还会拖很久，
+    //   用固定时长的静音会出现“声音回光返照”（57 ms 后音量又回来）。
+    //   电平持续期间引擎一直静音，手真正回来（rho_ac 回到基线附近）才放开。
+    assign stop_hold = (rho_ac < stop_thr) && (rho_dc > 24'sd3000)
+                    && (vib_hold == 5'd0) && !trem_en && !lateral_mv;
+
+    // 最近 6 帧内是否出现过反向大变化
+    reg [2:0] up_tmr, dn_tmr;
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            up_tmr     <= 3'd0;
+            dn_tmr     <= 3'd0;
+            art_pulse  <= 1'b0;
+        end else if (frame_valid) begin
+            art_pulse  <= 1'b0;
+            if (up_tmr != 3'd0) up_tmr <= up_tmr - 3'd1;
+            if (dn_tmr != 3'd0) dn_tmr <= dn_tmr - 3'd1;
+
+            // ★ 摇手（G3 颤音 / G5 指颤）或横向快速移动期间禁止顿音：
+            //   上下轻摇本身就在快速改变 rho，不屏蔽会被当成一串顿音。
+            //   ★★ 横向快速扫动（滑音）时必须也屏蔽：手会部分移出传感器阵列，
+            //      ρ 随之起伏 → 被当成一串顿音/急停 → 引擎反复 mute_fast，
+            //      古筝余音长，chatter 特别刺耳（实测现场就是这样）。
+            if (vib_hold != 5'd0 || trem_en || lateral_mv) begin
+                art_pulse  <= 1'b0;
+                up_tmr     <= 3'd0;
+                dn_tmr     <= 3'd0;
+            end else begin
+                if (dv_up) begin
+                    if (dn_tmr != 3'd0) art_pulse <= 1'b1;   // 先压后抬（或先抬后压）
+                    up_tmr <= 3'd6;
+                end
+                if (dv_dn) begin
+                    if (up_tmr != 3'd0) art_pulse <= 1'b1;   // 反向回来 → 顿音
+                    dn_tmr <= 3'd6;
+                end
+            end
+        end
+    end
 
     always @(posedge clk) begin
         if (!rst_n)         x_acc <= (18'd1894 << 3);

@@ -59,6 +59,9 @@ module add_engine_harm #(
     input  wire                    trem_en,        // G5 指颤：1 = 叠加 6 Hz ±200 音分
     input  wire                    vib_pitch,      // G3 颤音（音高）：唢呐
     input  wire                    vib_am,         // G3 颤音（幅度）：笛子（基础模型自带气颤，不能再改音高）
+    input  wire                    art_en,         // G7 顿音/吐音（单时钟脉冲）
+    input  wire                    stop_hold,      // G8 急停（电平：手抽走期间一直为 1）
+    input  wire                    hand_on,        // 手在传感器上方（即时，见 position_control）
     input  wire                    opt_en,         // 1 = 用光学力度
     input  wire [7:0]              opt_vel,        // 0..255
     input  wire                    sample_tick,
@@ -565,21 +568,59 @@ module add_engine_harm #(
     //  >>7：实测 1 cm 高 vel≈190、2 cm≈130、4 cm≈42、10 cm≈25，
     //  → 音量 255/156/37/28，抬落有 17~19 dB 动态（>>8 太小、会一直偏轻）
     wire [9:0]  opt_vel_g9  = 10'd24 + opt_vel_sq[15:7];    // 24..532
-    wire [7:0]  opt_vel_eff = (opt_vel_g9 > 10'd255) ? 8'd255 : opt_vel_g9[7:0];
+    // ★ opt_vel == 0 时必须真的是 0：否则上面的 +24 会让“手走了”还有 9% 音量
+    wire [7:0]  opt_vel_eff = (opt_vel == 8'd0) ? 8'd0 :
+                              ((opt_vel_g9 > 10'd255) ? 8'd255 : opt_vel_g9[7:0]);
 
     //  ★ 只有【真的看到手】（opt_vel > 8）才切到光学力度。
     //     opt_en 是「手离开后延迟 6 s 才放开」，若只按 opt_en 切，
     //     手一拿走 opt_vel 立刻归 0 → 这 6 秒里音量是 24/256 ≈ 9%，
     //     弹琴会突然没声。所以两个条件都得满足。
-    wire        opt_act = opt_en && (opt_vel > 8'd8);
-    wire [7:0]  vel_all = opt_act ? opt_vel_eff : v_vel[7:0];
+    //  ★★ 有手在才响（最终语义）：键盘只决定【音名和触发】，不贡献音量。
+    //     没有手 = 没有声音，也不再有“回退到键盘 128”这种回光返照。
+    //     ★ hand_on 由 position_control 用【即时 rho_raw】算出，
+    //       不能用 opt_vel（源自 rho_dc，慢 300~400 ms）。
+    wire [7:0]  vel_all = hand_on ? opt_vel_eff : 8'd0;
     wire [7:0]  vel_eff  = sus_rel ? rel_gain : vel_all;
-    // ★ G3 幅度颤音（笛子）：vel_eff × am_q8(Q7) >> 7
+    // ★ G3 幅度颤音（笛子）：vel_eff × am_q8(Q7)，再乘 G7/G8 的快速静音闸门。
     //   先算好并打一拍再送进 ST_DRAIN，不然输出路径上会串两个乘法。
-    //   am_q8 = 128 时 vel_am == vel_eff（不颤）。
-    wire [15:0] vel_am_p = vel_eff * am_q8;
-    wire [8:0]  vel_am_s = vel_am_p[15:7];
-    wire [7:0]  vel_am_n = (vel_am_s > 9'd255) ? 8'd255 : vel_am_s[7:0];
+    //   am_q8 = 128、fm_g = 256 时 vel_am == vel_eff（不颤、不静音）。
+    reg  [8:0]  fm_g;                          // 0..256（256 = 全开）
+    reg  [12:0] fm_hold;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            fm_g    <= 9'd256;
+            fm_hold <= 13'd0;
+        end else begin
+            if (stop_hold || !hand_on)     fm_hold <= 13'd1200;   // 手不在/急停：静音（0.33 ms 落下，不咔喑）
+            else if (art_en)               fm_hold <= 13'd1600;   // 33 ms 静音 → “吐”
+            else if (fm_hold != 13'd0)     fm_hold <= fm_hold - 13'd1;
+            if (fm_hold != 13'd0)
+                fm_g <= (fm_g > 9'd15) ? (fm_g - 9'd16) : 9'd0;    // 0.33 ms 落下
+            else
+                fm_g <= (fm_g < 9'd240) ? (fm_g + 9'd16) : 9'd256; // 0.33 ms 恢复
+        end
+    end
+
+    // ★ 增益合并：am_q8(Q7) × fm_g(Q8) 先算成一个 g_q7，后面只乘一次。
+    //   原来写成 vel_eff×am 再 ×fm，三级乘法串在一起 → 22.5 ns / 233 条违例。
+    //   am=128、fm=256 时 g_q7 = 128（正好是 Q7 的 1.0）。
+    wire [16:0] g_comb = {9'd0, am_q8} * {8'd0, fm_g};
+    reg  [7:0]  g_q7;
+    always @(posedge clk) begin
+        if (!rst_n) g_q7 <= 8'd128;
+        else        g_q7 <= (g_comb[16:8] > 9'd255) ? 8'd255 : g_comb[16:8];
+    end
+
+    // vel_eff 是帧率量，打一拍不影响任何行为，却能把组合链断开
+    reg  [7:0]  vel_eff_r;
+    always @(posedge clk) begin
+        if (!rst_n) vel_eff_r <= 8'd0;
+        else        vel_eff_r <= vel_eff;
+    end
+
+    wire [15:0] vel_am_p = vel_eff_r * g_q7;
+    wire [7:0]  vel_am_n = (vel_am_p[15:7] > 9'd255) ? 8'd255 : vel_am_p[15:7];
     reg  [7:0]  vel_am;
     always @(posedge clk) begin
         if (!rst_n) vel_am <= 8'd0;
