@@ -158,13 +158,52 @@ module fx_reverb #(
     reg signed [15:0] fsn;              // 阻尼后的值
     reg signed [31:0] mul;              // fsn * FB_Q8
 
-    reg signed [19:0] ap_l, ap_r;       // 全通链的当前值（逐级推进）
+    reg signed [15:0] ap_l, ap_r;       // 全通链的当前值（已饱和到 16 位）
 
     // 地址
     //   ★ 阻尼求和的中间变量必须显式 signed：
     //     {rdl[15], rdl} 是拼接，属于 unsigned；一旦表达式里有 unsigned，
     //     整条表达式都按 unsigned 求值，后面的 >>> 会退化成逻辑右移（符号位被清零）。
     wire signed [16:0] fs_sum = $signed({rdl[15], rdl}) + $signed({cfs[k][15], cfs[k]});
+
+    // ★★★ 全通级必须【逐级饱和】，不能把 20 位截断成 16 位。
+    //   8 条梳状并联的稳态增益是 1/(1−0.879)≈8.26，8 条加起来约 66×，
+    //   满量程输入时 acc_l+rdl 会超过 32767。原来写的是
+    //       amem_l[aa_wr] <= $signed(ap_l[15:0]) + (rdl >>> 1);
+    //   ap_l[15:0] 直接把 20 位截断（无饱和）→ 回绕成垃圾写进延迟线，
+    //   而全通有 0.5 反馈 → 垃圾值自我维持 → **输出永远是噪声**。
+    //   验证：tb_rev_full.v 满量程噪声后静音 60000 点，后半段 RMS 停在 1330。
+    //   ★ tb_fx_reverb.v（单位脉冲，幅度仅 17~35）根本跑不到这个区间，
+    //     所以 60000 点 bit-exact 无法暴露这个 bug。
+    function signed [15:0] sat20;
+        input signed [19:0] v;
+        begin
+            if      (v >  20'sd32767) sat20 =  16'sd32767;
+            else if (v < -20'sd32768) sat20 = -16'sd32768;
+            else                      sat20 = v[15:0];
+        end
+    endfunction
+
+    function signed [15:0] sat17;
+        input signed [16:0] v;
+        begin
+            if      (v >  17'sd32767) sat17 =  16'sd32767;
+            else if (v < -17'sd32768) sat17 = -16'sd32768;
+            else                      sat17 = v[15:0];
+        end
+    endfunction
+
+    // 全通三级运算：17/20 位中间量 + 饱和
+    wire signed [19:0] ap0_l = acc_l + {{4{rdl[15]}}, rdl};
+    wire signed [19:0] ap0_r = acc_r + {{4{rdr[15]}}, rdr};
+    wire signed [16:0] ap1_l = $signed({rdl[15], rdl})
+                             - ($signed({ap_l[15], ap_l}) >>> 1);
+    wire signed [16:0] ap1_r = $signed({rdr[15], rdr})
+                             - ($signed({ap_r[15], ap_r}) >>> 1);
+    wire signed [16:0] awm_l = $signed({ap_l[15], ap_l})
+                             + ($signed({rdl[15], rdl}) >>> 1);
+    wire signed [16:0] awm_r = $signed({ap_r[15], ap_r})
+                             + ($signed({rdr[15], rdr}) >>> 1);
     //   base = k*2048 / a*1024 用拼接实现（移位常量，不占逻辑）
     //   段内偏移用 11/10 位无符号减法 → 负数自动按位宽取模，正好是要的回绕
     //   ★ 函数返回值不能直接位选（iverilog 语法），先落到 wire
@@ -266,9 +305,9 @@ module fx_reverb #(
                 acc_l       <= acc_l + rdl;
                 acc_r       <= acc_r + rdr;
                 if (k == 3'd7) begin
-                    // 8 条跑完 → 进全通
-                    ap_l <= acc_l + rdl;
-                    ap_r <= acc_r + rdr;
+                    // 8 条跑完 → 进全通（★ 必须饱和，见 sat20 说明）
+                    ap_l <= sat20(ap0_l);
+                    ap_r <= sat20(ap0_r);
                     a    <= 2'd0;
                     st   <= S_ARD;
                 end
@@ -288,14 +327,13 @@ module fx_reverb #(
             //   输出 = rd - (in >> 1)
             //   写回 = in + (rd >> 1)
             S_AWR: begin
-                // ★ $signed(...) 不能省：ap_l[15:0] 是位选（unsigned），
-                //   否则 (rdl >>> 1) 会变成逻辑右移，负值的符号位被清掉。
-                amem_l[aa_wr] <= $signed(ap_l[15:0]) + (rdl >>> 1);
-                amem_r[aa_wr] <= $signed(ap_r[15:0]) + (rdr >>> 1);
+                // ★ 写回也要饱和：ap_l + rd/2 可能超出 16 位范围
+                amem_l[aa_wr] <= sat17(awm_l);
+                amem_r[aa_wr] <= sat17(awm_r);
                 aptr[a] <= (aptr[a] == al_a) ? 10'd0 : (aptr[a] + 10'd1);
 
-                ap_l <= $signed(rdl) - (ap_l >>> 1);
-                ap_r <= $signed(rdr) - (ap_r >>> 1);
+                ap_l <= sat17(ap1_l);
+                ap_r <= sat17(ap1_r);
                 a    <= a + 2'd1;
                 if (a == 2'd3) st <= S_OUT;
                 else           st <= S_ARD;
@@ -304,8 +342,8 @@ module fx_reverb #(
             // ── 输出：干湿混合 ───────────────────────────────────────
             S_OUT: begin
                 if (enable) begin
-                    out_l <= clamp16(($signed(dry_l) * GD_Q8 + $signed(ap_l[15:0]) * GW_Q8) >>> 8);
-                    out_r <= clamp16(($signed(dry_r) * GD_Q8 + $signed(ap_r[15:0]) * GW_Q8) >>> 8);
+                    out_l <= clamp16(($signed(dry_l) * GD_Q8 + $signed(ap_l) * GW_Q8) >>> 8);
+                    out_r <= clamp16(($signed(dry_r) * GD_Q8 + $signed(ap_r) * GW_Q8) >>> 8);
                 end
                 else begin
                     out_l <= dry_l;

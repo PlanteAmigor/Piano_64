@@ -187,18 +187,26 @@ module position_control (
     //  连续 3 帧（36 ms）低于门限才判“手走了”，防单帧毛刺。
     //======================================================================
     localparam signed [23:0] HAND_TH = 24'sd3400;
-    reg [1:0] hand_cnt;
+    reg [3:0] hand_cnt;
+
+    // ★★ 手离开的判定必须【慢】（16 帧 = 192 ms），并且横向/指颤运动期间不判：
+    //    横向扫手时手会部分移出传感器阵列，rho_raw 短暂掉到 3400 以下。
+    //    原来只 3 帧去抖 → hand_on 掉下来又回来 → 83 Hz 级别的 chopping，
+    //    进混响后变成一大片噪声，听感同时像"卡顿"（实测就是这个）。
+    //    急停不依赖 hand_on（由 stop_hold 的 rho_ac 判据即时触发），
+    //    所以这里放慢到 192 ms 不影响急停手感。
+    wire hand_keep = (rho_raw > HAND_TH) || lateral_mv || trem_en;
 
     always @(posedge clk) begin
         if (!rst_n) begin
-            hand_cnt <= 2'd0;
+            hand_cnt <= 4'd0;
             hand_on  <= 1'b0;
         end else if (frame_valid) begin
-            if (rho_raw > HAND_TH) begin
-                hand_cnt <= 2'd0;
+            if (hand_keep) begin
+                hand_cnt <= 4'd0;
                 hand_on  <= 1'b1;
-            end else if (hand_cnt != 2'd3) begin
-                hand_cnt <= hand_cnt + 2'd1;
+            end else if (hand_cnt != 4'd15) begin
+                hand_cnt <= hand_cnt + 4'd1;
             end else begin
                 hand_on  <= 1'b0;
             end
