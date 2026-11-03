@@ -69,6 +69,7 @@ def main():
     results+=bench('tb_dma_image',['sim/tb_dma_image.v','src/suona_dma.v'])
     engine=['add_engine8','add_engine_harm','add_voice8','param_cache','param_dma','ddr_param_dma',
         'add_param_rom','add_sine_lut','mix_sum','harm_buf','suona_dma']
+    results+=bench('tb_i2s_reverb',['sim/tb_i2s_reverb.v','src/pcm5102a_tx.v','src/fx/fx_reverb.v'])
     results+=bench('tb_audio_controls',['sim/tb_audio_controls.v',*['src/'+x+'.v' for x in engine]])
     results+=bench('tb_guzheng_vibrato',['sim/tb_guzheng_vibrato.v',*['src/'+x+'.v' for x in engine]])
     results+=bench('tb_harm_hold',['sim/tb_harm_hold.v','src/add_engine_harm.v','src/harm_buf.v','src/suona_dma.v','src/mix_sum.v'])

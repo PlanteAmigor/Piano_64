@@ -85,7 +85,11 @@ module pcm5102a_tx #(
     wire       is_left  = ~slot_nxt[5];                  // slot 0..31 = 左
     wire [4:0] npos     = slot_nxt[4:0];                 // 声道内位置 0..31
 
-    wire signed [15:0] src = is_left ? sample_l : sample_r;
+    // 每帧锁存左右两路，16 个数据位始终来自同一个样点。
+    // 混响在 tick 后约 52 拍更新，比第一个数据位更晚，不能边发边读。
+    // 帧首取上一次已完成的计算结果；新增固定一帧延迟（约 20.5 us）。
+    reg signed [15:0] frame_l, frame_r;
+    wire signed [15:0] src = is_left ? frame_l : frame_r;
 
     // slot 0 = 延迟位(0)，slot 1..16 = sample[15]..sample[0]，其余补零
     wire dbit = (npos == 5'd0)  ? 1'b0 :
@@ -93,6 +97,16 @@ module pcm5102a_tx #(
 
     wire frame_start = bck_fall & (slot == SLOTS - 1);   // 下一拍进入 slot 0（左）
     wire right_start = bck_fall & (slot == 5'd31);       // 下一拍进入 slot 32（右）
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            frame_l <= 16'sd0;
+            frame_r <= 16'sd0;
+        end else if (frame_start) begin
+            frame_l <= sample_l;
+            frame_r <= sample_r;
+        end
+    end
 
     //------------------------------------------------------------------
     //  DIN / LRCK / sample_tick 都在 BCK 下降沿更新
