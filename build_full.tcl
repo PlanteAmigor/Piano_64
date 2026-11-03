@@ -52,6 +52,7 @@ add_file src/song/bt_song_player.v
 add_file src/song/song_fifo.v
 add_file src/song/song_loader.v
 add_file src/song/song_system.v
+add_file src/song/song_menu_keys.v
 
 #══════════════════════════════════════════════════════════════════
 #  HDMI 720p 频谱显示（复用 ir4 已验证的 DVI 栈）

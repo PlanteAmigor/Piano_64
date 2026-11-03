@@ -212,9 +212,15 @@ module add_top #(
     wire [31:0] song_position;
     wire [15:0] song_wrong, song_missed;
     wire [7:0] song_error;
+    wire menu_next_state, menu_confirm_state;
+    song_menu_keys u_song_keys (
+        .clk(clk_sys),.rst_n(engine_rst_n),
+        .next_n(KEY_R1[8]),.confirm_n(KEY_R2[8]),
+        .next_state(menu_next_state),.confirm_state(menu_confirm_state)
+    );
     song_system u_song (
         .clk(clk_sys),.clk_sd(CLOCK_50),.rst_n(engine_rst_n),.guide(guide_mode),
-        .next_state(r1_state[8]),.confirm_state(r2_state[8]),
+        .next_state(menu_next_state),.confirm_state(menu_confirm_state),
         .key_press(note_key_press[6:0]),.key_state(note_key_state[6:0]),
         .sd_count(sd_song_count),.sd_ids(sd_song_ids),.sd_catalog_done(sd_song_catalog),
         .sd_begin(sd_song_begin),.sd_end(sd_song_end),.sd_error(sd_song_error),

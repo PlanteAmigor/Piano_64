@@ -45,6 +45,7 @@ add_file src/song/bt_song_player.v
 add_file src/song/song_fifo.v
 add_file src/song/song_loader.v
 add_file src/song/song_system.v
+add_file src/song/song_menu_keys.v
 
 add_file src/piano64.cst
 add_file src/piano64.sdc

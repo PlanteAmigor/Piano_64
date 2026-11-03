@@ -47,6 +47,7 @@ def main():
     output=run([sys.executable,ROOT/'tools/check_song.py']);print(output,end='',flush=True)
     results=output.splitlines()
     songs=[str(p.relative_to(ROOT)) for p in (ROOT/'src/song').glob('*.v')]
+    results+=bench('tb_song_keys',['sim/tb_song_keys.v','src/key_scan.v','src/sd/sd_async_fifo.v',*songs])
     results+=bench('tb_song',['tb_song.v',*songs])
     for name in ['tb_song_teach','tb_song_repeat','tb_song_overlap']:
         results+=bench(name,['sim/'+name+'.v','src/song/bt_song_player.v'])
