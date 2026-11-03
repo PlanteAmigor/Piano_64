@@ -3,6 +3,9 @@
 `include "src/hdmi/ui_video_mode.vh"
 `default_nettype none
 module tb_song_ui;
+`ifdef UI_VENDOR_RAM_SIM
+    GSR GSR(.GSRI(1'b1));
+`endif
     parameter integer SHOT=0;
 `ifdef UI_VIDEO_720P
     localparam WIDTH=1280,HEIGHT=720,VTOTAL=750,AUDIO_DIV=1535;

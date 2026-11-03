@@ -144,7 +144,8 @@ module fx_reverb #(
         S_CWR  = 4'd6,      // 梳状：写回 + 累加
         S_ARD  = 4'd7,      // 全通：读
         S_AWR  = 4'd8,      // 全通：写回
-        S_OUT  = 4'd9;      // 干湿混合 + 输出
+        S_OUT  = 4'd9,
+        S_CPRE = 4'd10, S_CADDR = 4'd11;      // 干湿混合 + 输出
 
     reg [3:0]  st;
     reg [2:0]  k;                       // 梳状段号
@@ -221,14 +222,16 @@ module fx_reverb #(
     //    延迟仍是 D（绕一圈 L-1 = D）。
     wire [10:0] cl_lo   = cl_k[10:0];          // D
     wire [10:0] cl_l1   = cl_lo + 11'd1;       // L = D+1
-    wire [10:0] p1      = cptr[k] + 11'd1;     // ptr + 1
-    wire [10:0] p24     = cptr[k] + 11'd24;    // ptr + 1 + SPREAD
-    wire [10:0] r1_off  = (p1  >= cl_l1) ? (p1  - cl_l1) : p1;
-    wire [10:0] r2_off  = (p24 >= cl_l1) ? (p24 - cl_l1) : p24;
+    reg [10:0] comb_ptr,comb_len;
+    reg [13:0] comb_base;
+    reg [10:0] r1_queued,r2_queued;
+    reg [13:0] ca_rd_l,ca_rd_r,ca_wr;
+    wire [10:0] p1      = comb_ptr + 11'd1;     // ptr + 1
+    wire [10:0] p24     = comb_ptr + 11'd24;    // ptr + 1 + SPREAD
+    wire [10:0] r1_off  = (p1  >= comb_len) ? (p1  - comb_len) : p1;
+    wire [10:0] r2_off  = (p24 >= comb_len) ? (p24 - comb_len) : p24;
 
-    wire [13:0] ca_rd_l = cb_k + {3'b000, r1_off};
-    wire [13:0] ca_rd_r = cb_k + {3'b000, r2_off};
-    wire [13:0] ca_wr   = cb_k + {3'b000, cptr[k]};
+
 
     wire [9:0]  al_l1   = al_a + 10'd1;        // L = D+1
     wire [9:0]  a1      = aptr[a] + 10'd1;
@@ -273,7 +276,18 @@ module fx_reverb #(
                     st    <= S_LD;
                 end
             end
-            S_LD: st <= S_CRD;
+            S_LD: begin
+                comb_ptr<=cptr[k];comb_len<=cl_l1;comb_base<=cb_k;
+                st<=S_CPRE;
+            end
+            S_CPRE: begin
+                r1_queued<=r1_off;r2_queued<=r2_off;st<=S_CADDR;
+            end
+            S_CADDR: begin
+                ca_rd_l<=comb_base+{3'd0,r1_queued};
+                ca_rd_r<=comb_base+{3'd0,r2_queued};
+                ca_wr<=comb_base+{3'd0,comb_ptr};st<=S_CRD;
+            end
 
             // ── 梳状：读左抽头 ───────────────────────────────────────
             //  ★ 左右分两拍读：BSRAM 只有一个读口，同拍读两个不同地址
@@ -313,7 +327,7 @@ module fx_reverb #(
                 end
                 else begin
                     k  <= k + 3'd1;
-                    st <= S_CRD;
+                    st <= S_LD;
                 end
             end
 

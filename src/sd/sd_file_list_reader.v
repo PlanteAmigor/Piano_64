@@ -168,6 +168,20 @@ end
 
 //----------------------------------------------------------------------------------------------------------------------
 // main FSM
+// Boot fields arrive before byte 0x57; read_done follows byte 0x1ff.
+// Prepare partition geometry in parallel during that interval instead of
+// cascading sector RAM reads, multiplication and several additions at rdone.
+reg [31:0] boot_fat_span=0,boot_root_span=0,boot_fat=0;
+reg [31:0] boot_rootdir=0,boot_data16=0,boot_data32=0,boot_root_sector=0;
+always @(posedge clk)begin
+    boot_fat_span<=sectors_per_fat*number_of_fat;
+    boot_root_span<=sector_per_cluster*root_cluster;
+    boot_fat<=read_sector_no+resv_sectors;
+    boot_rootdir<=boot_fat+boot_fat_span;
+    boot_data16<=boot_rootdir+(rootdir_itemcount>>4)-({24'd0,sector_per_cluster}<<1);
+    boot_data32<=boot_fat+boot_fat_span-({24'd0,sector_per_cluster}<<1);
+    boot_root_sector<=boot_data32+boot_root_span;
+end
 //----------------------------------------------------------------------------------------------------------------------
 always @ (posedge clk or negedge rstn)
     if(~rstn) begin           
@@ -213,24 +227,24 @@ always @ (posedge clk or negedge rstn)
                                     filesystem <= filesystem_parsed;
                                     if(filesystem_parsed==FAT16) begin
                                         cluster_size_t        = sector_per_cluster;
-                                        first_fat_sector_no_t = read_sector_no + resv_sectors;
+                                        first_fat_sector_no_t = boot_fat;
                                         
                                         rootdir_sectorcount_t = rootdir_itemcount / (16'd512/16'd32);
-                                        rootdir_sector_t      = first_fat_sector_no_t + sectors_per_fat * number_of_fat;
-                                        first_data_sector_no_t= rootdir_sector_t + rootdir_sectorcount_t - cluster_size_t*2;
+                                        rootdir_sector_t      = boot_rootdir;
+                                        first_data_sector_no_t= boot_data16;
                                         
                                         cluster_sector_offset_t = 8'h0;
                                         read_sector_no      <= rootdir_sector_t + cluster_sector_offset_t;
                                         filesystem_state <= LS_ROOT_FAT16;
                                     end else if(filesystem_parsed==FAT32) begin
                                         cluster_size_t        = sector_per_cluster;             // 4
-                                        first_fat_sector_no_t = read_sector_no + resv_sectors;  // 0x155E
+                                        first_fat_sector_no_t = boot_fat;  // 0x155E
                                                                                                 // sectors_per_fat = 0x7551, number_of_fat = 2
-                                        first_data_sector_no_t= first_fat_sector_no_t + sectors_per_fat * number_of_fat - cluster_size_t * 2;
+                                        first_data_sector_no_t= boot_data32;
                                                                                                 // 0xFFF8
                                         curr_cluster_t        = root_cluster;                   // 2
                                         cluster_sector_offset_t = 8'h0;
-                                        read_sector_no      <= first_data_sector_no_t + cluster_size_t * curr_cluster_t + cluster_sector_offset_t;
+                                        read_sector_no      <= boot_root_sector;
                                                                                                 // 0x10000
                                         filesystem_state <= LS_ROOT_FAT32;
                                     end else begin

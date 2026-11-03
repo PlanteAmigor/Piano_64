@@ -1,6 +1,6 @@
 `include "src/hdmi/ui_video_mode.vh"
-// Native 1080p60. Both PLLs stay inside GW5AST-138C PFD/VCO limits.
-// Reference: 50 MHz *22 /40 =27.5 MHz (VCO1100, PFD50).
+// 1080p60 clock candidate; requires board lock/display verification.
+// Reference: (50 MHz /2) *33 /30 =27.5 MHz (825 MHz VCO).
 // Video: 27.5 MHz *27 =742.5 MHz VCO; /5 pixels, /1 serializer.
 // Retain the public module name for existing build scripts.
 module Gowin_PLL_720P(output lock,output clkout0,output clkout1,input clkin);
@@ -11,7 +11,7 @@ module Gowin_PLL_720P(output lock,output clkout0,output clkout1,input clkin);
         .clkin(clkin),.reset(1'b0),.clkout0(clkout0),.clkout1(clkout1),.lock(lock));
 `else
     wire ref_clk,ref_lock,pixel_lock;
-    ui_pll_core #(.FREQ("50"),.MDIV(22),.FRAC(0),.DIV0(40),.DIV1(40),.OUT1("FALSE"))
+    ui_pll_core #(.FREQ("50"),.IDIV(2),.MDIV(33),.FRAC(0),.DIV0(30),.DIV1(30),.OUT1("FALSE"))
         u_ref(.clkin(clkin),.reset(1'b0),.clkout0(ref_clk),.clkout1(),.lock(ref_lock));
     ui_pll_core u_pixel(.clkin(ref_clk),.reset(!ref_lock),.clkout0(clkout0),.clkout1(clkout1),.lock(pixel_lock));
     assign lock=ref_lock && pixel_lock;
@@ -19,7 +19,7 @@ module Gowin_PLL_720P(output lock,output clkout0,output clkout1,input clkin);
 endmodule
 
 module ui_pll_core #(
-    parameter FREQ="27.5",MDIV=27,FRAC=0,DIV0=5,DIV1=1,OUT1="TRUE"
+    parameter FREQ="27.5",IDIV=1,MDIV=27,FRAC=0,DIV0=5,DIV1=1,OUT1="TRUE"
 )(output lock,output clkout0,output clkout1,input clkin,input reset);
 
 
@@ -87,7 +87,7 @@ PLL PLL_inst (
 );
 
 defparam PLL_inst.FCLKIN = FREQ;
-defparam PLL_inst.IDIV_SEL = 1;
+defparam PLL_inst.IDIV_SEL = IDIV;
 defparam PLL_inst.FBDIV_SEL = 1;
 defparam PLL_inst.ODIV0_SEL = DIV0;
 defparam PLL_inst.ODIV1_SEL = DIV1;

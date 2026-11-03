@@ -26,7 +26,6 @@ module ui_liss_ram #(parameter integer COORD_BITS=7, PIXEL_BITS=4, PACK_BITS=PIX
     input  wire [RAM_AW-1:0] raddr,
     output reg  [15:0] rdata
 );
-    reg [15:0] m [0:(1<<RAM_AW)-1];
 
     localparam [RAM_AW-1:0] LAST_A = (1<<RAM_AW)-1;
 
@@ -91,7 +90,8 @@ module ui_liss_ram #(parameter integer COORD_BITS=7, PIXEL_BITS=4, PACK_BITS=PIX
     wire signed [11:0] adx_s={4'b0000,adx};
     wire do_x=e2>$signed(neg_ady);
     wire do_y=e2<adx_s;
-    wire        at_tgt = (cur_x == tgt_x) && (cur_y == tgt_y);
+    reg at_tgt;
+    reg clear_last,decay_last;
 
     wire        busy  = c_run || clr_en || d_run || decay_req;
     wire        start = (st == S_IDLE) && pend && !busy;
@@ -111,23 +111,73 @@ module ui_liss_ram #(parameter integer COORD_BITS=7, PIXEL_BITS=4, PACK_BITS=PIX
     //   每样点有 1536 拍、每像素 3 拍 → 理论上可画 512 px，64 很安全。
     //   ★ 帧存缩到 128×128 后，同样 32 px 相当于原来的 64 px，阈值同比减半。
 
-    // ══════════════════════════════════════════════════════════════
-    //  存储接口：★ 严格两个读表达式 + 一个写表达式
-    //
-    //  Gowin BSRAM 是双口，但综合器的推断器非常挑：只要出现第三个
-    //  地址表达式，它就放弃 RAM 推断、把整块变成寄存器
-    //      ERROR (IF0008) The number(262144) of DFF ... exceeds the limit
-    //  所以这里固定成：
-    //      A 口：只读  m[raddr]                —— 显示扫描
-    //      B 口：读 m[b_addr] 并写 m[b_addr]   —— 打点 / 衰减 / 全清 三合一
-    //  三个写者互斥（优先级 全清 > 衰减 > 打点），所以共用一个写表达式。
-    // ══════════════════════════════════════════════════════════════
-    reg  [RAM_AW-1:0] b_ra, b_wa;         // B 口独立的读/写地址
+    // The scan port reads each pixel. The drawing port alternates reads and
+    // queued writes at one registered address, allowing a true dual-port RAM.
+    reg  [RAM_AW-1:0] b_wa;         // Address retained from read through write preparation
     reg  [15:0] b_q;                // B 口读出，1 拍后有效
 
-    // 单 always 块驱动 m
+    // Queue every write before the physical RAM port. All three producers
+    // share one short registered write interface, including clear and decay.
+    reg mem_we /* synthesis syn_preserve=1 */;
+    reg [RAM_AW-1:0] mem_addr /* synthesis syn_preserve=1 */;
+    reg mem_re /* synthesis syn_preserve=1 */;
+    reg [15:0] mem_wd /* synthesis syn_preserve=1 */;
+    reg clear_finished;
+    // Use an explicit normal-mode DPB on the target device. The portable
+    // branch has identical synchronous read latency and is checked against
+    // Gowin's primitive model with UI_VENDOR_RAM_SIM.
+`ifdef UI_VENDOR_RAM_SIM
+    localparam USE_DPB=1;
+`else
+    // Gowin does not predefine SYNTHESIS. translate_off selects the portable
+    // memory only in functional simulation; hardware always uses the DPBs.
+    localparam USE_DPB=1
+    // synthesis translate_off
+        && 0
+    // synthesis translate_on
+        ;
+`endif
+    generate if(USE_DPB)begin:g_dpb
+        localparam BANK_BITS=RAM_AW-10, BANKS=1<<BANK_BITS;
+        wire [15:0] scan_q[0:BANKS-1],draw_q[0:BANKS-1];
+        reg [BANK_BITS-1:0] scan_bank,draw_bank;
+        always @(posedge clk)begin
+            if(!rst_n)begin scan_bank<=0;draw_bank<=0;end
+            else begin
+                scan_bank<=raddr[RAM_AW-1:10];
+                if(mem_re)draw_bank<=mem_addr[RAM_AW-1:10];
+            end
+        end
+        always @(*)begin rdata=scan_q[scan_bank];b_q=draw_q[draw_bank];end
+        for(genvar bank=0;bank<BANKS;bank=bank+1)begin:g_bank
+            DPB #(.READ_MODE0(1'b0),.READ_MODE1(1'b0),
+                .WRITE_MODE0(2'b00),.WRITE_MODE1(2'b00),
+                .BIT_WIDTH_0(16),.BIT_WIDTH_1(16),
+                .BLK_SEL_0(3'b000),.BLK_SEL_1(3'b000),.RESET_MODE("SYNC")) u_ram(
+                .CLKA(clk),.CLKB(clk),.OCEA(1'b1),.OCEB(1'b1),
+                .CEA(raddr[RAM_AW-1:10]==bank),
+                .CEB((mem_re || mem_we) && mem_addr[RAM_AW-1:10]==bank),
+                .RESETA(!rst_n),.RESETB(!rst_n),.WREA(1'b0),.WREB(mem_we),
+                .BLKSELA(3'b000),.BLKSELB(3'b000),
+                .ADA({raddr[9:0],4'b0000}),.ADB({mem_addr[9:0],4'b0011}),
+                .DIA(16'd0),.DIB(mem_wd),.DOA(scan_q[bank]),.DOB(draw_q[bank]));
+        end
+    end else begin:g_behavioral
+        reg [15:0] m[0:(1<<RAM_AW)-1];
+        always @(posedge clk)begin
+            if(!rst_n)begin rdata<=0;b_q<=0;end
+            else begin
+                rdata<=m[raddr];
+                if(mem_we)m[mem_addr]<=mem_wd;
+                else if(mem_re)b_q<=m[mem_addr];
+            end
+        end
+    end endgenerate
+
+    // FSM prepares RAM transactions; completion follows the actual commit.
     always @(posedge clk) begin
         if (!rst_n) begin
+            mem_we<=0;mem_re<=0;mem_addr<=0;mem_wd<=0;clear_finished<=0;decay_busy<=0;at_tgt<=0;clear_last<=0;decay_last<=0;
             st       <= S_IDLE;
             pen_x    <= 8'd0;   pen_y <= 8'd0;   pen_vld <= 1'b0;
             cur_x    <= 8'd0;   cur_y <= 8'd0;
@@ -137,23 +187,17 @@ module ui_liss_ram #(parameter integer COORD_BITS=7, PIXEL_BITS=4, PACK_BITS=PIX
             line_ok<=0;step_x<=0;step_y<=0;neg_ady<=0;err_x<=0;err_y_add<=0;
             sx       <= 1'b1;   sy    <= 1'b1;
             pend     <= 1'b0;   pdx   <= 8'd0;   pdy <= 8'd0;
-            b_ra     <= 12'd0;  b_wa  <= 12'd0;  b_q   <= 16'd0;
+            b_wa  <= 12'd0;
             p_sel    <= 2'd0;
             c_run    <= 1'b0;   c_addr <= 12'd0;
             d_run    <= 1'b0;   d_addr <= 12'd0; d_ph <= 2'd0;
             clr_done <= 1'b0;
-            rdata    <= 16'd0;
+
         end
         else begin
-            clr_done   <= 1'b0;
+            mem_we<=0;mem_re<=0;clear_finished<=0;
+            clr_done <= clear_finished;
             decay_busy <= d_run;
-
-            // ── A 口：显示扇描（只读）───────────────────
-            //   ★ B 口的读必须【放在分支里】且与写分支互斥。
-            //     写成无条件 b_q <= m[b_addr] 会跟同拍的写撞车，
-            //     综合器推出 WRITE_MODE = 2'b10 →
-            //         ERROR (PA2122) Not support ... 'm_m_0_0_s'(DPB)
-            rdata <= m[raddr];
 
             // ── 待画点缓冲：新点覆盖旧点 ─────────────────────────
             if (plot && !busy) begin
@@ -164,7 +208,7 @@ module ui_liss_ram #(parameter integer COORD_BITS=7, PIXEL_BITS=4, PACK_BITS=PIX
             else if (start) pend <= 1'b0;
 
             if (clr_en) begin
-                c_run   <= 1'b1;
+                c_run   <= 1'b1;clear_last<=0;
                 c_addr  <= 12'd0;
                 b_wa    <= 12'd0;
                 st      <= S_IDLE;
@@ -172,12 +216,13 @@ module ui_liss_ram #(parameter integer COORD_BITS=7, PIXEL_BITS=4, PACK_BITS=PIX
             end
             // ── ① 全清（最高优先级，1 拍/字）────────────────────
             else if (c_run) begin
-                m[b_wa] <= 16'd0;
+                mem_we<=1;mem_addr<=b_wa;mem_wd<=16'd0;
                 c_addr  <= c_addr + 12'd1;
                 b_wa    <= c_addr + 12'd1;
-                if (c_addr == LAST_A) begin
+                clear_last<=c_addr==LAST_A-1;
+                if (clear_last) begin
                     c_run    <= 1'b0;
-                    clr_done <= 1'b1;
+                    clear_finished <= 1'b1;
                 end
             end
             // ── ② 荧光衰减（3 拍/字：置地址 → 读 → 写）──────────
@@ -189,17 +234,18 @@ module ui_liss_ram #(parameter integer COORD_BITS=7, PIXEL_BITS=4, PACK_BITS=PIX
                 end
                 else case (d_ph)
                 D_ADDR: begin
-                    b_ra <= d_addr;
+                    decay_last<=d_addr==LAST_A;
+                    mem_addr<=d_addr;mem_re<=1;
                     d_ph <= D_READ;
                 end
                 D_READ: begin
-                    b_q  <= m[b_ra];
+
                     b_wa <= d_addr;
                     d_ph <= D_WRITE;
                 end
                 default: begin                       // D_WRITE
-                    m[b_wa] <= dec16(b_q, decay_step);   // 每个 nibble 饱和 -step
-                    if (d_addr == LAST_A) d_run <= 1'b0;
+                    mem_we<=1;mem_addr<=b_wa;mem_wd<=dec16(b_q, decay_step);   // 每个 nibble 饱和 -step
+                    if (decay_last) d_run <= 1'b0;
                     else begin
                         d_addr <= d_addr + 12'd1;
                         d_ph   <= D_ADDR;
@@ -228,9 +274,11 @@ module ui_liss_ram #(parameter integer COORD_BITS=7, PIXEL_BITS=4, PACK_BITS=PIX
                     st<=S_ADDR;
                 end
                 S_ADDR: begin
+                    at_tgt<=(cur_x==tgt_x) && (cur_y==tgt_y);
                     step_x<=do_x;step_y<=do_y;
                     // addr = y*32 + (x>>2)；cur_y / cur_x 均为 0..127
-                    b_ra   <= {cur_y[COORD_BITS-1:0], cur_x[COORD_BITS-1:PACK_BITS]};
+
+                    mem_addr<={cur_y[COORD_BITS-1:0], cur_x[COORD_BITS-1:PACK_BITS]};mem_re<=1;
                     b_wa   <= {cur_y[COORD_BITS-1:0], cur_x[COORD_BITS-1:PACK_BITS]};
                     p_sel  <= cur_x[PACK_BITS-1:0];
                     st     <= S_RD;
@@ -238,11 +286,11 @@ module ui_liss_ram #(parameter integer COORD_BITS=7, PIXEL_BITS=4, PACK_BITS=PIX
                 S_RD: begin
                     err_x<=berr-(step_x?$signed({3'b000,ady}):11'sd0);
                     err_y_add<=step_y?$signed({3'b000,adx}):11'sd0;
-                    b_q <= m[b_ra];            // b_q 在 S_WR 那一拍有效
+            // b_q 在 S_WR 那一拍有效
                     st  <= S_WR;
                 end
                 default: begin                 // S_WR
-                    m[b_wa] <= inc16(b_q, p_sel, ink_step);
+                    mem_we<=1;mem_addr<=b_wa;mem_wd<=inc16(b_q, p_sel, ink_step);
                     pen_x     <= cur_x;
                     pen_y     <= cur_y;
                     pen_vld   <= 1'b1;

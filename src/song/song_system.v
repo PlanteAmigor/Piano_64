@@ -105,9 +105,10 @@ module song_system #(
     reg [63:0] events[0:2047];
     wire [12:0] read_addr;
     reg [63:0] read_data;
+    wire [10:0] event_addr_a=ram_we?ram_waddr:read_addr[10:0];
     always @(posedge clk) begin
-        if(ram_we) events[ram_waddr]<=ram_wdata;
-        else read_data<=events[read_addr[10:0]];
+        if(ram_we) events[event_addr_a]<=ram_wdata;
+        else read_data<=events[event_addr_a];
     end
     wire player_overflow;
     assign dropped=player_overflow;

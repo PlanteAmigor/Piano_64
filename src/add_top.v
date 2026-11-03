@@ -210,7 +210,13 @@ module add_top #(
     reg [1:0] ui_mode;
     wire guide_mode = ui_mode == MODE_GUIDE;
     wire remote_active;
-    wire score_mode=guide_mode || remote_active;
+    // Register the slow mode selection before its wide engine/allocator muxes.
+    // One 50 MHz cycle is well before either song startup or an audio tick.
+    reg score_mode;
+    always @(posedge clk_sys)begin
+        if(!por_n)score_mode<=1'b0;
+        else score_mode<=guide_mode || remote_active;
+    end
     wire bt_command_toggle,bt_command_play,bt_command_reply;
     wire [7:0] bt_command_error,bt_saved_id,bt_save_error,bt_last_error;
     wire bt_save_start,bt_save_done,bt_saving,bt_uploading,bt_committed;

@@ -62,6 +62,15 @@ module hdmi_ui3_top (
     reg rst_n=1'b0;
     always @(posedge clk_p)rst_n<=resetn && pll_lock && por==4'hF;
     wire dvi_reset = ~rst_n;
+    // Independent, cycle-identical reset registers keep wide status buses
+    // from sharing a single routed reset net with the plotter and counters.
+    wire [7:0] local_rst_n;
+    generate for(genvar rb=0;rb<8;rb=rb+1)begin:g_local_reset
+        reg reset_q /* synthesis syn_preserve=1 */ =1'b0;
+        wire reset_keep /* synthesis syn_keep=1 */;
+        always @(posedge clk_p)reset_q<=resetn && pll_lock && por==4'hF;
+        assign reset_keep=reset_q;assign local_rst_n[rb]=reset_keep;
+    end endgenerate
 
     // ══════════════════════════════════════════════════════════════
     //  BANDS 跨时钟域：clk_sys(50 MHz) → clk_p(75 MHz)
@@ -78,7 +87,7 @@ module hdmi_ui3_top (
     reg [18:0]  info_s0, info_s1;
 
     always @(posedge clk_p) begin
-        if (!rst_n) begin
+        if (!local_rst_n[0]) begin
             bands_cap <= 256'd0;
             comp_cap  <= 512'd0;
             info_s0   <= 19'd0;
@@ -97,7 +106,7 @@ module hdmi_ui3_top (
     reg [383:0] song_status;
     reg [1023:0] roll_status;
     always @(posedge clk_p) begin
-        if(!rst_n) begin song_toggle_sync<=0; SONG_UI_ACK<=0; song_status<=0; roll_status<=0; end
+        if(!local_rst_n[1]) begin song_toggle_sync<=0; SONG_UI_ACK<=0; song_status<=0; roll_status<=0; end
         else begin
             song_toggle_sync<={song_toggle_sync[1:0],SONG_UI_TOGGLE};
             if(song_toggle_sync[2]!=SONG_UI_ACK) begin
@@ -161,7 +170,7 @@ module hdmi_ui3_top (
         .px_pt(px_pt),.py_pt(py_pt),.point_toggle(point_toggle));
     reg [2:0] point_sync,trg_sync;
     always @(posedge clk_p)begin
-        if(!rst_n)begin point_sync<=0;trg_sync<=0;end
+        if(!local_rst_n[2])begin point_sync<=0;trg_sync<=0;end
         else begin point_sync<={point_sync[1:0],point_toggle};trg_sync<={trg_sync[1:0],SCOPE_TRG};end
     end
     wire liss_plot=point_sync[2]^point_sync[1];
@@ -178,9 +187,13 @@ module hdmi_ui3_top (
     reg [3:0]  fade_lvl;
     reg        fading_out;
     reg [16:0] fade_cnt;
+    wire [16:0] fade_increment={
+        fade_cnt[16:12]+{4'd0,(&fade_cnt[11:0])},
+        fade_cnt[11:6]+{5'd0,(&fade_cnt[5:0])},
+        fade_cnt[5:0]+6'd1};
 
     always @(posedge clk_p) begin
-        if (!rst_n) begin
+        if (!local_rst_n[3]) begin
             page_show  <= 2'd0;
             page_pend  <= 2'd0;
             fade_lvl   <= 4'd15;
@@ -193,7 +206,7 @@ module hdmi_ui3_top (
             fade_cnt   <= 16'd0;
         end
         else if (fading_out) begin
-            if (fade_cnt != FADE_STEP) fade_cnt <= fade_cnt + 16'd1;
+            if (fade_cnt != FADE_STEP) fade_cnt <= fade_increment;
             else begin
                 fade_cnt <= 16'd0;
                 if (fade_lvl != 4'd0) fade_lvl <= fade_lvl - 4'd1;
@@ -204,7 +217,7 @@ module hdmi_ui3_top (
             end
         end
         else if (fade_lvl != 4'd15) begin    // 淡入
-            if (fade_cnt != FADE_STEP) fade_cnt <= fade_cnt + 16'd1;
+            if (fade_cnt != FADE_STEP) fade_cnt <= fade_increment;
             else begin
                 fade_cnt <= 16'd0;
                 fade_lvl <= fade_lvl + 4'd1;
@@ -235,8 +248,8 @@ module hdmi_ui3_top (
     // Keep local coordinate registers for four descriptors per bank. Shared
     // low coordinate bits otherwise drive every wide comparison across the
     // device and routing, rather than arithmetic, dominates the pixel path.
-    wire [11:0] roll_x[0:7],roll_y[0:7];
-    generate for(genvar bank=0;bank<8;bank=bank+1)begin:g_roll_coord
+    wire [11:0] roll_x[0:31],roll_y[0:31];
+    generate for(genvar bank=0;bank<32;bank=bank+1)begin:g_roll_coord
         reg [11:0] x_q /* synthesis syn_preserve=1 */;
         reg [11:0] y_q /* synthesis syn_preserve=1 */;
         wire [11:0] x_keep /* synthesis syn_keep=1 */;
@@ -246,7 +259,7 @@ module hdmi_ui3_top (
         assign roll_x[bank]=x_keep;assign roll_y[bank]=y_keep;
     end endgenerate
     always @(posedge clk_p) begin
-        if(!rst_n)begin hcnt<=0;vcnt<=0;end
+        if(!local_rst_n[4])begin hcnt<=0;vcnt<=0;end
         else if(hcnt==H_TOTAL-1)begin hcnt<=0;vcnt<=vcnt==V_TOTAL-1?0:vcnt+1'b1;end
         else hcnt<=hcnt+1'b1;
     end
@@ -257,15 +270,15 @@ module hdmi_ui3_top (
         hsync<=hcnt>=H_FP && hcnt<H_FP+H_SYNC;
         vsync<=vcnt>=V_FP && vcnt<V_FP+V_SYNC;
         px<=logical_x;py<=logical_y;
-        frame_tick<=rst_n && hcnt==H_TOTAL-1 && vcnt==V_TOTAL-1;
+        frame_tick<=local_rst_n[4] && hcnt==H_TOTAL-1 && vcnt==V_TOTAL-1;
     end
     reg [3:0] boot_cnt;
-    always @(posedge clk_p)if(!rst_n)boot_cnt<=0;else if(boot_cnt!=15)boot_cnt<=boot_cnt+1'b1;
+    always @(posedge clk_p)if(!local_rst_n[5])boot_cnt<=0;else if(boot_cnt!=15)boot_cnt<=boot_cnt+1'b1;
     wire liss_clr=boot_cnt==8 || noteon;
     reg [2:0] liss_decay_frame;
-    always @(posedge clk_p)if(!rst_n)liss_decay_frame<=0;else if(frame_tick)liss_decay_frame<=liss_decay_frame+1'b1;
+    always @(posedge clk_p)if(!local_rst_n[5])liss_decay_frame<=0;else if(frame_tick)liss_decay_frame<=liss_decay_frame+1'b1;
     reg liss_decay;
-    always @(posedge clk_p)liss_decay<=rst_n && vcnt==1 && hcnt==0 &&
+    always @(posedge clk_p)liss_decay<=local_rst_n[5] && vcnt==1 && hcnt==0 &&
         (agl==3 || (agl==2 && !liss_decay_frame[0]) || (agl==1 && liss_decay_frame[1:0]==0) || liss_decay_frame==0);
     wire [3:0] agl_dec=1;
     wire [3:0] agl_ink=15;
@@ -281,7 +294,14 @@ module hdmi_ui3_top (
     wire [6:0] tile_col=title_on ? ((px-64)>>5) : px[10:4];
     wire [5:0] tile_row=title_on ? 0 : py[10:5];
     wire [4:0] map_row=tile_row==32?5'd1:tile_row[4:0];
-    wire [13:0] tile_addr={page_show,map_row,tile_col};
+    // Prepare the ROM address alongside px/py; the memory input sees only
+    // a register, while all geometry keeps the existing pixel latency.
+    wire title_next=logical_y>=32 && logical_y<96 && logical_x>=64 && logical_x<1280;
+    wire [6:0] tile_col_next=title_next ? (logical_x[11:5]-7'd2) : logical_x[10:4];
+    wire [5:0] tile_row_next=title_next ? 0 : logical_y[10:5];
+    wire [4:0] map_row_next=tile_row_next==32?5'd1:tile_row_next[4:0];
+    reg [13:0] tile_addr /* synthesis syn_preserve=1 */;
+    always @(posedge clk_p)tile_addr<={page_show,map_row_next,tile_col_next};
     wire [3:0] font_x=title_on ? ((px-64)>>1) : px[3:0];
     wire [4:0] font_y=title_on ? ((py-32)>>1) : py[4:0];
     reg [11:0] x1,y1,x2,y2;
@@ -305,7 +325,7 @@ module hdmi_ui3_top (
     reg [1:0] decimal_field;
     reg decimal_busy;
     reg decimal_rst_n;
-    always @(posedge clk_p)decimal_rst_n<=rst_n;
+    always @(posedge clk_p)decimal_rst_n<=local_rst_n[6];
     integer dc;
     always @(*)begin
         decimal_adjust=decimal_work;
@@ -365,7 +385,7 @@ endcase end endfunction
     reg [7:0] catalog_value;
     reg [3:0] level_hundreds,level_tens,level_ones,error_tens,error_ones;
     always @(posedge clk_p)begin
-        if(!rst_n)begin catalog_digits<=0;catalog_scan<=0;catalog_index<=0;catalog_value<=0;
+        if(!local_rst_n[6])begin catalog_digits<=0;catalog_scan<=0;catalog_index<=0;catalog_value<=0;
             level_hundreds<=0;level_tens<=0;level_ones<=0;error_tens<=0;error_ones<=0;end
         else begin
             catalog_scan<=catalog_scan+1'b1;catalog_index<=catalog_scan;
@@ -394,6 +414,10 @@ endcase end endfunction
     reg [255:0] effect_text,message_text,bt_text;
     always @(posedge clk_p)begin
         effect_text<=effect_name;bt_text<={bt_message[31:0],bt_message[255:32]};
+        if(bt_committed && !bt_uploading && !bt_saving && bt_error==0)begin
+            bt_text[31:24]<=8'd48+{4'd0,bt_saved_id[7:4]};
+            bt_text[23:16]<=8'd48+{4'd0,bt_saved_id[3:0]};
+        end
         // Rotate by four cells once per status update, so a pixel's message
         // address uses the column directly without a subtract before the mux.
         message_text<={guide_message[31:0],guide_message[255:32]};
@@ -405,8 +429,7 @@ endcase end endfunction
         dynamic_char[3]<={page_show==0 && row1==30 && col1>=102 && col1<105,
             8'd48+(col1==102?level_hundreds:col1==103?level_tens:level_ones)};
         dynamic_char[4]<={row1==31 && col1>=4 && col1<36,
-            bt_committed && !bt_uploading && !bt_saving && bt_error==0 && (col1==28 || col1==29)?
-                8'd48+(col1==28?bt_saved_id[7:4]:bt_saved_id[3:0]):string_char(bt_text,col1[4:0])};
+            string_char(bt_text,col1[4:0])};
         dynamic_char[5]<={page_show==2 && row1==25 && col1>=4 && col1<36,string_char(message_text,col1[4:0])};
         dynamic_char[6]<={page_show==2 && row1==30 && col1>=49 && col1<54,8'd48+{4'd0,time_bcd[{position_digit,2'b00}+:4]}};
         dynamic_char[7]<={page_show==2 && row1==30 && col1==54,8'd83};
@@ -445,7 +468,8 @@ endcase end endfunction
     reg [1:0] note_color1c;
     reg [3:0] gx1b;
     reg [4:0] gy1b;
-    reg [7:0] char2,height1b,component1b;
+    reg [7:0] char2 /* synthesis syn_preserve=1 */;
+    reg [7:0] height1b,component1b;
     reg band_on1b,comp_on1b,note_lead1b,note_auto1b,note_hit1b,note_edge1b;
     reg [1:0] note_color1b;
     // Pixel stage 1: independent lookups and 32 note comparisons.
@@ -465,7 +489,7 @@ endcase end endfunction
     wire [6:0] test_phase_next={1'b0,test_band_phase}+(pixel_odd?7'd2:7'd1);
     always @(posedge clk_p)begin
         pixel_odd<=physical_x[0];
-        if(!rst_n || px<96)begin test_band_column<=0;test_band_phase<=0;end
+        if(!local_rst_n[7] || px<96)begin test_band_column<=0;test_band_phase<=0;end
         else if(px<1376)begin
             if(test_phase_next>=40)begin test_band_phase<=test_phase_next-7'd40;test_band_column<=test_band_column+1'b1;end
             else test_band_phase<=test_phase_next[5:0];
@@ -474,7 +498,7 @@ endcase end endfunction
 `else
     reg [5:0] test_band_column,test_band_phase;
     always @(posedge clk_p)begin
-        if(!rst_n || px==95)begin test_band_column<=0;test_band_phase<=0;end
+        if(!local_rst_n[7] || px==95)begin test_band_column<=0;test_band_phase<=0;end
         else if(px>=96 && px<1376)begin
             if(test_band_phase==39)begin test_band_phase<=0;test_band_column<=test_band_column+1'b1;end
             else test_band_phase<=test_band_phase+1'b1;
@@ -489,7 +513,7 @@ endcase end endfunction
 `endif
     reg band_on1,band_on2;
     wire [11:0] comp_x=px-64;
-    reg [2:0] component_low0;
+    reg [2:0] component_low0 /* synthesis syn_preserve=1 */;
     always @(posedge clk_p)component_low0<=(logical_x-64)>>4;
     reg comp_on1,comp_on2;
     reg [3:0] roll_column[0:31];
@@ -523,22 +547,23 @@ endcase end endfunction
         end
         test_band1<=page_show==1;
         for(integer g=0;g<8;g=g+1)component_group[g]<=comp_cap[g*64+component_low0*8+:8];
-        band1<=band_index[4:0];band_on1<=px>=band_origin && band_index<32 && band_phase<band_pitch-8;
+        band1<=band_index[4:0];band_on1<=page_show==1 ? (px>=96 && test_band_column<32 && test_band_phase<32) :
+            (px>=64 && px<1088 && px[4:0]<24);
         component1<=comp_x[9:4];comp_on1<=px>=64 && px<1088 && comp_x[3:0]<11;
         roll_area1<=lane_in0;
         for(r=0;r<32;r=r+1)begin
-            above_gt1[r]<=roll_y[r/4][11:6]>{1'b0,roll_status[r*32+18+:5]};
-            above_eq1[r]<=roll_y[r/4][11:6]=={1'b0,roll_status[r*32+18+:5]};
-            above_ge_low1[r]<=roll_y[r/4][5:0]>=roll_status[r*32+12+:6];
-            above_eq_low1[r]<=roll_y[r/4][5:0]==roll_status[r*32+12+:6];
-            below_lt1[r]<=roll_y[r/4][11:6]<{1'b0,roll_status[r*32+7+:5]};
-            below_eq1[r]<=roll_y[r/4][11:6]=={1'b0,roll_status[r*32+7+:5]};
-            below_lt_low1[r]<=roll_y[r/4][5:0]<roll_status[r*32+1+:6];
-            edge_gt1[r]<=roll_y[r/4][11:6]>{1'b0,roll_bottom_edge[r][10:6]};
-            edge_eq1[r]<=roll_y[r/4][11:6]=={1'b0,roll_bottom_edge[r][10:6]};
-            edge_ge_low1[r]<=roll_y[r/4][5:0]>=roll_bottom_edge[r][5:0];
-            edge_x1[r]<=roll_x[r/4][6:0]<19 || roll_x[r/4][6:0]>=109;
-            roll_lane1[r]<=roll_x[r/4][10:7]==roll_column[r];
+            above_gt1[r]<=roll_y[r][11:6]>{1'b0,roll_status[r*32+18+:5]};
+            above_eq1[r]<=roll_y[r][11:6]=={1'b0,roll_status[r*32+18+:5]};
+            above_ge_low1[r]<=roll_y[r][5:0]>=roll_status[r*32+12+:6];
+            above_eq_low1[r]<=roll_y[r][5:0]==roll_status[r*32+12+:6];
+            below_lt1[r]<=roll_y[r][11:6]<{1'b0,roll_status[r*32+7+:5]};
+            below_eq1[r]<=roll_y[r][11:6]=={1'b0,roll_status[r*32+7+:5]};
+            below_lt_low1[r]<=roll_y[r][5:0]<roll_status[r*32+1+:6];
+            edge_gt1[r]<=roll_y[r][11:6]>{1'b0,roll_bottom_edge[r][10:6]};
+            edge_eq1[r]<=roll_y[r][11:6]=={1'b0,roll_bottom_edge[r][10:6]};
+            edge_ge_low1[r]<=roll_y[r][5:0]>=roll_bottom_edge[r][5:0];
+            edge_x1[r]<=roll_x[r][6:0]<19 || roll_x[r][6:0]>=109;
+            roll_lane1[r]<=roll_x[r][10:7]==roll_column[r];
             roll_meta1[r]<=roll_status[r*32+27+:5];
             roll_lead1[r]<=roll_rect1[r] && roll_meta1[r][4] && roll_meta1[r][3];
             roll_auto1[r]<=roll_rect1[r] && roll_meta1[r][4] && !roll_meta1[r][3];
@@ -565,17 +590,23 @@ endcase end endfunction
     // 256x256 native persistence grid, displayed at integer 2x scaling.
     wire liss_in0=px>=1272 && px<1784 && py>=304 && py<816;
     wire [8:0] lx=(px-1272)>>1,ly=(py-304)>>1;
-    wire [12:0] liss_raddr=liss_in0?{ly[7:0],lx[7:3]}:13'd0;
+    wire [8:0] lx_next=(logical_x-12'd1272)>>1,ly_next=(logical_y-12'd304)>>1;
+    reg [12:0] liss_raddr /* synthesis syn_preserve=1 */;
+    // Out-of-panel reads are harmless; visibility masks the pixel later.
+    always @(posedge clk_p)liss_raddr<={ly_next[7:0],lx_next[7:3]};
     wire [15:0] liss_word;
+    reg [15:0] liss_word_q;
+    reg [2:0] nibble2;
     reg [2:0] nibble1;
     reg liss_in1,liss_in2;
     reg [3:0] liss_int,liss_intb,liss_intc;
     reg liss_in2b,liss_in2c;
     always @(posedge clk_p)begin
         nibble1<=lx[2:0];liss_in1<=liss_in0;liss_in2<=liss_in1;
-        liss_int<={2{liss_word[nibble1*2+:2]}};liss_intb<=liss_int;liss_in2b<=liss_in2;liss_intc<=liss_intb;liss_in2c<=liss_in2b;
+        liss_word_q<=liss_word;nibble2<=nibble1;
+        liss_int<={2{liss_word_q[nibble2*2+:2]}};liss_in2b<=liss_in2;liss_intc<=liss_int;liss_in2c<=liss_in2b;
     end
-    ui_liss_ram #(.COORD_BITS(8),.PIXEL_BITS(2)) u_liss(.clk(clk_p),.rst_n(rst_n),.plot(liss_plot),
+    ui_liss_ram #(.COORD_BITS(8),.PIXEL_BITS(2)) u_liss(.clk(clk_p),.rst_n(local_rst_n[5]),.plot(liss_plot),
         .plot_x(px_pt),.plot_y(py_pt),.clr_en(liss_clr),.clr_done(),
         .decay_req(liss_decay),.decay_step(agl_dec),.ink_step(agl_ink),.decay_busy(),
         .raddr(liss_raddr),.rdata(liss_word));
@@ -621,6 +652,16 @@ endcase end endfunction
     reg [31:0] bg_flags,bg_flags3;
     reg testkey_any,testkey_down,testind_any,testind_down,card_any,card_selected,card_stripe;
     reg [11:0] level_end,progress_end;
+    reg progress_lt_hi,progress_eq_hi,progress_lt_lo;
+    reg level_lt_hi,level_eq_hi,level_lt_lo;
+    always @(posedge clk_p)begin
+        level_lt_hi<=x1c[11:6]<level_end[11:6];
+        level_eq_hi<=x1c[11:6]==level_end[11:6];
+        level_lt_lo<=x1c[5:0]<level_end[5:0];
+        progress_lt_hi<=x1c[11:6]<progress_end[11:6];
+        progress_eq_hi<=x1c[11:6]==progress_end[11:6];
+        progress_lt_lo<=x1c[5:0]<progress_end[5:0];
+    end
     reg [7:0] visible_cards;
     wire [11:0] bg_x[0:3],bg_y[0:3];
     generate for(genvar bank=0;bank<4;bank=bank+1)begin:g_background_coord
@@ -656,7 +697,8 @@ endcase end endfunction
         bg_flags[4]=page_show==0 && ((box(bg_x[0],bg_y[0],64,288,1088,545)&&bg_y[0][5:0]==32)||
             (box(x2,y2,64,696,1088,929)&&y2[5:0]==32)||(box(x2,y2,1272,304,1784,816)&&(x2==1528||y2==560)));
         bg_flags[5]=page_show==0 && box(bg_x[0],bg_y[0],1272,832,1784,840);
-        bg_flags[6]=page_show==0 && box(bg_x[0],bg_y[0],1272,832,level_end,840);
+        bg_flags[6]=page_show==0 && bg_x[0]>=1272 && bg_y[0]>=832 && bg_y[0]<840 &&
+            (level_lt_hi || (level_eq_hi && level_lt_lo));
         bg_flags[7]=page_show==0 && (border(bg_x[0],bg_y[0],40,192,1160,576)||border(bg_x[0],bg_y[0],40,608,1160,960)||border(bg_x[0],bg_y[0],1192,192,1880,984));
         bg_flags[8]=page_show==1 && (box(bg_x[1],bg_y[1],40,192,1448,960)||box(bg_x[1],bg_y[1],1480,192,1880,960));
         bg_flags[9]=page_show==1 && box(bg_x[1],bg_y[1],96,256,1376,897)&&bg_y[1][6:0]==0;
@@ -676,7 +718,8 @@ endcase end endfunction
         bg_flags[27]=bg_flags[23] && (bg_x[3][6:0]<4 || bg_x[3][6:0]>123);
         bg_flags[28]=page_show==2 && ((box(bg_x[3],bg_y[3],64,864,536,896)&&!guide_teach)||(box(bg_x[3],bg_y[3],64,928,536,960)&&guide_teach));
         bg_flags[29]=page_show==2 && box(bg_x[3],bg_y[3],768,982,1792,987);
-        bg_flags[30]=page_show==2 && box(bg_x[3],bg_y[3],768,982,progress_end,987);
+        bg_flags[30]=page_show==2 && bg_x[3]>=768 && bg_y[3]>=982 && bg_y[3]<987 &&
+            (progress_lt_hi || (progress_eq_hi && progress_lt_lo));
         bg_flags[31]=page_show==2 && guide_state==4 && box(bg_x[3],bg_y[3],64,552,536,616);
     end
     function [23:0] background_color(input integer index);

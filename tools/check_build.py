@@ -34,6 +34,17 @@ def main():
         else:
             for pin,div in [('CLKOUT0',5),('CLKOUT1',1)]:
                 assert f'-multiply_by 27 -divide_by {div} [get_pins {{u_hdmi/u_pll/u_pixel/PLL_inst/{pin}}}]' in sdc,'Video PLL/constraint mode mismatch'
+        # Check the tool's own PLL clock calculation as well as the SDC.
+        # An explicit SDC alone can hide an incorrectly interpreted multiplier.
+        synth=(ROOT/'impl/gwsynthesis/piano64_full_syn.rpt.html').read_text()
+        pll_clocks={}
+        for row in re.findall(r'<tr[^>]*>(.*?)</tr>',synth,re.S):
+            cells=[re.sub(r'<[^>]+>','',c).strip() for c in re.findall(r'<td[^>]*>(.*?)</td>',row,re.S)]
+            if len(cells)>=10 and cells[2]=='Generated' and cells[1].startswith('u_hdmi/u_pll/') and cells[1].endswith('.default_gen_clk'):
+                pll_clocks[cells[1]]=float(cells[4])
+        for leaf,want in [('u_pixel/PLL_inst/CLKOUT0',75.0 if low else 148.5),('u_pixel/PLL_inst/CLKOUT1',375.0 if low else 742.5)]+([] if low else [('u_ref/PLL_inst/CLKOUT0',27.5)]):
+            name='u_hdmi/u_pll/'+leaf+'.default_gen_clk'
+            assert abs(pll_clocks.get(name,-1)-want)<0.001,'PLL frequency mismatch: '+name
         html=(PNR/'piano64_full_tr_content.html').read_text()
         violations={}
         for kind in ['Setup','Hold']:
@@ -48,7 +59,7 @@ def main():
             resources[key]=[float(m[1]),float(m[2])];assert float(m[1])<=float(m[2])
         paths=(PNR/'piano64_full.timing_paths').read_text().split('=====')
         setup=[float(p.strip().splitlines()[1]) for p in paths if p.strip().startswith('SETUP')]
-        record={'video_mode':'720p60.606' if low else '1080p60','inputs':inputs(),'bitstreams':{name:sha(PNR/name) for name in ['piano64_full.fs','piano64_full.bin']},
+        record={'video_mode':'720p60.606' if low else '1080p60','pll_clocks_mhz':pll_clocks,'inputs':inputs(),'bitstreams':{name:sha(PNR/name) for name in ['piano64_full.fs','piano64_full.bin']},
             'violations':violations,'resources':resources,'worst_reported_setup_ns':min(setup)}
         manifest.write_text(json.dumps(record,indent=2)+'\n')
     else:
