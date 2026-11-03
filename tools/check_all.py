@@ -11,6 +11,7 @@ import struct
 import subprocess
 import sys
 import random
+import shutil
 
 ROOT=Path(__file__).resolve().parents[1]
 OUT=ROOT/'work/song_checks'
@@ -58,7 +59,7 @@ def prepare_liss_reference():
         (OUT/f'liss_expected_{bits}_{pb}.hex').write_text('\n'.join(f'{w:04x}' for w in words)+'\n')
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--ui',action='store_true');opt=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--ui',action='store_true');parser.add_argument('--bt',action='store_true',help='Include Bluetooth upload and SD persistence regressions');opt=parser.parse_args()
     OUT.mkdir(parents=True,exist_ok=True)
     # Tiny checksum-valid instrument image is for the SD file-service model only.
     payload=random.Random(64).randbytes(32*63)
@@ -123,6 +124,20 @@ def main():
     results+=bench('tb_scope_points',['sim/tb_scope_points.v','src/hdmi/ui/ui_scope_points.v'])
     results+=bench('tb_tmds_encode',['sim/tb_tmds_encode.v','src/hdmi/ir4/dvi_tx_tmds_enc.v'])
     results+=bench('tb_ui_timing',['sim/tb_ui_timing.v','src/hdmi/hdmi_ui3_top.v','src/hdmi/ui/ui_liss_ram.v','src/hdmi/ui/ui_scope_points.v'],extra=['-DSIM_UI3'])
+    # Independent fixed-point model guards the chorus reconstruction pipeline.
+    chorus=OUT/'chorus';chorus.mkdir(exist_ok=True)
+    shutil.copy2(ROOT/'add_sine_quarter.hex',chorus/'add_sine_quarter.hex')
+    run(['iverilog','-g2012','-s','tb_fx_chorus','-o',chorus/'run.vvp',
+        'tb_fx_chorus.v','src/fx/fx_chorus.v','src/add_sine_lut.v'])
+    log=subprocess.check_output(['vvp',str(chorus/'run.vvp')],cwd=chorus,text=True)
+    log+=run([sys.executable,ROOT/'tools/fx_chorus_check.py',chorus/'fx_chorus_out.txt'])
+    assert '1400' in log and 'PASS' in log
+    (chorus/'model.log').write_text(log)
+    results.append('PASS chorus: 1400 samples bit-exact against independent fixed-point model after added sine register')
+    print(results[-1],flush=True)
+    if opt.bt:
+        output=run([sys.executable,ROOT/'tools/check_bt_store.py']);print(output,end='',flush=True)
+        results+=output.splitlines()
     if opt.ui:
         from PIL import Image
         images=[]

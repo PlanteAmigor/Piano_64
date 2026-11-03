@@ -53,6 +53,13 @@ add_file src/song/bt_frame_rx.v
 add_file src/song/bt_song_player.v
 add_file src/song/song_fifo.v
 add_file src/song/song_loader.v
+add_file src/bt/bt_uart_rx.v
+add_file src/bt/bt_uart_tx.v
+add_file src/bt/bt_song_upload.v
+add_file src/song/song_file_encode.v
+add_file src/sd/sd_sector_rw.sv
+add_file src/sd/fat32_song_store.v
+add_file src/sd/song_sd_save.v
 add_file src/song/song_system.v
 add_file src/song/song_menu_keys.v
 

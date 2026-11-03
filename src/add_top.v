@@ -36,7 +36,8 @@ module add_top #(
     // ── TF 卡（1-bit SD 模式，上电把 P64.BIN 灌进 DDR3）──────────
     output wire       SD_CLK,
     inout  wire       SD_CMD,
-    input  wire       SD_DAT0,
+    inout  wire       SD_DAT0,
+    input wire BT_RX,output wire BT_TX,
 
     // ── 调试串口（115200 8N1，报告加载结果）────────────────────
     //    ★ DDR 加载完成后这根线改由光敏前端输出六路 mV（见文件末尾）
@@ -208,6 +209,62 @@ module add_top #(
     // ui_mode 的具体更新放到下面 KEY_AUX 扫描之后（要用 aux_release[1]）
     reg [1:0] ui_mode;
     wire guide_mode = ui_mode == MODE_GUIDE;
+    wire remote_active;
+    wire score_mode=guide_mode || remote_active;
+    wire bt_command_toggle,bt_command_play,bt_command_reply;
+    wire [7:0] bt_command_error,bt_saved_id,bt_save_error,bt_last_error;
+    wire bt_save_start,bt_save_done,bt_saving,bt_uploading,bt_committed;
+    wire [15:0] bt_file_size,bt_accepted;
+    wire bt_stream_start,bt_stream_valid,bt_stream_ready;
+    wire [7:0] bt_stream_data;
+    wire store_request,store_grant,reader_sdclk,writer_sdclk;
+    wire [31:0] bt_position;
+    reg [1:0] bt_reset_sync;
+    always @(posedge CLOCK_50 or negedge RESET_n)begin
+        if(!RESET_n)bt_reset_sync<=0;
+        else bt_reset_sync<={bt_reset_sync[0],engine_rst_n};
+    end
+    wire bt_rst_n=bt_reset_sync[1];
+    reg [1:0] bt_ready_sync,bt_playing_sync,bt_reply_sync,bt_dropped_sync;
+    reg [1:0] bt_timbre_sync;
+    // Coherent position/error snapshots are held until their toggle is seen.
+    reg bt_position_req,bt_position_ack;
+    reg [1:0] bt_pos_req_sync,bt_pos_ack_sync;
+    reg [31:0] bt_position_hold,bt_position_q;
+    assign bt_position=bt_position_q;
+    always @(posedge clk_sys)begin
+        if(!engine_rst_n)begin bt_pos_req_sync<=0;bt_position_ack<=0;bt_position_hold<=0;end
+        else begin
+            bt_pos_req_sync<={bt_pos_req_sync[0],bt_position_req};
+            if(bt_pos_req_sync[1]!=bt_position_ack)begin bt_position_hold<=song_position;bt_position_ack<=bt_pos_req_sync[1];end
+        end
+    end
+    always @(posedge CLOCK_50)begin
+        if(!bt_rst_n)begin bt_ready_sync<=0;bt_playing_sync<=0;bt_reply_sync<=0;bt_timbre_sync<=0;bt_dropped_sync<=0;
+            bt_position_req<=0;bt_pos_ack_sync<=0;bt_position_q<=0;end
+        else begin
+            bt_ready_sync<={bt_ready_sync[0],ld_ok};
+            bt_playing_sync<={bt_playing_sync[0],song_playing};bt_dropped_sync<={bt_dropped_sync[0],song_dropped};
+            bt_reply_sync<={bt_reply_sync[0],bt_command_reply};
+            bt_timbre_sync<=timbre_r;
+            bt_pos_ack_sync<={bt_pos_ack_sync[0],bt_position_ack};
+            if(bt_pos_ack_sync[1]==bt_position_req)begin bt_position_q<=bt_position_hold;bt_position_req<=~bt_position_req;end
+        end
+    end
+    bt_song_upload u_bt(.clk(CLOCK_50),.rst_n(bt_rst_n),.rx(BT_RX),.tx(BT_TX),
+        .source_ready(bt_ready_sync[1]),.current_timbre(bt_timbre_sync),
+        .playing(bt_playing_sync[1]),.dropped(bt_dropped_sync[1]),.position(bt_position),
+        .command_toggle(bt_command_toggle),.command_play(bt_command_play),
+        .command_reply(bt_reply_sync[1]),.command_error(bt_command_error),
+        .save_start(bt_save_start),.save_done(bt_save_done),.save_error(bt_save_error),.file_size(bt_file_size),
+        .stream_start(bt_stream_start),.stream_ready(bt_stream_ready),.stream_valid(bt_stream_valid),.stream_data(bt_stream_data),
+        .song_timbre(),.song_valid(bt_committed),.uploading(bt_uploading),.accepted_count(bt_accepted),.last_error(bt_last_error));
+    song_sd_save u_save(.clk(CLOCK_50),.rst_n(bt_rst_n),.start(bt_save_start),.file_size(bt_file_size),
+        .request(store_request),.grant(store_grant),.catalog_ready(sd_song_catalog),.catalog_error(sd_song_error),
+        .sdclk(writer_sdclk),.sdcmd(SD_CMD),.sddat0(SD_DAT0),
+        .stream_start(bt_stream_start),.stream_valid(bt_stream_valid),.stream_data(bt_stream_data),.stream_ready(bt_stream_ready),
+        .busy(bt_saving),.done(bt_save_done),.error(bt_save_error),.saved_id(bt_saved_id));
+    assign SD_CLK=store_grant?writer_sdclk:reader_sdclk;
     wire [4:0] sd_song_count, song_count_ui;
     wire [127:0] sd_song_ids, song_ids_ui;
     wire sd_song_catalog, sd_song_busy, sd_song_begin, sd_song_end, sd_song_error;
@@ -223,7 +280,7 @@ module add_top #(
     wire [1023:0] song_roll;
     wire [7:0] song_trig, song_gate;
     wire [63:0] song_vel;
-    wire song_playing, song_teaching, song_valid, song_catalog_ready;
+    wire song_playing, song_teaching, song_valid, song_catalog_ready,song_dropped;
     wire [1:0] song_timbre, song_countdown;
     wire [2:0] song_menu;
     wire [6:0] song_expected, song_matched;
@@ -238,6 +295,8 @@ module add_top #(
     );
     song_system u_song (
         .clk(clk_sys),.clk_sd(CLOCK_50),.rst_n(engine_rst_n),.guide(guide_mode),
+        .remote_toggle(bt_command_toggle),.remote_play(bt_command_play),.remote_id(bt_saved_id),.remote_allowed(!test_mode),
+        .remote_reply(bt_command_reply),.remote_error(bt_command_error),.remote_active(remote_active),
         .next_state(menu_next_state),.confirm_state(menu_confirm_state),
         .key_press(note_key_press[6:0]),.key_state(note_key_state[6:0]),
         .sd_count(sd_song_count),.sd_ids(sd_song_ids),.sd_catalog_done(sd_song_catalog),
@@ -247,13 +306,23 @@ module add_top #(
         .v_timbre(song_voice_timbre),.v_lead(song_lead),.multi_score(song_multi),
         .score_duration(song_duration),.roll_preview(song_roll),.progress(song_progress),
         .v_note(song_note),.v_trig(song_trig),.v_gate(song_gate),.v_vel(song_vel),
-        .playing(song_playing),.timbre(song_timbre),.score_valid(song_valid),
+        .playing(song_playing),.dropped(song_dropped),.timbre(song_timbre),.score_valid(song_valid),
         .menu_state(song_menu),.teaching(song_teaching),.expected_keys(song_expected),
         .matched_keys(song_matched),.countdown(song_countdown),.position_ms(song_position),
         .wrong_count(song_wrong),.missed_count(song_missed),.error_code(song_error),
         .file_count(song_count_ui),.file_ids(song_ids_ui),.catalog_ready(song_catalog_ready)
     );
     // Mailbox handshake: hold the entire status snapshot until HDMI ACKs it.
+    reg [1:0] bt_saving_ui,bt_uploading_ui,bt_committed_ui;
+    reg [7:0] bt_saved_ui,bt_error_ui;
+    always @(posedge clk_sys)begin
+        if(!engine_rst_n)begin bt_saving_ui<=0;bt_uploading_ui<=0;bt_committed_ui<=0;bt_saved_ui<=0;bt_error_ui<=0;end
+        else begin
+            bt_saving_ui<={bt_saving_ui[0],bt_saving};bt_uploading_ui<={bt_uploading_ui[0],bt_uploading};
+            bt_committed_ui<={bt_committed_ui[0],bt_committed};bt_saved_ui<=bt_saved_id;
+            bt_error_ui<=bt_save_error!=0?bt_save_error:bt_last_error;
+        end
+    end
     reg [1:0] song_ack_sync;
     always @(posedge clk_sys) begin
         if(!engine_rst_n) begin SONG_UI<=0; SONG_ROLL<=0; SONG_UI_TOGGLE<=0; song_ack_sync<=0; end
@@ -261,7 +330,7 @@ module add_top #(
             song_ack_sync <= {song_ack_sync[0],SONG_UI_ACK};
             if(song_ack_sync[1]==SONG_UI_TOGGLE) begin
                 SONG_ROLL <= song_roll;
-                SONG_UI <= {68'd0,opt_vel,hand_on,note_key_state,song_progress,song_duration,23'd0,song_catalog_ready,song_timbre,song_missed,song_wrong,song_position,
+                SONG_UI <= {49'd0,bt_error_ui,bt_saved_ui,bt_committed_ui[1],bt_uploading_ui[1],bt_saving_ui[1],opt_vel,hand_on,note_key_state,song_progress,song_duration,23'd0,song_catalog_ready,song_timbre,song_missed,song_wrong,song_position,
                     song_error,song_matched,song_expected,song_countdown,
                     song_playing,song_teaching,song_menu,song_selected,song_count_ui,song_ids_ui};
                 SONG_UI_TOGGLE<=~SONG_UI_TOGGLE;
@@ -378,6 +447,7 @@ module add_top #(
 
     always @(posedge clk_sys) begin
         if (!por_n)           ui_mode <= MODE_MAIN;
+        else if (remote_active && ui_mode==MODE_MAIN)ui_mode<=MODE_GUIDE;
         else if (mode_switch) ui_mode <= (ui_mode == MODE_GUIDE) ? MODE_MAIN
                                                                  : (ui_mode + 2'd1);
     end
@@ -435,11 +505,11 @@ module add_top #(
     //======================================================================
     //  0 = 钢琴（白灯）  1 = 古筝（青灯）  2 = 唄呐（橙灯）  3 = 笛子（紫灯）
     reg [1:0] manual_timbre_r;
-    wire [1:0] timbre_r = guide_mode && song_valid ? song_timbre : manual_timbre_r;
+    wire [1:0] timbre_r = score_mode && song_valid ? song_timbre : manual_timbre_r;
 
     always @(posedge clk_sys) begin
         if (!engine_rst_n)          manual_timbre_r <= 2'd0;
-        else if (timbre_toggle && !guide_mode) manual_timbre_r <= manual_timbre_r + 2'd1;
+        else if (timbre_toggle && !score_mode) manual_timbre_r <= manual_timbre_r + 2'd1;
     end
 
     //======================================================================
@@ -542,8 +612,8 @@ module add_top #(
 
     reg signed [7:0] transpose;
 
-    wire tr_up_fire   = engine_rst_n && !guide_mode && r1_press[8];
-    wire tr_down_fire = engine_rst_n && !guide_mode && r2_press[8];
+    wire tr_up_fire   = engine_rst_n && !score_mode && r1_press[8];
+    wire tr_down_fire = engine_rst_n && !score_mode && r2_press[8];
 
     always @(posedge clk_sys) begin
         if (!engine_rst_n) begin
@@ -612,7 +682,7 @@ module add_top #(
         wire [15:0] vscale = song_vel[sg*8+:8] * opt_vel;
         assign song_vel_expr[sg*8+:8] = song_teaching && song_lead[sg] && hand_on ? vscale[15:8] : song_vel[sg*8+:8];
     end endgenerate
-    wire [NVOICE*8-1:0] vel_eng = guide_mode ? song_vel_expr :
+    wire [NVOICE*8-1:0] vel_eng = score_mode ? song_vel_expr :
         hand_on ? {NVOICE{opt_vel}} : {NVOICE{8'd0}};
 
     //======================================================================
@@ -654,7 +724,7 @@ module add_top #(
         .clk      (clk_sys),
         .rst_n    (engine_rst_n),
 
-        .key_state(guide_mode ? 8'd0 : note_key_state),
+        .key_state(score_mode ? 8'd0 : note_key_state),
         .key_enable(t_key_en),
         .note_base (t_note_base),
         .key_step  (t_key_step),
@@ -691,11 +761,11 @@ module add_top #(
     wire aut_gate = AUTO_TEST && (aut_t >= AT_TRIG) && (aut_t < AT_OFF);
     wire aut_any  = aut_trig || aut_gate;
 
-    wire mixed_score=guide_mode && song_valid && song_multi;
+    wire mixed_score=score_mode && song_valid && song_multi;
     wire [NVOICE-1:0] modal_mask=mixed_score?8'h7f:(is_harm?8'h00:8'hff);
-    wire [NVOICE*7-1:0] eng_note = guide_mode ? song_note : aut_any ? {NVOICE{7'd60}} : k_note;
-    wire [NVOICE-1:0]   eng_trig = guide_mode ? song_trig : aut_trig ? {{(NVOICE-1){1'b0}}, 1'b1} : v_trig;
-    wire [NVOICE-1:0]   eng_gate = guide_mode ? song_gate : aut_gate ? {{(NVOICE-1){1'b0}}, 1'b1} : v_gate;
+    wire [NVOICE*7-1:0] eng_note = score_mode ? song_note : aut_any ? {NVOICE{7'd60}} : k_note;
+    wire [NVOICE-1:0]   eng_trig = score_mode ? song_trig : aut_trig ? {{(NVOICE-1){1'b0}}, 1'b1} : v_trig;
+    wire [NVOICE-1:0]   eng_gate = score_mode ? song_gate : aut_gate ? {{(NVOICE-1){1'b0}}, 1'b1} : v_gate;
 
     //======================================================================
     //  加法合成引擎：128 分量/声部，8 声部共用一份参数 ROM
@@ -755,7 +825,7 @@ module add_top #(
         .normalize_guzheng(mixed_score),
         .voice_timbre(mixed_score ? {1'b0,song_voice_timbre[12],song_voice_timbre[10],song_voice_timbre[8],
             song_voice_timbre[6],song_voice_timbre[4],song_voice_timbre[2],song_voice_timbre[0]} : {NVOICE{is_gz}}),
-        .voice_expression(guide_mode ? (song_teaching && hand_on ? song_lead:8'd0):8'hff),
+        .voice_expression(score_mode ? (song_teaching && hand_on ? song_lead:8'd0):8'hff),
         .timbre     (is_gz),             // ★ modal 引擎：1=古筝 0=钢琴（唄呐/笛子时无效）
         .v_note     (eng_note),
         .v_trig     (eng_trig & modal_mask),
@@ -763,10 +833,10 @@ module add_top #(
         .v_vel      (vel_eng),           // ★ 光学力度优先，否则用键盘力度
         // ★★ 滑音只给古筝（技法表：钢琴没有滑音）。
         //    二者共用同一个 add_engine8 实例，所以在顶层按音色选。
-        .bend_q14   ((!guide_mode || (song_teaching && hand_on)) ? opt_bend_q14 : 16'd16384),
-        .vib_en     (opt_vib_en && (!guide_mode || (song_teaching && hand_on))),   // G3 揉弦（古筝）
-        .art_en     (opt_art && (!guide_mode || (song_teaching && hand_on))),     // G7 顿音
-        .stop_hold  (opt_stop && (!guide_mode || (song_teaching && hand_on))),     // G8 急停
+        .bend_q14   ((!score_mode || (song_teaching && hand_on)) ? opt_bend_q14 : 16'd16384),
+        .vib_en     (opt_vib_en && (!score_mode || (song_teaching && hand_on))),   // G3 揉弦（古筝）
+        .art_en     (opt_art && (!score_mode || (song_teaching && hand_on))),     // G7 顿音
+        .stop_hold  (opt_stop && (!score_mode || (song_teaching && hand_on))),     // G8 急停
         // ★ 延音：由效果器档位控制（SUSTAIN 单独一档，也可与 DELAY 叠加）——
         //   松键后按每个音自己的自然衰减率继续响，而不是 0.30 s 一刀煞掉。
         .sustain    (fx_sus_on),
@@ -816,7 +886,7 @@ module add_top #(
     localparam [7:0]  DIZI_INF   = 8'd112;   // info 112..211
 
     wire harm_dizi=mixed_score ? song_voice_timbre[15:14]==3:is_dizi;
-    wire harm_expression=!guide_mode || (song_teaching && hand_on && (!mixed_score || song_lead[7]));
+    wire harm_expression=!score_mode || (song_teaching && hand_on && (!mixed_score || song_lead[7]));
     wire [6:0]  harm_note_lo  = harm_dizi ? 7'd67 : 7'd69;
     wire [6:0]  harm_note_hi  = harm_dizi ? 7'd91 : 7'd96;
     wire [7:0]  harm_inf_base = harm_dizi ? DIZI_INF : SUONA_INF;
@@ -841,7 +911,7 @@ module add_top #(
     //    钢琴/古筝不受影响：它们每个声部有自己的 v_gate[g]/v_vel[g]，
     //    声部与按键是一一对应的，所以那边一直正常。
     //    唢呐改成直接看【8 个音源键】，与声部分配彻底解耦。
-    wire sua_gate = mixed_score ? song_gate[7] : is_harm && (guide_mode ? song_gate[0] : (|note_key_state));
+    wire sua_gate = mixed_score ? song_gate[7] : is_harm && (score_mode ? song_gate[0] : (|note_key_state));
 
     // 按下沿 → 按【键号】锁存力度（不是声部号）
     //   直接复用 note_key_press（= r1_press[7:0]，已含重触发屏蔽）
@@ -879,11 +949,11 @@ module add_top #(
         .note_hi    (harm_note_hi),
         .inf_base   (harm_inf_base),
         .desc_base  (harm_desc),
-        .score_mode (guide_mode),
+        .score_mode (score_mode),
         .v_note     ({21'd0, sua_note}),
         .v_trig     ({3'b000, sua_trig}),
         .v_gate     ({3'b000, sua_gate}),
-        .v_vel      ({{24{1'b0}}, (guide_mode ? (mixed_score?song_vel_expr[63:56]:song_vel_expr[7:0]) : sua_vel)}),
+        .v_vel      ({{24{1'b0}}, (score_mode ? (mixed_score?song_vel_expr[63:56]:song_vel_expr[7:0]) : sua_vel)}),
         // ★ 延音：与钢琴/古筝共用同一个效果器档位（SUSTAIN / DELAY+SUSTAIN）
         .sustain    (fx_sus_on),
         // ★ 光学前端（步骤 1：先接常量，保证与改动前逐位等价）
@@ -893,8 +963,8 @@ module add_top #(
         .vib_am     (1'b0),                  // 笛子只用音色自带气颤
         .art_en     (opt_art && harm_expression),      // G7 顿音/吐音
         .stop_hold  (opt_stop && harm_expression),      // G8 急停
-        .hand_on    (guide_mode ? 1'b1 : opt_hand),                 // 有手才响
-        .opt_en     (guide_mode ? 1'b0 : opt_en),
+        .hand_on    (score_mode ? 1'b1 : opt_hand),                 // 有手才响
+        .opt_en     (score_mode ? 1'b0 : opt_en),
         .opt_vel    (opt_vel),
         .sample_tick(tick),
         .sample_l   (sua_l),
@@ -1222,8 +1292,8 @@ module add_top #(
     reg        led_rst_s0,  led_rst_s1;     // 复位
 
     always @(posedge CLOCK_50) begin
-        led_kst_s0  <= guide_mode ? {1'b0,song_expected} : note_key_state;
-        led_kvel_s0 <= guide_mode ? {8{8'd180}} : note_key_vel;
+        led_kst_s0  <= score_mode ? {1'b0,song_expected} : note_key_state;
+        led_kvel_s0 <= score_mode ? {8{8'd180}} : note_key_vel;
         led_tmb_s0  <= timbre_r;
         led_fx_s0   <= fx_r;
         led_trl_s0  <= tr_led_on;
@@ -1380,7 +1450,7 @@ module add_top #(
         .dbg_por_n   (por_n),
         .dbg_reset_n (RESET_n),
 
-        .sd_clk      (SD_CLK),
+        .sd_clk      (reader_sdclk),
         .sd_cmd      (SD_CMD),
         .sd_dat0     (SD_DAT0),
 
@@ -1406,6 +1476,7 @@ module add_top #(
         .nfiles      (ld_nfiles),
         .file_no     (ld_fileno),
 
+        .store_request(store_request),.store_grant(store_grant),
         .song_request(song_request),.song_request_index(song_selected),
         .song_file_count(sd_song_count),.song_ids(sd_song_ids),.song_catalog_done(sd_song_catalog),
         .song_busy(sd_song_busy),.song_byte(sd_song_byte),.song_byte_valid(sd_song_valid),

@@ -51,6 +51,7 @@ module song_loader #(
     output reg  [15:0]  song_count,      // 事件数
     output reg  [31:0]  song_duration,   // 总时长 ms
     output reg          song_multi,
+    output wire         song_allow_drop,
     output reg  [1:0]   song_timbre,     // 0钢琴 1古筝 2唢呐 3笛子
     output reg  [7:0]   err_code,        // 0=OK，含义见文件末尾
     output reg          busy,            // 正在装填
@@ -165,6 +166,7 @@ module song_loader #(
     reg  [10:0] waddr_q;         // 实际写地址（延迟一拍）
     assign ram_waddr = waddr_q;
     reg        uploading;       // BEGIN 已收到，正在等 DATA
+    assign song_allow_drop=allow_drop;
     reg        allow_drop;      // BEGIN.flags[0]，允许超额丢音
 
     wire [31:0] ev_start    = event_word[31:0];

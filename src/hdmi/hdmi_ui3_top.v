@@ -105,6 +105,10 @@ module hdmi_ui3_top (
             end
         end
     end
+    wire bt_saving=song_status[316],bt_uploading=song_status[317],bt_committed=song_status[318];
+    wire [7:0] bt_saved_id=song_status[326:319],bt_error=song_status[334:327];
+    wire [255:0] bt_message=bt_saving?"BT / SAVING TO SD               ":bt_uploading?"BT / RECEIVING SCORE            ":
+        bt_error!=0?"BT / UPLOAD FAILED. RETRY        ":bt_committed?"BT / SAVED TO SD - SONG          ":"BT / READY TO RECEIVE           ";
     wire guide_catalog_ready=song_status[232];
     wire [4:0] guide_count=song_status[132:128];
     wire [3:0] guide_selected=song_status[136:133];
@@ -350,7 +354,7 @@ endcase end endfunction
         else begin
             catalog_scan<=catalog_scan+1'b1;catalog_index<=catalog_scan;
             catalog_value<=song_status[catalog_scan*8+:8];
-            catalog_digits[catalog_index*8+:8]<={catalog_tens,catalog_ones};
+            catalog_digits[catalog_index*8+:8]<=catalog_value;
             level_hundreds<=level_bcd[11:8];level_tens<=level_bcd[7:4];level_ones<=level_bcd[3:0];
             error_tens<=error_bcd[7:4];error_ones<=error_bcd[3:0];
         end
@@ -371,9 +375,9 @@ endcase end endfunction
     // and enables in parallel, then merge in one short OR stage before glyph RAM.
     reg [8:0] dynamic_char[0:14];
     reg [7:0] static_char;
-    reg [255:0] effect_text,message_text;
+    reg [255:0] effect_text,message_text,bt_text;
     always @(posedge clk_p)begin
-        effect_text<=effect_name;
+        effect_text<=effect_name;bt_text<={bt_message[31:0],bt_message[255:32]};
         // Rotate by four cells once per status update, so a pixel's message
         // address uses the column directly without a subtract before the mux.
         message_text<={guide_message[31:0],guide_message[255:32]};
@@ -384,6 +388,9 @@ endcase end endfunction
             string_char(perf_hand?"ON                              ":"OFF                             ",col1[4:0]-5'd18)};
         dynamic_char[3]<={page_show==0 && row1==30 && col1>=102 && col1<105,
             8'd48+(col1==102?level_hundreds:col1==103?level_tens:level_ones)};
+        dynamic_char[4]<={row1==31 && col1>=4 && col1<36,
+            bt_committed && !bt_uploading && !bt_saving && bt_error==0 && (col1==28 || col1==29)?
+                8'd48+(col1==28?bt_saved_id[7:4]:bt_saved_id[3:0]):string_char(bt_text,col1[4:0])};
         dynamic_char[5]<={page_show==2 && row1==25 && col1>=4 && col1<36,string_char(message_text,col1[4:0])};
         dynamic_char[6]<={page_show==2 && row1==30 && col1>=49 && col1<54,8'd48+{4'd0,time_bcd[{position_digit,2'b00}+:4]}};
         dynamic_char[7]<={page_show==2 && row1==30 && col1==54,8'd83};
@@ -404,7 +411,7 @@ endcase end endfunction
     reg any_dynamic;
     always @(*)begin
         char1=0;any_dynamic=0;
-        for(integer ch=0;ch<15;ch=ch+1)if(ch!=4)begin
+        for(integer ch=0;ch<15;ch=ch+1)begin
             char1=char1 | (dynamic_char[ch][7:0]&{8{dynamic_char[ch][8]}});
             any_dynamic=any_dynamic|dynamic_char[ch][8];
         end
@@ -429,7 +436,9 @@ endcase end endfunction
     reg [4:0] band1;
     reg [5:0] component1;
     reg [7:0] height2,component2;
-    reg [7:0] band_group[0:3],component_group[0:7];
+    reg [7:0] main_band_group[0:3],test_band_group[0:3],component_group[0:7];
+    reg test_band1;
+    wire [4:0] main_band_index=px[9:5]-5'd2;
     wire [11:0] band_origin=page_show==1?96:64;
     wire [11:0] band_pitch=page_show==1?40:32;
     reg [5:0] test_band_column,test_band_phase;
@@ -472,7 +481,11 @@ endcase end endfunction
         x1<=px;y1<=py;col1<=tile_col;row1<=tile_row;gx1<=font_x;gy1<=font_y;
         text1<=text_rom[tile_addr];
         // Split wide live-bar lookups over the existing two pixel stages.
-        for(integer g=0;g<4;g=g+1)band_group[g]<=bands_cap[g*64+band_index[2:0]*8+:8];
+        for(integer g=0;g<4;g=g+1)begin
+            main_band_group[g]<=bands_cap[g*64+main_band_index[2:0]*8+:8];
+            test_band_group[g]<=bands_cap[g*64+test_band_column[2:0]*8+:8];
+        end
+        test_band1<=page_show==1;
         for(integer g=0;g<8;g=g+1)component_group[g]<=comp_cap[g*64+component_low0*8+:8];
         band1<=band_index[4:0];band_on1<=px>=band_origin && band_index<32 && band_phase<band_pitch-8;
         component1<=comp_x[9:4];comp_on1<=px>=64 && px<1088 && comp_x[3:0]<11;
@@ -499,7 +512,7 @@ endcase end endfunction
             roll_color1[r]<=roll_rect1[r] && roll_meta1[r][4] && roll_meta1[r][3] && roll_meta1[r][1];
         end
         x1b<=x1;y1b<=y1;gx1b<=gx1;gy1b<=gy1;char2<=char1;
-        height1b<=band_group[band1[4:3]];component1b<=component_group[component1[5:3]];
+        height1b<=test_band1?test_band_group[band1[4:3]]:main_band_group[band1[4:3]];component1b<=component_group[component1[5:3]];
         band_on1b<=band_on1;comp_on1b<=comp_on1;
 
         x1c<=x1b;y1c<=y1b;gx1c<=gx1b;gy1c<=gy1b;

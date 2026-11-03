@@ -7,6 +7,10 @@ module song_system #(
 )(
     input wire clk, clk_sd, rst_n, guide,
     input wire next_state, confirm_state,
+    input wire remote_toggle,remote_play,remote_allowed,
+    input wire [7:0] remote_id,
+    output reg remote_reply,output reg [7:0] remote_error,
+    output reg remote_active,
     input wire [6:0] key_press, key_state,
     input wire [4:0] sd_count,
     input wire [127:0] sd_ids,
@@ -24,7 +28,7 @@ module song_system #(
     output reg [10:0] progress,
     output wire [7:0] v_trig, v_gate,
     output wire [63:0] v_vel,
-    output wire playing,
+    output wire playing,dropped,
     output wire [1:0] timbre,
     output wire score_valid,
     output reg [2:0] menu_state,
@@ -51,6 +55,14 @@ module song_system #(
     reg play_start, play_stop, playing_d;
     reg [1:0] cat_sync;
     assign catalog_ready=cat_sync[1];
+    reg [2:0] remote_sync;
+    reg remote_seen,remote_pending,guide_d;
+    integer remote_match;
+    always @(*)begin
+        remote_match=-1;
+        for(integer n=15;n>=0;n=n-1)
+            if(n<file_count && file_ids[n*8+:8]==remote_id)remote_match=n;
+    end
     reg [2:0] begin_sync, end_sync;
     reg [1:0] err_sync;
     reg [1:0] sd_reset;
@@ -74,7 +86,7 @@ module song_system #(
         .rinc(fifo_inc),.rinc_d(fifo_valid),.rempty(fifo_empty)
     );
     reg [1:0] ov_sync;
-    wire ram_we, loader_busy, loader_idle;
+    wire ram_we, loader_busy, loader_idle,allow_drop;
     wire [10:0] ram_waddr;
     wire [63:0] ram_wdata;
     wire [15:0] count;
@@ -87,7 +99,7 @@ module song_system #(
     song_loader #(.CLK_HZ(CLK_HZ)) u_loader (
         .clk(clk),.rst_n(loader_rst_n),.byte_data(fifo_data),.byte_valid(fifo_valid),
         .byte_error(ov_sync[1]),.ram_we(ram_we),.ram_waddr(ram_waddr),.ram_wdata(ram_wdata),
-        .song_valid(score_valid),.song_count(count),.song_duration(duration_ms),.song_timbre(file_timbre),.song_multi(multi_score),
+        .song_valid(score_valid),.song_count(count),.song_duration(duration_ms),.song_timbre(file_timbre),.song_multi(multi_score),.song_allow_drop(allow_drop),
         .err_code(loader_error),.busy(loader_busy),.frame_hit(),.stream_idle(loader_idle)
     );
     reg [63:0] events[0:2047];
@@ -98,6 +110,7 @@ module song_system #(
         read_data<=events[read_addr[10:0]];
     end
     wire player_overflow;
+    assign dropped=player_overflow;
     bt_song_player #(.CLK_HZ(CLK_HZ),.MAX_EVENTS(2048),.MULTI_ENABLED(1),.TEACH_ENABLED(1),.START_DELAY_MS(PREPARE_MS)) u_player (
         .clk(clk),.rst_n(rst_n),.start(play_start),.stop(play_stop),.count(count),
         .duration_ms(duration_ms),.timbre(file_timbre),.read_addr(read_addr),.read_data(read_data),
@@ -210,12 +223,14 @@ module song_system #(
     end
     always @(posedge clk) begin
         if(!rst_n) begin
+            guide_d<=0;remote_sync<=0;remote_seen<=0;remote_pending<=0;remote_active<=0;remote_reply<=0;remote_error<=0;
             ms_div<=0; next_d<=0; confirm_d<=0; long_fired<=0; hold_ms<=0;
             cat_sync<=0; begin_sync<=0; end_sync<=0; err_sync<=0; ov_sync<=0;
             file_count<=0; file_ids<=0; selected<=0; request_toggle<=0;
             menu_state<=LIST; teaching<=0; play_start<=0; play_stop<=0; playing_d<=0;
             receiving<=0; eof_seen<=0; reset_wait<=4'd8; quiet_ms<=0; error_code<=0;
         end else begin
+            guide_d<=guide;remote_sync<={remote_sync[1:0],remote_toggle};
             cat_sync<={cat_sync[0],sd_catalog_done};
             begin_sync<={begin_sync[1:0],sd_begin}; end_sync<={end_sync[1:0],sd_end};
             err_sync<={err_sync[0],sd_error}; ov_sync<={ov_sync[0],fifo_overflow};
@@ -240,18 +255,20 @@ module song_system #(
                     if(quiet_ms<SETTLE_MS+1) quiet_ms<=quiet_ms+1'b1;
                     else begin
                         receiving<=0;
-                        if(menu_state==LOAD && guide) begin
+                        if(menu_state==LOAD && (guide || remote_active)) begin
                             if(score_valid && loader_idle && loader_error==0 && !err_sync[1] && !ov_sync[1]) begin
                                 play_start<=1; menu_state<=RUN; error_code<=0;
+                                if(remote_pending)begin remote_reply<=remote_seen;remote_error<=0;remote_pending<=0;end
                             end else begin
                                 menu_state<=ERROR;
+                                if(remote_pending)begin remote_reply<=remote_seen;remote_error<=3;remote_pending<=0;remote_active<=0;end
                                 error_code<=loader_error!=0 ? loader_error : 8'd3;
                             end
                         end
                     end
                 end
             end
-            if(!guide) begin
+            if(!guide && !remote_active) begin
                 menu_state<=LIST; play_stop<=1;
             end else begin
                 case(menu_state)
@@ -267,16 +284,34 @@ module song_system #(
                             request_toggle<=~request_toggle; error_code<=0; menu_state<=LOAD;
                         end
                     end
-                    LOAD: if(confirm_long) begin menu_state<=MODE; play_stop<=1; end
+                    LOAD: if(confirm_long) begin
+                        menu_state<=MODE;play_stop<=1;remote_active<=0;
+                        if(remote_pending)begin remote_reply<=remote_seen;remote_error<=3;remote_pending<=0;end
+                    end
                     RUN: begin
                         if(confirm_short || confirm_long || (playing_d && !playing)) begin
-                            play_stop<=1; menu_state<=MODE;
+                            play_stop<=1; menu_state<=MODE;remote_active<=0;
                         end
-                        if(player_overflow) begin play_stop<=1; error_code<=9; menu_state<=ERROR; end
+                        if(player_overflow && !allow_drop) begin remote_active<=0;play_stop<=1; error_code<=9; menu_state<=ERROR; end
                     end
                     ERROR: if(confirm_short || confirm_long) menu_state<=LIST;
                     default:menu_state<=LIST;
                 endcase
+            end
+            if(remote_active && guide_d && !guide)begin
+                play_stop<=1;remote_active<=0;menu_state<=LIST;
+                if(remote_pending)begin remote_reply<=remote_seen;remote_error<=3;remote_pending<=0;end
+            end
+            if(remote_sync[2]!=remote_seen)begin
+                remote_seen<=remote_sync[2];play_stop<=1;remote_pending<=0;remote_error<=0;
+                if(!remote_play)begin
+                    remote_active<=0;remote_reply<=remote_sync[2];menu_state<=LIST;
+                end else if(!remote_allowed || !cat_sync[1] || remote_match<0 || receiving)begin
+                    remote_error<=!remote_allowed?8'd6:8'd3;remote_reply<=remote_sync[2];remote_active<=0;
+                end else begin
+                    selected<=remote_match;teaching<=0;remote_active<=1;remote_pending<=1;
+                    request_toggle<=~request_toggle;error_code<=0;menu_state<=LOAD;
+                end
             end
         end
     end

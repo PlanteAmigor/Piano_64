@@ -37,7 +37,8 @@ module piano64_top #(
 
     output wire       SD_CLK,
     inout  wire       SD_CMD,
-    input  wire       SD_DAT0,
+    inout  wire       SD_DAT0,
+    input wire BT_RX,output wire BT_TX,
 
     output wire       UART_TX,
 
@@ -108,6 +109,7 @@ module piano64_top #(
         .SD_CMD     (SD_CMD),
         .SD_DAT0    (SD_DAT0),
         .UART_TX    (UART_TX),
+        .BT_RX(BT_RX),.BT_TX(BT_TX),
         .IR_EMIT    (IR_EMIT),
         .ADC_CSN    (ADC_CSN),
         .ADC_SCLK   (ADC_SCLK),

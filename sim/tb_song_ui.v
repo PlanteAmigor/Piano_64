@@ -3,6 +3,7 @@
 `default_nettype none
 module tb_song_ui;
     parameter integer SHOT=0;
+    integer shot;
     reg clk=0,scope_clk=0,resetn=0,toggle=0;
     always #10 scope_clk=~scope_clk;
     always #3.367 clk=~clk;
@@ -25,6 +26,7 @@ module tb_song_ui;
     reg capture=0;
     reg [1023:0] output_path;
     initial begin
+        if(!$value$plusargs("SHOT=%d",shot))shot=SHOT;
         if(!$value$plusargs("OUT=%s",output_path)) output_path="work/song_checks/ui.ppm";
         f=$fopen(output_path,"wb");if(!f) $fatal(1,"UI output");
         $fwrite(f,"P6\n1920 1080\n255\n");
@@ -35,7 +37,7 @@ module tb_song_ui;
         status[287:256]=30000;status[298:288]=400;
         for(j=0;j<16;j=j+1)roll[j*32+:32]={1'b1,1'b1,j==0,2'(j%4),4'(j%8),11'(256+j*32),11'(320+j*32),1'b0};
         status[31:0]=32'h03020104;status[132:128]=4;status[136:133]=1;status[232]=1;
-        case(SHOT)
+        case(shot)
             1:begin status[139:137]=1;status[140]=1;end
             2:begin status[139:137]=3;status[140]=1;status[143:142]=3;status[150:144]=7'b0000101;status[157:151]=1;end
             3:begin status[139:137]=4;status[165:158]=1;end
@@ -43,16 +45,20 @@ module tb_song_ui;
             5,6:begin end
             7:begin status[139:137]=3;status[140]=0;status[197:166]=12000;end
             8:begin status[139:137]=3;status[140]=1;status[197:166]=12000;status[150:144]=7'b0000101;status[157:151]=1;end
+            9:begin status[317]=1;roll=0;end
+            10:begin status[317]=1;status[316]=1;roll=0;end
+            11:begin status[318]=1;status[326:319]=8'h06;roll=0;end
+            12:begin status[334:327]=24;roll=0;end
         endcase
-        if(SHOT==0 || SHOT==1 || SHOT==3 || SHOT==4)roll=0;
+        if(shot==0 || shot==1 || shot==3 || shot==4)roll=0;
         toggle=1;wait(ack);@(negedge clk);
         if(dut.roll_status!==roll)$fatal(1,"roll mailbox snapshot torn");
         if(dut.song_status!==status) $fatal(1,"mailbox snapshot torn");
-        if(SHOT==5)force dut.page_show=0;else if(SHOT==6)force dut.page_show=1;else force dut.page_show=2;
+        if(shot==5)force dut.page_show=0;else if(shot==6)force dut.page_show=1;else force dut.page_show=2;
         force dut.fade_lvl=15;
         scope_trg=1;
         // Let the real scope and decimal display settle before the captured frame.
-        if(SHOT==5)begin wait(dut.vcnt==1124);wait(dut.vcnt==0);end
+        if(shot==5)begin wait(dut.vcnt==1124);wait(dut.vcnt==0);end
         else begin @(negedge clk);force dut.frame_tick=1;@(negedge clk);release dut.frame_tick;repeat(160)@(negedge clk);end
         wait(!dut.vis_d9);wait(dut.vis_d9);capture=1;
     end
@@ -62,7 +68,7 @@ module tb_song_ui;
         if(x<1919) x=x+1;
         else if(y<1079) begin x=0;y=y+1;end
         else begin
-            $fclose(f);$display("PASS UI snapshot %0d: mailbox and 1920x1080 RGB pixels",SHOT);$finish;
+            $fclose(f);$display("PASS UI snapshot %0d: mailbox and 1920x1080 RGB pixels",shot);$finish;
         end
     end
     initial begin #120000000;$fatal(1,"UI timeout");end

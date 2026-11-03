@@ -114,7 +114,8 @@ module sd_ddr_loader #(
     output wire song_byte_valid,
     output reg song_begin,
     output reg song_end,
-    output reg song_error
+    output reg song_error,
+    input wire store_request,output reg store_grant
 );
 
 //==========================================================================
@@ -140,7 +141,7 @@ localparam [3:0]
     P_RD_RUN = 3'd4,
     P_DONE   = 3'd5,
     P_SLS_RST = 3'd6, P_SLS_RUN = 3'd7,
-    P_SRD_RST = 4'd8, P_SRD_RUN = 4'd9;
+    P_SRD_RST = 4'd8, P_SRD_RUN = 4'd9, P_PARK=4'd10, P_STORE=4'd11;
 
 
 localparam integer BOOTD50 = CLK50_HZ / 1000 * BOOT_MS;
@@ -248,6 +249,7 @@ always @(posedge clk50) begin
         pst       <= P_BOOT;
         load_ok_s <= 0; request_s <= 0; request_seen <= 0;
         song_file_count <= 0; song_ids <= 0; song_catalog_done <= 0;
+        store_grant <= 0;
         song_busy <= 0; song_begin <= 0; song_end <= 0; song_error <= 0;
         pcnt      <= 32'd0;
         f_rstn    <= 1'b0;
@@ -350,7 +352,9 @@ always @(posedge clk50) begin
 
         P_DONE: begin
             f_rstn <= 1'b1;
-            if (load_ok_s[1] && !song_catalog_done) begin
+            if(store_request && load_ok_s[1] && song_catalog_done)begin
+                if(!sd_clk)begin f_rstn<=0;song_catalog_done<=0;pcnt<=0;pst<=P_PARK;end
+            end else if (load_ok_s[1] && !song_catalog_done) begin
                 pcnt <= 0;
                 song_file_count <= 0;
                 song_ids <= 0;
@@ -368,6 +372,16 @@ always @(posedge clk50) begin
                     song_error <= 1;
                     song_end <= ~song_end;
                 end
+            end
+        end
+        P_PARK:begin
+            f_rstn<=0;
+            if(!sd_clk)begin store_grant<=1;pst<=P_STORE;end
+        end
+        P_STORE:begin
+            f_rstn<=0;
+            if(!store_request)begin
+                store_grant<=0;pcnt<=0;song_file_count<=0;song_ids<=0;pst<=P_SLS_RST;
             end
         end
         P_SLS_RST: begin

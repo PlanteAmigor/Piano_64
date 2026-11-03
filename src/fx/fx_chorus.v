@@ -68,8 +68,12 @@ module fx_chorus #(
         .dout (sin_dout)
     );
 
-    wire signed [15:0] sin_s0 = sin_dout[15:0];    // sin(i)
-    wire signed [15:0] sin_s1 = sin_dout[31:16];   // sin(i+1)
+    // Register reconstructed signed samples before the interpolation multiplier.
+    // This separates quarter-ROM sign reconstruction from subtract/multiply/add.
+    reg [31:0] sin_pipe /* synthesis syn_preserve=1 */;
+    always @(posedge clk)sin_pipe<=sin_dout;
+    wire signed [15:0] sin_s0 = sin_pipe[15:0];    // sin(i)
+    wire signed [15:0] sin_s1 = sin_pipe[31:16];   // sin(i+1)
 
     //  ★★ ROM 同步读是【两拍】的：X 拍设地址 → X+1 地址进寄存器 →
     //     X+1 拍沿上才读 → X+2 数据才有效。按组合时序（X+1）去取会把
@@ -237,7 +241,8 @@ module fx_chorus #(
                 end
 
                 //──────────────────────────────────────────────
-                4'd3: begin
+                4'd3: st<=4'd11; // reconstructed sine register latency
+                4'd11: begin
                     sv_l <= lfo_v;                 // 左正弦
                     st   <= 4'd4;
                 end
