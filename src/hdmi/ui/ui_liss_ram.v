@@ -1,8 +1,18 @@
 //==========================================================================
-//  ui_liss_ram —— 相图（李萨如）帧存 256×256，【4 bit 强度/像素】
+//  ui_liss_ram —— 相图（李萨如）帧存 128×128，【4 bit 强度/像素】
 //
-//  16384 word × 16 bit：一个 word = 一行里的 4 个像素（4 个 nibble）
-//      addr = row*64 + (x>>2)，nibble = x&3
+//  4096 word × 16 bit：一个 word = 一行里的 4 个像素（4 个 nibble）
+//      addr = row*32 + (x>>2)，nibble = x&3
+//
+//  ★ 2026-11-03 从 256×256 缩到 128×128（16 块 BSRAM → 4 块，省 12 块）
+//    显示窗口只有 212×212 px，原来 256 位图是【缩小】显示（0.83×），
+//    现在是【放大】显示（1.66×）。打点区 32..224 缩半成 16..112，
+//    换算到屏幕仍是 10..202，与原来像素范围完全一致，视觉几乎无差别。
+//    输入坐标保持 8 位（0..255）不变，内部取 [7:1] 折扣。
+//
+//  16384 → 4096 word 后：
+//    全清 4096 拍（82 us），衰减 4096×3 = 12288 拍 = 164 us
+//    （720p 每帧消隐 328650 拍 = 4.4 ms，余量 26 倍）
 //
 //  为什么是 4 bit 而不是 1 bit：这是「数字荧光屏」的核心。
 //    · 打点 = 该像素强度 +1（饱和到 15）
@@ -15,9 +25,9 @@
 //      滤波改的是【形状】，荧光改的是【权重】。
 //
 //  写口只有一个 always 块（★ 数组不能多块驱动，否则综合器报多驱动）：
-//    · 全清：16384 拍（218 us），仅上电用
-//    · 衰减：16384 字 × 2 拍（读+写）= 32768 拍 = 437 us，每帧一次
-//            （720p 每帧消隐 328650 拍 = 4.4 ms，余量 10 倍）
+//    · 全清：4096 拍（82 us），仅上电用
+//    · 衰减：4096 字 × 2 拍（读+写）= 8192 拍 = 109 us，每帧一次
+//            （720p 每帧消隐 328650 拍 = 4.4 ms，余量 40 倍）
 //    · 打点：Bresenham 连线，每像素 3 拍读-改-写
 //  读口：扫描时读一个 word，按 nibble 选像素强度
 //==========================================================================
@@ -43,12 +53,16 @@ module ui_liss_ram (
     output reg         decay_busy,
 
     // ── 读口（扫描）：一个 word = 4 个像素 ───────────────────────
-    input  wire [13:0] raddr,
+    input  wire [11:0] raddr,
     output reg  [15:0] rdata
 );
-    reg [15:0] m [0:16383];
+    reg [15:0] m [0:4095];
 
-    localparam [13:0] LAST_A = 14'd16383;
+    localparam [11:0] LAST_A = 12'd4095;
+
+    // 输入坐标 0..255 → 帧存坐标 0..127（折扣）
+    wire [7:0] px7 = {1'b0, plot_x[7:1]};
+    wire [7:0] py7 = {1'b0, plot_y[7:1]};
 
     // ── 4 位饱和减 / 饱和加 ─────────────────────────────────────
     function [15:0] dec16;                  // 4 个 nibble 各自饱和 -step
@@ -98,7 +112,7 @@ module ui_liss_ram (
 
     // ── 全清 / 衰减扫描 ──────────────────────────────────────────
     localparam [1:0] D_ADDR = 2'd0, D_READ = 2'd1, D_WRITE = 2'd2;
-    reg [13:0] c_addr, d_addr;
+    reg [11:0] c_addr, d_addr;
     reg        c_run,  d_run;
     reg [1:0]  d_ph;
 
@@ -132,7 +146,8 @@ module ui_liss_ram (
     //      现在瞬态垃圾已经由「荧光衰减 + 触发后静默 10 ms」管住，
     //      不需要靠断笔来防了。
     //   每样点有 1536 拍、每像素 3 拍 → 理论上可画 512 px，64 很安全。
-    wire        seg_ok = (ndx <= 8'd64) && (ndy <= 8'd64);
+    //   ★ 帧存缩到 128×128 后，同样 32 px 相当于原来的 64 px，阈值同比减半。
+    wire        seg_ok = (ndx <= 8'd32) && (ndy <= 8'd32);
 
     // ══════════════════════════════════════════════════════════════
     //  存储接口：★ 严格两个读表达式 + 一个写表达式
@@ -145,7 +160,7 @@ module ui_liss_ram (
     //      B 口：读 m[b_addr] 并写 m[b_addr]   —— 打点 / 衰减 / 全清 三合一
     //  三个写者互斥（优先级 全清 > 衰减 > 打点），所以共用一个写表达式。
     // ══════════════════════════════════════════════════════════════
-    reg  [13:0] b_ra, b_wa;         // B 口独立的读/写地址
+    reg  [11:0] b_ra, b_wa;         // B 口独立的读/写地址
     reg  [15:0] b_q;                // B 口读出，1 拍后有效
 
     // 单 always 块驱动 m
@@ -159,10 +174,10 @@ module ui_liss_ram (
             berr     <= 11'sd0;
             sx       <= 1'b1;   sy    <= 1'b1;
             pend     <= 1'b0;   pdx   <= 8'd0;   pdy <= 8'd0;
-            b_ra     <= 14'd0;  b_wa  <= 14'd0;  b_q   <= 16'd0;
+            b_ra     <= 12'd0;  b_wa  <= 12'd0;  b_q   <= 16'd0;
             p_sel    <= 2'd0;
-            c_run    <= 1'b0;   c_addr <= 14'd0;
-            d_run    <= 1'b0;   d_addr <= 14'd0; d_ph <= 2'd0;
+            c_run    <= 1'b0;   c_addr <= 12'd0;
+            d_run    <= 1'b0;   d_addr <= 12'd0; d_ph <= 2'd0;
             clr_done <= 1'b0;
             rdata    <= 16'd0;
         end
@@ -180,23 +195,23 @@ module ui_liss_ram (
             // ── 待画点缓冲：新点覆盖旧点 ─────────────────────────
             if (plot && !busy) begin
                 pend <= 1'b1;
-                pdx  <= plot_x;
-                pdy  <= plot_y;
+                pdx  <= px7;
+                pdy  <= py7;
             end
             else if (start) pend <= 1'b0;
 
             if (clr_en) begin
                 c_run   <= 1'b1;
-                c_addr  <= 14'd0;
-                b_wa    <= 14'd0;
+                c_addr  <= 12'd0;
+                b_wa    <= 12'd0;
                 st      <= S_IDLE;
                 pen_vld <= 1'b0;
             end
             // ── ① 全清（最高优先级，1 拍/字）────────────────────
             else if (c_run) begin
                 m[b_wa] <= 16'd0;
-                c_addr  <= c_addr + 14'd1;
-                b_wa    <= c_addr + 14'd1;
+                c_addr  <= c_addr + 12'd1;
+                b_wa    <= c_addr + 12'd1;
                 if (c_addr == LAST_A) begin
                     c_run    <= 1'b0;
                     clr_done <= 1'b1;
@@ -206,7 +221,7 @@ module ui_liss_ram (
             else if (decay_req || d_run) begin
                 if (!d_run) begin
                     d_run  <= 1'b1;
-                    d_addr <= 14'd0;
+                    d_addr <= 12'd0;
                     d_ph   <= D_ADDR;
                 end
                 else case (d_ph)
@@ -223,7 +238,7 @@ module ui_liss_ram (
                     m[b_wa] <= dec16(b_q, decay_step);   // 每个 nibble 饱和 -step
                     if (d_addr == LAST_A) d_run <= 1'b0;
                     else begin
-                        d_addr <= d_addr + 14'd1;
+                        d_addr <= d_addr + 12'd1;
                         d_ph   <= D_ADDR;
                     end
                 end
@@ -256,8 +271,9 @@ module ui_liss_ram (
                     st <= S_ADDR;
                 end
                 S_ADDR: begin
-                    b_ra   <= {cur_y, 6'd0} + {8'd0, cur_x[7:2]};
-                    b_wa   <= {cur_y, 6'd0} + {8'd0, cur_x[7:2]};
+                    // addr = y*32 + (x>>2)；cur_y / cur_x 均为 0..127
+                    b_ra   <= {cur_y[6:0], 5'd0} + {9'd0, cur_x[6:2]};
+                    b_wa   <= {cur_y[6:0], 5'd0} + {9'd0, cur_x[6:2]};
                     p_sel  <= cur_x[1:0];
                     st     <= S_RD;
                 end
