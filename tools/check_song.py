@@ -18,10 +18,10 @@ def main():
     OUT.mkdir(parents=True,exist_ok=True)
     spec=importlib.util.spec_from_file_location('gen',ROOT/'tools/gen_song_v3.py')
     g=importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
-    def stream(events,declared=None,timbre=0):
+    def stream(events,declared=None,timbre=0,flags=0):
         n=len(events) if declared is None else declared
-        duration=max(t+d for t,_,d,_ in events)+1 if events else 100
-        frames=[g.make_frame(1,struct.pack('<HIBB',n,duration,timbre,0),0)]
+        duration=max(t+(d&32767 if flags&128 else d) for t,_,d,_ in events)+1 if events else 100
+        frames=[g.make_frame(1,struct.pack('<HIBB',n,duration,timbre,flags),0)]
         for off in range(0,len(events),32):
             payload=struct.pack('<H',off)+b''.join(struct.pack('<IBHB',*e) for e in events[off:off+32])
             frames.append(g.make_frame(2,payload,len(frames)))
@@ -42,6 +42,13 @@ def main():
         ('polyphony_limit',b''.join(stream([(0,60+i,100,80) for i in range(9)])),None,4,0),
         ('fifo_overflow',b''.join(stream(maximum)),None,1,0),
         ('transport_error',b''.join(good),None,4,1)]
+    mixed=[(0,72|128,500,100|128),(0,48,500|32768,60),(0,64,500|32768,60|128)]
+    cases += [('mixed_chord',b''.join(stream(mixed,flags=128)),mixed,4,0),
+        ('mixed_two_winds',b''.join(stream([(0,72|128,500,100),(0,74|128,500,100|128)],flags=128)),None,4,0),
+        ('mixed_wind_drop_rejected',b''.join(stream([(0,72|128,500,100),(0,74|128,500,100|128)],flags=129)),None,4,0),
+        ('mixed_modal_capacity',b''.join(stream([(0,60+i,500|32768,80) for i in range(8)],flags=128)),None,4,0),
+        ('mixed_note_range',b''.join(stream([(0,60|128,500,100|128)],flags=128)),None,4,0),
+        ('reserved_flags',b''.join(stream(mixed,flags=130)),None,4,0)]
     exe=OUT/'transport.vvp'
     run(['iverilog','-g2012','-s','tb_song_transport','-o',str(exe), 'sim/tb_song_transport.v',
         *[str(p.relative_to(ROOT)) for p in (ROOT/'src/song').glob('*.v')]])

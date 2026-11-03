@@ -16,6 +16,12 @@ module song_system #(
     output reg request_toggle,
     output reg [3:0] selected,
     output wire [55:0] v_note,
+    output wire [15:0] v_timbre,
+    output wire [7:0] v_lead,
+    output wire multi_score,
+    output wire [31:0] score_duration,
+    output reg [1023:0] roll_preview,
+    output reg [10:0] progress,
     output wire [7:0] v_trig, v_gate,
     output wire [63:0] v_vel,
     output wire playing,
@@ -73,11 +79,15 @@ module song_system #(
     wire [63:0] ram_wdata;
     wire [15:0] count;
     wire [31:0] duration_ms;
+    wire [1:0] file_timbre,player_timbre;
+    wire signed [32:0] roll_time;
+    assign score_duration=duration_ms;
+    assign timbre=multi_score && playing ? player_timbre:file_timbre;
     wire [7:0] loader_error;
     song_loader #(.CLK_HZ(CLK_HZ)) u_loader (
         .clk(clk),.rst_n(loader_rst_n),.byte_data(fifo_data),.byte_valid(fifo_valid),
         .byte_error(ov_sync[1]),.ram_we(ram_we),.ram_waddr(ram_waddr),.ram_wdata(ram_wdata),
-        .song_valid(score_valid),.song_count(count),.song_duration(duration_ms),.song_timbre(timbre),
+        .song_valid(score_valid),.song_count(count),.song_duration(duration_ms),.song_timbre(file_timbre),.song_multi(multi_score),
         .err_code(loader_error),.busy(loader_busy),.frame_hit(),.stream_idle(loader_idle)
     );
     reg [63:0] events[0:2047];
@@ -88,15 +98,116 @@ module song_system #(
         read_data<=events[read_addr[10:0]];
     end
     wire player_overflow;
-    bt_song_player #(.CLK_HZ(CLK_HZ),.MAX_EVENTS(2048),.TEACH_ENABLED(1),.START_DELAY_MS(PREPARE_MS)) u_player (
+    bt_song_player #(.CLK_HZ(CLK_HZ),.MAX_EVENTS(2048),.MULTI_ENABLED(1),.TEACH_ENABLED(1),.START_DELAY_MS(PREPARE_MS)) u_player (
         .clk(clk),.rst_n(rst_n),.start(play_start),.stop(play_stop),.count(count),
-        .duration_ms(duration_ms),.timbre(timbre),.read_addr(read_addr),.read_data(read_data),
+        .duration_ms(duration_ms),.timbre(file_timbre),.read_addr(read_addr),.read_data(read_data),
         .playing(playing),.overflow(player_overflow),.position_ms(position_ms),
         .v_note(v_note),.v_trig(v_trig),.v_gate(v_gate),.v_vel(v_vel),
-        .teach_mode(teaching),.key_press(key_press),.key_state(key_state),
+        .teach_mode(teaching),.multi_mode(multi_score),.v_timbre(v_timbre),.v_lead(v_lead),.lead_timbre(player_timbre),.roll_time_ms(roll_time),.key_press(key_press),.key_state(key_state),
         .expected_keys(expected_keys),.matched_keys(matched_keys),.countdown(countdown),
         .wrong_count(wrong_count),.missed_count(missed_count)
     );
+    // Independent synchronous display port: playback never waits for rendering.
+    reg [63:0] preview_events[0:2047];
+    reg [10:0] preview_addr;
+    reg [63:0] preview_data, preview_word;
+    always @(posedge clk) begin
+        if(ram_we) preview_events[ram_waddr]<=ram_wdata;
+        preview_data<=preview_events[preview_addr];
+    end
+    reg [3:0] scan_state;
+    reg publish_preview;
+    reg [15:0] scan_index;
+    reg [5:0] sprite_count;
+    reg [1023:0] sprite_work;
+    reg signed [32:0] scan_time, delta_start, delta_end;
+    reg signed [15:0] clipped_start,clipped_end;
+    reg [10:0] sprite_top,sprite_bottom;
+    reg visible_note;
+    wire [15:0] preview_duration=multi_score ? {1'b0,preview_word[54:40]}:preview_word[55:40];
+    wire [1:0] preview_timbre=multi_score ? {preview_word[39],preview_word[63]}:file_timbre;
+    wire preview_lead=!multi_score || !preview_word[55];
+    function [3:0] preview_lane;
+        input [6:0] n;
+        begin
+            case(n%12)
+                0:preview_lane=0;2:preview_lane=1;4:preview_lane=2;5:preview_lane=3;
+                7:preview_lane=4;9:preview_lane=5;11:preview_lane=6;default:preview_lane=7;
+            endcase
+        end
+    endfunction
+    wire [3:0] lane=preview_lane(preview_word[38:32]);
+    wire preview_hit=preview_lead && lane<7 && delta_start<=0 && delta_end>0 && matched_keys[lane];
+    always @(posedge clk) begin
+        if(!rst_n) begin
+            scan_state<=0;scan_index<=0;sprite_count<=0;sprite_work<=0;roll_preview<=0;publish_preview<=0;
+            preview_addr<=0;preview_word<=0;scan_time<=0;delta_start<=0;delta_end<=0;
+            clipped_start<=0;clipped_end<=0;sprite_top<=0;sprite_bottom<=0;visible_note<=0;
+        end else if(!playing) begin scan_state<=0;roll_preview<=0;publish_preview<=0;end
+        else begin
+            publish_preview<=0;
+            if(publish_preview)roll_preview<=sprite_work;
+            case(scan_state)
+            0:if(ms_tick)begin
+                scan_index<=0;preview_addr<=0;sprite_count<=0;sprite_work<=0;scan_time<=roll_time;scan_state<=1;
+            end
+            1:scan_state<=2;
+            2:begin preview_word<=preview_data;scan_state<=3;end
+            3:begin
+                delta_start<=$signed({1'b0,preview_word[31:0]})-scan_time;
+                delta_end<=$signed({1'b0,preview_word[31:0]})+$signed({17'd0,preview_duration})-scan_time;
+                scan_state<=4;
+            end
+            4:begin
+                visible_note<=delta_start<3040 && delta_end> -80;
+                clipped_start<=delta_start>3040?16'sd3040:delta_start< -80? -16'sd80:delta_start[15:0];
+                clipped_end<=delta_end>3040?16'sd3040:delta_end< -80? -16'sd80:delta_end[15:0];
+                scan_state<=5;
+            end
+            5:begin
+                sprite_top<=16'sd864-($signed(clipped_end)/16'sd5);
+                sprite_bottom<=16'sd864-($signed(clipped_start)/16'sd5);
+                scan_state<=6;
+            end
+            6:begin
+                if(visible_note && sprite_count<32)begin
+                    sprite_work[sprite_count*32+:32]<={1'b1,preview_lead,preview_hit,preview_timbre,lane,
+                        sprite_top,sprite_bottom,1'b0};
+                    sprite_count<=sprite_count+1'b1;
+                end
+                scan_state<=7;
+            end
+            7:if(scan_index+1>=count || sprite_count==32)begin publish_preview<=1;scan_state<=0;end
+              else begin scan_index<=scan_index+1'b1;preview_addr<=preview_addr+1'b1;scan_state<=1;end
+            default:scan_state<=0;
+        endcase
+        end
+    end
+    // Restoring division, one bit/cycle. No wide combinational divider in UI.
+    reg [41:0] progress_dividend,progress_quotient;
+    reg [32:0] progress_remainder;
+    reg [31:0] progress_denominator;
+    reg [5:0] progress_left;
+    wire [32:0] remainder_next={progress_remainder[31:0],progress_dividend[41]};
+    wire progress_ge=remainder_next>={1'b0,progress_denominator};
+    wire [41:0] quotient_next={progress_quotient[40:0],progress_ge};
+    always @(posedge clk)begin
+        if(!rst_n)begin progress<=0;progress_left<=0;progress_dividend<=0;progress_quotient<=0;
+            progress_remainder<=0;progress_denominator<=1;end
+        else if(ms_tick && progress_left==0)begin
+            if(!score_valid || duration_ms==0)progress<=0;
+            else if(position_ms>=duration_ms)progress<=1024;
+            else begin
+                progress_dividend<={position_ms,10'd0};progress_quotient<=0;progress_remainder<=0;
+                progress_denominator<=duration_ms;progress_left<=42;
+            end
+        end else if(progress_left!=0)begin
+            progress_dividend<={progress_dividend[40:0],1'b0};progress_quotient<=quotient_next;
+            progress_remainder<=progress_ge?remainder_next-{1'b0,progress_denominator}:remainder_next;
+            progress_left<=progress_left-1'b1;
+            if(progress_left==1)progress<=quotient_next[10:0];
+        end
+    end
     always @(posedge clk) begin
         if(!rst_n) begin
             ms_div<=0; next_d<=0; confirm_d<=0; long_fired<=0; hold_ms<=0;

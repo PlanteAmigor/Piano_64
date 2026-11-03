@@ -10,7 +10,7 @@ module tb_liss_view;
     reg signed [15:0] sample=0;
     reg [18:0] info=0;
     reg [15:0] audio[0:16383];
-    hdmi_ui3_top dut(.clk(clk),.resetn(resetn),.UI_INFO(info),
+    hdmi_ui3_top dut(.CLK_SCOPE(clk),.clk(clk),.resetn(resetn),.UI_INFO(info),
         .BANDS(256'd0),.BANDS_TICK(1'b0),.COMP_AMP(512'd0),
         .SONG_UI(256'd0),.SONG_UI_TOGGLE(1'b0),
         .SCOPE_SMP(sample),.SCOPE_TOG(tog),.SCOPE_TRG(trg));

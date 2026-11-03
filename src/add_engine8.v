@@ -40,6 +40,7 @@ module add_engine8 #(
     // DDR 镜像 v2 的布局参数（与 tools/make_ddr_image.py、文件头一致）
     parameter integer PIANO_BASE = 1,       // 钢琴表起始 word 地址
     parameter integer GZ_BASE    = 5633,    // 古筝表起始 word 地址
+    parameter integer MULTI_TIMBRE = 0,
     parameter integer WORDS_NOTE = 64,      // 每音的 256 位字数（128 分量 / 2）
     parameter integer ADDR_SHIFT = 3        // word 地址 → DDR 地址单位（×8）
 )(
@@ -66,6 +67,8 @@ module add_engine8 #(
     input  wire                    stop_hold,    // ★ G8 急停（电平）
     input  wire                    sustain,      // ★ 延音开关（1 = 松键后继续自然衰减）
     input  wire                    timbre,
+    input wire [NVOICE-1:0] voice_timbre,voice_expression,
+    input wire normalize_guzheng,
     input  wire                    sample_tick,
 
     output wire signed [15:0]      sample_l,
@@ -129,6 +132,12 @@ module add_engine8 #(
     //  音域钳位 → 表内偏移（每声部独立）
     // ════════════════════════════════════════════════════════════════
     wire [NVOICE*7-1:0] v_note_off;
+    reg [NVOICE-1:0] voice_timbre_q;
+    always @(posedge clk)begin
+        if(!rst_n)voice_timbre_q<=0;
+        else for(integer vt=0;vt<NVOICE;vt=vt+1)
+            if(v_trig[vt])voice_timbre_q[vt]<=MULTI_TIMBRE?voice_timbre[vt]:timbre;
+    end
 
     genvar gi;
     generate
@@ -136,7 +145,7 @@ module add_engine8 #(
             wire [6:0] n  = v_note[gi*7 +: 7];
             wire [6:0] op = (n < P_LO) ? 7'd0 : (n > P_HI) ? (P_HI - P_BASE) : (n - P_BASE);
             wire [6:0] og = (n < G_LO) ? 7'd0 : (n > G_HI) ? (G_HI - G_BASE) : (n - G_BASE);
-            assign v_note_off[gi*7 +: 7] = timbre ? og : op;
+            assign v_note_off[gi*7 +: 7] = (MULTI_TIMBRE?voice_timbre_q[gi]:timbre) ? og : op;
         end
     endgenerate
 
@@ -148,6 +157,7 @@ module add_engine8 #(
     reg               dma_start, dma_active;
     reg  [2:0]        dma_sel;
     reg  [6:0]        dma_note_off;
+    reg dma_timbre;
 
     wire [NVOICE*14-1:0] dma_src_addrs;
 
@@ -187,6 +197,7 @@ module add_engine8 #(
             dma_active   <= 1'b0;
             dma_sel      <= 3'd0;
             dma_note_off <= 7'd0;
+            dma_timbre <= 0;
         end
         else begin
             dma_start <= 1'b0;
@@ -210,6 +221,7 @@ module add_engine8 #(
             if (!dma_active && !dma_start && (|dma_pend)) begin
                 dma_sel      <= sel_now;
                 dma_note_off <= note_now;
+                dma_timbre <= MULTI_TIMBRE?voice_timbre_q[sel_now]:timbre;
                 dma_start    <= 1'b1;
             end
         end
@@ -261,9 +273,9 @@ module add_engine8 #(
         guzheng_param_rom #(.ADDR_W(13), .DEPTH(6272)) u_rom_g (
             .clk(clk), .addr(src_addr_mux[12:0]), .d0(g0), .d1(g1), .d2(g2));
 
-        assign src_d0 = timbre ? g0 : p0;
-        assign src_d1 = timbre ? g1 : p1;
-        assign src_d2 = timbre ? g2 : p2;
+        assign src_d0 = dma_timbre ? g0 : p0;
+        assign src_d1 = dma_timbre ? g1 : p1;
+        assign src_d2 = dma_timbre ? g2 : p2;
 
     end
     endgenerate
@@ -287,6 +299,9 @@ module add_engine8 #(
             wire [6:0]  dma_waddr;
             wire [95:0] dma_wdata;
             wire [6:0]  v_raddr;
+            wire signed [15:0] voice_sample;
+            wire expression_allowed=!MULTI_TIMBRE || (voice_timbre_q[g] && voice_expression[g]);
+            assign vs[g*16+:16]=MULTI_TIMBRE && normalize_guzheng && voice_timbre_q[g] ? voice_sample<<<1:voice_sample;
             wire [31:0] c_d0, c_d1, c_d2;
 
             // ── 搬运器（两种数据源二选一）────────────────────────
@@ -325,7 +340,7 @@ module add_engine8 #(
 
                 // 该音的 DDR 起始 word 地址 = 乐器基址 + 表内偏移 × 64
                 // ★ 用 {x, 6'b0} 移位而不是乘法：integer 参数乘法可能被综合成真乘法器
-                assign base_addr = (timbre ? GZ_BASE[28:0] : PIANO_BASE[28:0])
+                assign base_addr = (dma_timbre ? GZ_BASE[28:0] : PIANO_BASE[28:0])
                                  + {22'd0, dma_note_off, 6'b0};
 
                 always @(posedge clk) begin
@@ -399,13 +414,13 @@ module add_engine8 #(
                 .gate     (v_gate[g]),
                 .sustain  (sustain),
                 .vel_gain (v_vel[g*8 +: 8]),
-                .bend_q14 (bend_gz),            // ★ 滑音 + 揉弦
-                .mute_fast(mute_fast),          // ★ G7/G8
+                .bend_q14 (expression_allowed?bend_gz:16'd16384),            // ★ 滑音 + 揉弦
+                .mute_fast(mute_fast && expression_allowed),          // ★ G7/G8
                 .rd0      (c_d0),
                 .rd1      (c_d1),
                 .rd2      (c_d2),
                 .rom_addr (v_raddr),
-                .sample   (vs[g*16 +: 16]),
+                .sample   (voice_sample),
                 .idle     (idle_w[g]),
                 .part_idx (vp_idx[g*7 +: 7]),
                 .part_amp (vp_amp[g*8 +: 8]),

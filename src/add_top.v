@@ -89,7 +89,8 @@ module add_top #(
     //    [17:10] transpose 有符号半音数（-24..+12）
     //    全部是「按键级」慢变量（去抖后 >10 ms 才变），渲染侧打两拍同步即可。
     output wire [18:0] UI_INFO,
-    output reg [255:0] SONG_UI,
+    output reg [383:0] SONG_UI,
+    output reg [1023:0] SONG_ROLL,
     output reg SONG_UI_TOGGLE,
     input wire SONG_UI_ACK,
 
@@ -102,6 +103,7 @@ module add_top #(
     //    SCOPE_SMP 每样点更新一次，在两次 SCOPE_TOG 翻转之间保持稳定
     //    （1024 个 clk_sys 周期 = 20.5 us）；渲染侧用 clk_p 打两拍同步
     //    SCOPE_TOG、靠翻转沿抓一次数据，不存在多位撕裂。
+    output wire SCOPE_CLK,
     output wire signed [15:0] SCOPE_SMP,
     output wire               SCOPE_TOG,
 
@@ -119,6 +121,7 @@ module add_top #(
     //  时钟：50 MHz → PLL → 全局时钟网（频率不变，只为降时钟偏斜）
     //======================================================================
     wire clk_sys, pll_lock;
+    assign SCOPE_CLK=clk_sys;
 
     pll50 u_pll (
         .clk_in (CLOCK_50),
@@ -133,8 +136,17 @@ module add_top #(
     always @(posedge clk_sys)
         if (por_cnt != STARTUP[21:0] - 22'd1) por_cnt <= por_cnt + 22'd1;
 
-    wire por_n       = (por_cnt == STARTUP[21:0] - 22'd1);
-    wire engine_rst_n = por_n & RESET_n & pll_lock;
+    // Register the power-on comparison before distributing reset to thousands
+    // of registers. Assert on the physical reset immediately; release in clk_sys.
+    reg por_ready=1'b0;
+    always @(posedge clk_sys)if(por_cnt==STARTUP[21:0]-22'd1)por_ready<=1'b1;
+    wire por_n=por_ready;
+    reg [1:0] engine_reset_sync=0;
+    always @(posedge clk_sys or negedge RESET_n)begin
+        if(!RESET_n)engine_reset_sync<=0;
+        else engine_reset_sync<={engine_reset_sync[0],por_n && pll_lock};
+    end
+    wire engine_rst_n=engine_reset_sync[1];
 
     // ══════════════════════════════════════════════════════════════
     //  光学前端控制量（在文件末尾 position_control 产生）
@@ -203,6 +215,12 @@ module add_top #(
     wire sd_song_valid, song_request;
     wire [3:0] song_selected;
     wire [55:0] song_note;
+    wire [15:0] song_voice_timbre;
+    wire [7:0] song_lead;
+    wire song_multi;
+    wire [31:0] song_duration;
+    wire [10:0] song_progress;
+    wire [1023:0] song_roll;
     wire [7:0] song_trig, song_gate;
     wire [63:0] song_vel;
     wire song_playing, song_teaching, song_valid, song_catalog_ready;
@@ -226,6 +244,8 @@ module add_top #(
         .sd_begin(sd_song_begin),.sd_end(sd_song_end),.sd_error(sd_song_error),
         .sd_byte(sd_song_byte),.sd_byte_valid(sd_song_valid),
         .request_toggle(song_request),.selected(song_selected),
+        .v_timbre(song_voice_timbre),.v_lead(song_lead),.multi_score(song_multi),
+        .score_duration(song_duration),.roll_preview(song_roll),.progress(song_progress),
         .v_note(song_note),.v_trig(song_trig),.v_gate(song_gate),.v_vel(song_vel),
         .playing(song_playing),.timbre(song_timbre),.score_valid(song_valid),
         .menu_state(song_menu),.teaching(song_teaching),.expected_keys(song_expected),
@@ -236,11 +256,12 @@ module add_top #(
     // Mailbox handshake: hold the entire status snapshot until HDMI ACKs it.
     reg [1:0] song_ack_sync;
     always @(posedge clk_sys) begin
-        if(!engine_rst_n) begin SONG_UI<=0; SONG_UI_TOGGLE<=0; song_ack_sync<=0; end
+        if(!engine_rst_n) begin SONG_UI<=0; SONG_ROLL<=0; SONG_UI_TOGGLE<=0; song_ack_sync<=0; end
         else begin
             song_ack_sync <= {song_ack_sync[0],SONG_UI_ACK};
             if(song_ack_sync[1]==SONG_UI_TOGGLE) begin
-                SONG_UI <= {23'd0,song_catalog_ready,song_timbre,song_missed,song_wrong,song_position,
+                SONG_ROLL <= song_roll;
+                SONG_UI <= {68'd0,opt_vel,hand_on,note_key_state,song_progress,song_duration,23'd0,song_catalog_ready,song_timbre,song_missed,song_wrong,song_position,
                     song_error,song_matched,song_expected,song_countdown,
                     song_playing,song_teaching,song_menu,song_selected,song_count_ui,song_ids_ui};
                 SONG_UI_TOGGLE<=~SONG_UI_TOGGLE;
@@ -589,7 +610,7 @@ module add_top #(
     genvar sg;
     generate for(sg=0;sg<NVOICE;sg=sg+1) begin:g_song_vel
         wire [15:0] vscale = song_vel[sg*8+:8] * opt_vel;
-        assign song_vel_expr[sg*8+:8] = song_teaching && hand_on ? vscale[15:8] : song_vel[sg*8+:8];
+        assign song_vel_expr[sg*8+:8] = song_teaching && song_lead[sg] && hand_on ? vscale[15:8] : song_vel[sg*8+:8];
     end endgenerate
     wire [NVOICE*8-1:0] vel_eng = guide_mode ? song_vel_expr :
         hand_on ? {NVOICE{opt_vel}} : {NVOICE{8'd0}};
@@ -670,6 +691,8 @@ module add_top #(
     wire aut_gate = AUTO_TEST && (aut_t >= AT_TRIG) && (aut_t < AT_OFF);
     wire aut_any  = aut_trig || aut_gate;
 
+    wire mixed_score=guide_mode && song_valid && song_multi;
+    wire [NVOICE-1:0] modal_mask=mixed_score?8'h7f:(is_harm?8'h00:8'hff);
     wire [NVOICE*7-1:0] eng_note = guide_mode ? song_note : aut_any ? {NVOICE{7'd60}} : k_note;
     wire [NVOICE-1:0]   eng_trig = guide_mode ? song_trig : aut_trig ? {{(NVOICE-1){1'b0}}, 1'b1} : v_trig;
     wire [NVOICE-1:0]   eng_gate = guide_mode ? song_gate : aut_gate ? {{(NVOICE-1){1'b0}}, 1'b1} : v_gate;
@@ -710,6 +733,7 @@ module add_top #(
 
     add_engine8 #(
         .NVOICE   (NVOICE),
+        .MULTI_TIMBRE(1),
         .NPART    (128),
         .ROM_AW   (T_ROM_AW),
         .ROM_DEPTH(T_ROM_DEPTH),
@@ -728,17 +752,21 @@ module add_top #(
     ) u_piano (
         .clk        (clk_sys),
         .rst_n      (engine_rst_n),
+        .normalize_guzheng(mixed_score),
+        .voice_timbre(mixed_score ? {1'b0,song_voice_timbre[12],song_voice_timbre[10],song_voice_timbre[8],
+            song_voice_timbre[6],song_voice_timbre[4],song_voice_timbre[2],song_voice_timbre[0]} : {NVOICE{is_gz}}),
+        .voice_expression(guide_mode ? (song_teaching && hand_on ? song_lead:8'd0):8'hff),
         .timbre     (is_gz),             // ★ modal 引擎：1=古筝 0=钢琴（唄呐/笛子时无效）
         .v_note     (eng_note),
-        .v_trig     (eng_trig),
-        .v_gate     (eng_gate),
+        .v_trig     (eng_trig & modal_mask),
+        .v_gate     (eng_gate & modal_mask),
         .v_vel      (vel_eng),           // ★ 光学力度优先，否则用键盘力度
         // ★★ 滑音只给古筝（技法表：钢琴没有滑音）。
         //    二者共用同一个 add_engine8 实例，所以在顶层按音色选。
-        .bend_q14   (is_gz && (!guide_mode || hand_on) ? opt_bend_q14 : 16'd16384),
-        .vib_en     (opt_vib_en && is_gz && (!guide_mode || hand_on)),   // G3 揉弦（古筝）
-        .art_en     (opt_art  && is_gz && (!guide_mode || hand_on)),     // G7 顿音
-        .stop_hold  (opt_stop && is_gz && (!guide_mode || hand_on)),     // G8 急停
+        .bend_q14   ((!guide_mode || (song_teaching && hand_on)) ? opt_bend_q14 : 16'd16384),
+        .vib_en     (opt_vib_en && (!guide_mode || (song_teaching && hand_on))),   // G3 揉弦（古筝）
+        .art_en     (opt_art && (!guide_mode || (song_teaching && hand_on))),     // G7 顿音
+        .stop_hold  (opt_stop && (!guide_mode || (song_teaching && hand_on))),     // G8 急停
         // ★ 延音：由效果器档位控制（SUSTAIN 单独一档，也可与 DELAY 叠加）——
         //   松键后按每个音自己的自然衰减率继续响，而不是 0.30 s 一刀煞掉。
         .sustain    (fx_sus_on),
@@ -787,10 +815,12 @@ module add_top #(
     localparam [7:0]  SUONA_INF  = 8'd0;     // info 0..111
     localparam [7:0]  DIZI_INF   = 8'd112;   // info 112..211
 
-    wire [6:0]  harm_note_lo  = is_dizi ? 7'd67 : 7'd69;
-    wire [6:0]  harm_note_hi  = is_dizi ? 7'd91 : 7'd96;
-    wire [7:0]  harm_inf_base = is_dizi ? DIZI_INF : SUONA_INF;
-    wire [28:0] harm_desc     = is_dizi ? DIZI_DESC : SUONA_DESC;
+    wire harm_dizi=mixed_score ? song_voice_timbre[15:14]==3:is_dizi;
+    wire harm_expression=!guide_mode || (song_teaching && hand_on && (!mixed_score || song_lead[7]));
+    wire [6:0]  harm_note_lo  = harm_dizi ? 7'd67 : 7'd69;
+    wire [6:0]  harm_note_hi  = harm_dizi ? 7'd91 : 7'd96;
+    wire [7:0]  harm_inf_base = harm_dizi ? DIZI_INF : SUONA_INF;
+    wire [28:0] harm_desc     = harm_dizi ? DIZI_DESC : SUONA_DESC;
 
     wire signed [15:0] sua_l, sua_r;
     wire [3:0]         sua_v_idle;
@@ -801,7 +831,7 @@ module add_top #(
     // ★★ 关键：只有谐波类音色下才允许触发取表 DMA！
     //   之前写成 |v_trig，导致钢琴模式下按一次键，唄呐引擎也会去抢 DDR，
     //   钢琴的取表被挤掉 → 切回钢琴也没声音（实测整机哑掉）。
-    wire sua_trig = is_harm && |eng_trig;
+    wire sua_trig = mixed_score ? song_trig[7] : is_harm && |eng_trig;
 
     // ★★ gate / 力度【不能】走 note_alloc 的声部！
     //    note_alloc 是 8 声部轮转分配，同一个键每次可能落在不同声部；
@@ -811,7 +841,7 @@ module add_top #(
     //    钢琴/古筝不受影响：它们每个声部有自己的 v_gate[g]/v_vel[g]，
     //    声部与按键是一一对应的，所以那边一直正常。
     //    唢呐改成直接看【8 个音源键】，与声部分配彻底解耦。
-    wire sua_gate = is_harm && (guide_mode ? song_gate[0] : (|note_key_state));
+    wire sua_gate = mixed_score ? song_gate[7] : is_harm && (guide_mode ? song_gate[0] : (|note_key_state));
 
     // 按下沿 → 按【键号】锁存力度（不是声部号）
     //   直接复用 note_key_press（= r1_press[7:0]，已含重触发屏蔽）
@@ -829,6 +859,7 @@ module add_top #(
         sua_note = harm_note_lo;
         for (si = 0; si < NVOICE; si = si + 1)
             if (eng_trig[si]) sua_note = eng_note[si*7 +: 7];
+        if(mixed_score) sua_note=song_note[49+:7];
     end
 
 
@@ -852,16 +883,16 @@ module add_top #(
         .v_note     ({21'd0, sua_note}),
         .v_trig     ({3'b000, sua_trig}),
         .v_gate     ({3'b000, sua_gate}),
-        .v_vel      ({{24{1'b0}}, (guide_mode ? song_vel_expr[7:0] : sua_vel)}),
+        .v_vel      ({{24{1'b0}}, (guide_mode ? (mixed_score?song_vel_expr[63:56]:song_vel_expr[7:0]) : sua_vel)}),
         // ★ 延音：与钢琴/古筝共用同一个效果器档位（SUSTAIN / DELAY+SUSTAIN）
         .sustain    (fx_sus_on),
         // ★ 光学前端（步骤 1：先接常量，保证与改动前逐位等价）
-        .bend_q14   (guide_mode && !hand_on ? 16'd16384 : opt_bend_q14),
-        .trem_en    (opt_trem_en && is_suona && (!guide_mode || hand_on)),
-        .vib_pitch  (opt_vib_en && is_suona && (!guide_mode || hand_on)),   // G3 颤音（音高） 唢呐
+        .bend_q14   (harm_expression ? opt_bend_q14 : 16'd16384),
+        .trem_en    (opt_trem_en && !harm_dizi && harm_expression),
+        .vib_pitch  (opt_vib_en && !harm_dizi && harm_expression),   // G3 颤音（音高） 唢呐
         .vib_am     (1'b0),                  // 笛子只用音色自带气颤
-        .art_en     (opt_art  && is_harm && (!guide_mode || hand_on)),      // G7 顿音/吐音
-        .stop_hold  (opt_stop && is_harm && (!guide_mode || hand_on)),      // G8 急停
+        .art_en     (opt_art && harm_expression),      // G7 顿音/吐音
+        .stop_hold  (opt_stop && harm_expression),      // G8 急停
         .hand_on    (guide_mode ? 1'b1 : opt_hand),                 // 有手才响
         .opt_en     (guide_mode ? 1'b0 : opt_en),
         .opt_vel    (opt_vel),
@@ -888,7 +919,10 @@ module add_top #(
     //   实测 SETUP -0.853 ns（CLK_SYS 唯一违例）。
     //   音频流每样点一次，加一拍延迟完全无影响。
     reg signed [15:0] mix_l_r, mix_r_r;
+    reg signed [31:0] mixed_l,mixed_r;
     always @(posedge clk_sys) begin
+        mixed_l <= ($signed(eng_l)*32'sd8)+($signed(sua_l)*32'sd2);
+        mixed_r <= ($signed(eng_r)*32'sd8)+($signed(sua_r)*32'sd2);
         mix_l_r <= is_harm ? sua_l : eng_l;
         mix_r_r <= is_harm ? sua_r : eng_r;
     end
@@ -962,87 +996,18 @@ module add_top #(
         end
     endfunction
 
-    // 膝点 24000，超过后 d = ax-KNEE（钳在 16384），
-    //     y = 24000 + d − d²/32768
-    // d=16384 时 y = 24000+16384−8192 = 32192（最大值，永不超 32767）
-    function signed [15:0] sat_post;
-        input signed [31:0] y;        // 已乘过增益的 32 位值
-        reg   signed [31:0] ax, d, yy;
-        begin
-            ax = (y < 0) ? -y : y;
-            if (ax <= 32'sd24000) begin
-                yy = ax;                        // 直通区
-            end
-            else begin
-                d = ax - 32'sd24000;
-                if (d > 32'sd16384) d = 32'sd16384;
-                yy = 32'sd24000 + d - ((d * d) >>> 15);
-            end
-            if (yy > 32'sd32767) yy = 32'sd32767;
-            sat_post = y[31] ? -yy[15:0] : yy[15:0];
-        end
-    endfunction
-
-    // ══════════════════════════════════════════════════════════════
-    //  ★★ 软限幅再拆一级（2026-11-01）
-    //
-    //  加 COMPONENT 64 以后 PnR 重新摆位，`gy_l → out_l_r` 实测
-    //  20.021 ns（CLK_SYS 周期 20 ns），SETUP −0.209 ns，占
-    //  CLK_SYS 违规的一大半。链是
-    //      gy_l → 绝对值 → 膝点比较 → d×d 乘法 → 移位 → 加减 → 钳位 → D
-    //  乘法前后塞了太多比较/加减。拆成两级：
-    //      ① abs：只做取绝对值 + 保存符号 → ga_l / ga_s
-    //      ② lim_post：只做膝点 + d×d + 钳位（输入已是非负数）→ out_l_r
-    //  数学上与 sat_post 完全等价（只是再多 1 个样点延迟）。
-    // ══════════════════════════════════════════════════════════════
-    function [15:0] lim_post;        // 软限幅后级（输入已取绝对值）
-        input [31:0] ax;
-        reg   [31:0] d, yy;
-        begin
-            if (ax <= 32'd24000) begin
-                yy = ax;                        // 直通区
-            end
-            else begin
-                d = ax - 32'd24000;
-                if (d > 32'd16384) d = 32'd16384;
-                yy = 32'd24000 + d - ((d * d) >>> 15);
-            end
-            if (yy > 32'd32767) yy = 32'd32767;
-            lim_post = yy[15:0];
-        end
-    endfunction
-
-    reg [31:0] ga_l, ga_r;           // |gy|
-    reg        gs_l, gs_r;           // gy 的符号
-    always @(posedge clk_sys) begin
-        if (!por_n) begin
-            ga_l <= 32'd0;  ga_r <= 32'd0;
-            gs_l <= 1'b0;   gs_r <= 1'b0;
-        end
-        else begin
-            ga_l <= gy_l[31] ? (~gy_l + 32'd1) : gy_l;
-            ga_r <= gy_r[31] ? (~gy_r + 32'd1) : gy_r;
-            gs_l <= gy_l[31];
-            gs_r <= gy_r[31];
-        end
-    end
-
-    wire signed [15:0] sp_l = gs_l ? -$signed({1'b0, lim_post(ga_l)})
-                                   :  $signed({1'b0, lim_post(ga_l)});
-    wire signed [15:0] sp_r = gs_r ? -$signed({1'b0, lim_post(ga_r)})
-                                   :  $signed({1'b0, lim_post(ga_r)});
+    // The same knee curve is divided across five short clock stages.
+    // This preserves all output values while removing a wide multiply and
+    // sign/clip chain from the route to the effects processors.
+    wire signed [15:0] sp_l,sp_r;
+    audio_soft_limiter u_limit_l(.clk(clk_sys),.rst_n(por_n),.sample(gy_l),.limited(sp_l));
+    audio_soft_limiter u_limit_r(.clk(clk_sys),.rst_n(por_n),.sample(gy_r),.limited(sp_r));
 
     //======================================================================
     //  效果器：CHORUS（clk_sys 域，延迟线用 2 个 BSRAM）
     //
-    //  ★ 输入必须寄存一级。sp_l 是
-    //        ga_l → |·| → 膝点比较 → d*d 乘法 → 钳位 → sp_l
-    //    这条已经很长的组合链（add_top 为此专门把软限幅拆成了两级），
-    //    直接把 FX 的插值乘法再串上去必然顶爆 CLK_SYS。
-    //
-    //  ★ 旁通时（fx_r != CHORUS）延迟线照写、LFO 照跑，输出 = 寄存后的干声。
-    //    所以切入/切出 CHORUS 的延迟恒定，没有爆音也没有瞬间的陈旧数据。
-    //======================================================================
+    // Register limiter output before the effects; every stage settles before
+    // the next audio tick. Bypass and enabled paths retain equal delay.
     reg signed [15:0] fxi_l, fxi_r;
     always @(posedge clk_sys) begin
         fxi_l <= sp_l;
@@ -1101,15 +1066,7 @@ module add_top #(
     wire signed [15:0] fxd_l = fx_dly_on ? dly_l : (fx_rev_on ? rev_l : cho_l);
     wire signed [15:0] fxd_r = fx_dly_on ? dly_r : (fx_rev_on ? rev_r : cho_r);
 
-    // ★★ 原来是单个 sat_gain 函数，从 timbre_r 一路走到输出寄存器：
-    //       timbre_r → 增益选择 → 绝对值 → 膝点比较 → d×d 乘法 → 减法 → D
-    //    合并 HDMI 后布线变挤，实测 19.989 ns（CLK_SYS 周期 20 ns），
-    //    SETUP −0.110 ns，占了 CLK_SYS 违规的 4 个端点。
-    //    现在拆成两级：
-    //      ① sat_pre  （只选增益倍数，纯移位）→ gy_l / gy_r
-    //      ② sat_post （只做软限幅，乘法链在这里）→ out_l_r / out_r_r
-    //    两条长链之间的启动寄存器都变了寄存器，乘法链也不再从
-    //    高扇出的 timbre_r 出发。数学上完全等价（只是多 1 个样点延迟）。
+    // Register the manual/combined score gain before limiting.
     reg signed [31:0] gy_l, gy_r;
     always @(posedge clk_sys) begin
         if (!por_n) begin
@@ -1117,20 +1074,12 @@ module add_top #(
             gy_r <= 32'sd0;
         end
         else begin
-            gy_l <= sat_pre(mix_l_r, timbre_r);
-            gy_r <= sat_pre(mix_r_r, timbre_r);
+            gy_l <= mixed_score ? mixed_l : sat_pre(mix_l_r, timbre_r);
+            gy_r <= mixed_score ? mixed_r : sat_pre(mix_r_r, timbre_r);
         end
     end
 
-    // ★★ sat_gain 输出必须再打一拍！
-    //    组合送进 u_tx 时，路径是
-    //        mix_l_r → 增益选择 → 绝对值 → 膝点比较 → d×d 乘法 → 减法
-    //                → u_tx 内部移位寄存器 → din
-    //    实测阵列后 SETUP −0.239 ns（24.097 ns > 23.858 ns）。
-    //    d×d 是 16×16 乘法，综合出来直接顶在后面，而 mix_l_r 又是
-    //    音频引擎输出级扇出最大的寄存器，布线很长。
-    //    在 sat_gain 后面加一级寄存器，把乘法–比较与 u_tx 切开。
-    //    代价：整体延迟多一个样点（20.5 us），完全听不出来。
+    // Hold the effect output; I2S captures complete stereo frames.
     reg signed [15:0] out_l_r, out_r_r;
     always @(posedge clk_sys) begin
         // ★ 测试模式下直接输出 8 路正弦，绕过软限幅：
@@ -1391,6 +1340,17 @@ module add_top #(
     wire        ddr_rd_valid;
     wire [255:0] ddr_rd_data;
 
+    wire [2:0] phy_cmd;
+    wire phy_en,phy_wren,phy_ready,phy_wready,phy_rvalid;
+    wire [28:0] phy_addr;
+    wire [255:0] phy_wdata,phy_rdata;
+    ddr_ui_pipeline u_ddr_pipe(.clk(ddr_clk_x1),.rst_n(ddr_init_done),
+        .s_cmd(ddr_app_cmd),.s_en(ddr_app_en),.s_addr(ddr_app_addr),
+        .s_wdata(ddr_app_wdf_data),.s_wren(ddr_app_wdf_wren),
+        .s_ready(ddr_app_rdy),.s_wready(ddr_wr_data_rdy),.s_rvalid(ddr_rd_valid),.s_rdata(ddr_rd_data),
+        .m_cmd(phy_cmd),.m_en(phy_en),.m_addr(phy_addr),.m_wdata(phy_wdata),.m_wren(phy_wren),
+        .m_ready(phy_ready),.m_wready(phy_wready),.m_rvalid(phy_rvalid),.m_rdata(phy_rdata));
+
     ddr_wrap u_ddr (
         .clk        (CLOCK_50),
         .rst_n      (por_n & RESET_n),
@@ -1398,18 +1358,18 @@ module add_top #(
         .clk_x1     (ddr_clk_x1),
         .pll_locked (ddr_pll_locked),
 
-        .app_cmd        (ddr_app_cmd),
-        .app_en         (ddr_app_en),
-        .app_addr       (ddr_app_addr),
-        .app_wdf_data   (ddr_app_wdf_data),
-        .app_wdf_wren   (ddr_app_wdf_wren),
-        .app_wdf_end    (ddr_app_wdf_end),
+        .app_cmd        (phy_cmd),
+        .app_en         (phy_en),
+        .app_addr       (phy_addr),
+        .app_wdf_data   (phy_wdata),
+        .app_wdf_wren   (phy_wren),
+        .app_wdf_end    (phy_wren),
         .app_wdf_mask   (ddr_app_wdf_mask),
         .app_burst      (ddr_app_burst),
-        .app_rdy        (ddr_app_rdy),
-        .wr_data_rdy    (ddr_wr_data_rdy),
-        .app_rd_data_valid (ddr_rd_valid),
-        .app_rd_data    (ddr_rd_data),
+        .app_rdy        (phy_ready),
+        .wr_data_rdy    (phy_wready),
+        .app_rd_data_valid (phy_rvalid),
+        .app_rd_data    (phy_rdata),
 
         .ddr_addr   (ddr_addr),
         .ddr_bank   (ddr_bank),

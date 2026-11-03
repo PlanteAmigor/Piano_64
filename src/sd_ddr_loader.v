@@ -464,6 +464,7 @@ reg          q0_v, q1_v;
 reg [255:0]  q0_d, q1_d;
 reg [28:0]   q0_a, q1_a;
 reg          enq_req;
+reg          queue_pop;
 
 // 命令通道
 reg          wr_cmd_req, rd_cmd_req;
@@ -541,7 +542,14 @@ reg [1:0]  vph;                 // 校验发命令节拍分频
 //   而且每次重新布线就在 0~2 处之间反复）。
 //   rem_w 只在 vph==3 发命令时才变，所以 vph==2 看到的 rem_w
 //   与 vph==3 做决定时完全一致 —— 提前一拍算到寄存器里语义等价。
-reg        issue_nxt;
+reg issue_nxt,verify_has_words;
+always @(posedge clk100)begin
+    if(rst100)begin issue_nxt<=0;verify_has_words<=0;end
+    else begin
+        verify_has_words<=rem_w!=0;
+        issue_nxt<=vph==2 && !rd_cmd_req && verify_has_words && ostd<16;
+    end
+end
 reg [31:0] hdr_total, hdr_chk, chk_v;
 reg [31:0] dbg_d0, dbg_d1;   // 读回 addr=1 的前两个 32 位字（诊断用）
 reg        v_ok;
@@ -621,7 +629,7 @@ always @(posedge clk100) begin
         nfiles     <= 12'd0;
         file_no    <= 12'hFFF;
         q0_v       <= 1'b0;   q1_v <= 1'b0;
-        q0_d       <= 256'd0; q1_d <= 256'd0;
+        q0_d       <= 256'd0; q1_d <= 256'd0;queue_pop<=0;
         q0_a       <= 29'd0;  q1_a <= 29'd0;
         enq_req    <= 1'b0;
         wr_cmd_req <= 1'b0;
@@ -635,7 +643,7 @@ always @(posedge clk100) begin
         end_cnt    <= 2'd0;
         ostd       <= 6'd0;
         vph        <= 2'd0;
-        issue_nxt  <= 1'b0;
+
         drain      <= 32'd0;
         wcnt       <= 32'd0;
         rcnt       <= 32'd0;
@@ -657,7 +665,7 @@ always @(posedge clk100) begin
         rd_ready   <= 1'b0;
     end
     else begin
-        send <= 1'b0;
+        send <= 1'b0;queue_pop<=0;
 
         // 只在收字节阶段允许弹出 FIFO
         fifo_ren <= (st == S_READ);
@@ -682,19 +690,23 @@ always @(posedge clk100) begin
         file_no <= file_no_q;
 
         //============================================ 入队（晚一拍，wrev 才有效）
-        if (enq_req) begin
-            enq_req <= 1'b0;
-            if (!q0_v) begin
-                q0_v <= 1'b1; q0_d <= wrev; q0_a <= enq_addr;
-            end
-            else if (!q1_v) begin
-                q1_v <= 1'b1; q1_d <= wrev; q1_a <= enq_addr;
-            end
-            else err_ov <= err_ov + 32'd1;
+        if(enq_req)enq_req<=0;
+        if(queue_pop)begin
+            // Registered dequeue breaks DDR ready -> 256-bit queue mux.
+            // A simultaneous new word replaces the vacated head/tail.
+            q0_v<=q1_v || enq_req;
+            q0_d<=q1_v?q1_d:wrev;q0_a<=q1_v?q1_a:enq_addr;
+            q1_v<=q1_v && enq_req;
+            if(enq_req)begin q1_d<=wrev;q1_a<=enq_addr;end
+            nwords<=nwords+32'd1;
+        end else if(enq_req)begin
+            if(!q0_v)begin q0_v<=1;q0_d<=wrev;q0_a<=enq_addr;end
+            else if(!q1_v)begin q1_v<=1;q1_d<=wrev;q1_a<=enq_addr;end
+            else err_ov<=err_ov+32'd1;
         end
 
         //============================================ 写字：命令 + 数据
-        if (!wr_cmd_req && !wdf_valid && q0_v) begin
+        if (!queue_pop && !wr_cmd_req && !wdf_valid && q0_v) begin
             wr_cmd_req  <= 1'b1;
             wr_cmd_addr <= q0_a;
             wdf_valid   <= 1'b1;
@@ -706,11 +718,7 @@ always @(posedge clk100) begin
 
             if ((!wr_cmd_req || (app_en && wr_cmd_req)) &&
                 (!wdf_valid  || (app_wdf_wren && wdf_valid))) begin
-                q0_v   <= q1_v;
-                q0_d   <= q1_d;
-                q0_a   <= q1_a;
-                q1_v   <= 1'b0;
-                nwords <= nwords + 32'd1;
+                queue_pop<=1'b1;
             end
         end
 
@@ -882,8 +890,7 @@ always @(posedge clk100) begin
             end
             else begin
                 // ★ 预判：vph==2 时算好，vph==3 直接用寄存器值
-                issue_nxt <= (vph == 2'd2) && !rd_cmd_req &&
-                             (rem_w != 32'd0) && (ostd < 6'd16);
+
 
                 if (vph == 2'd3) begin
                     if (issue_nxt) begin

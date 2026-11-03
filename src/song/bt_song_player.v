@@ -4,7 +4,7 @@
 `default_nettype none
 module bt_song_player #(
     parameter integer CLK_HZ=50000000, MAX_EVENTS=2048,
-    parameter integer TEACH_ENABLED=0, WINDOW_MS=150, START_DELAY_MS=3000
+    parameter integer MULTI_ENABLED=0, TEACH_ENABLED=0, WINDOW_MS=150, START_DELAY_MS=3000
 )(
     input wire clk, rst_n, start, stop, input wire [15:0] count,
     input wire [31:0] duration_ms, input wire [1:0] timbre,
@@ -12,7 +12,11 @@ module bt_song_player #(
     output reg playing, overflow, output reg [31:0] position_ms,
     output reg [55:0] v_note, output reg [7:0] v_trig, v_gate,
     output reg [63:0] v_vel,
-    input wire teach_mode,
+    input wire teach_mode, multi_mode,
+    output reg [15:0] v_timbre,
+    output reg [7:0] v_lead,
+    output reg [1:0] lead_timbre,
+    output wire signed [32:0] roll_time_ms,
     input wire [6:0] key_press, key_state,
     output reg [6:0] expected_keys, matched_keys,
     output wire [1:0] countdown,
@@ -23,6 +27,8 @@ module bt_song_player #(
     reg [MS_CW-1:0] divider;
     reg [31:0] elapsed_ms, song_time;
     reg teaching;
+    wire multi=(MULTI_ENABLED!=0)&&multi_mode;
+    assign roll_time_ms=$signed({1'b0,elapsed_ms})-$signed({1'b0,delay_ms});
     wire ms_tick=divider==MS_DIV-1;
     wire [31:0] delay_ms=teaching ? START_DELAY_MS : 0;
     wire ready_time=elapsed_ms>=delay_ms;
@@ -32,6 +38,9 @@ module bt_song_player #(
     reg [3:0] state;
     reg [63:0] event_word;
     wire [31:0] note_start=event_word[31:0];
+    wire [1:0] event_timbre=multi ? {event_word[39],event_word[63]} : timbre;
+    wire event_lead=!multi || !event_word[55];
+    wire [15:0] event_duration=multi ? {1'b0,event_word[54:40]} : event_word[55:40];
     reg [31:0] note_end, note_absolute, early_open;
     reg [3:0] next_key;
     reg event_due, early_hit;
@@ -50,7 +59,7 @@ module bt_song_player #(
             for(integer b=0;b<8;b=b+1)
                 if(active[b] && !expired[b] && late_hit[b] && voice_key[b]==a) late_used[a]=1;
     end
-    wire [7:0] free_mask=(~active) & (timbre<2 ? 8'hff : 8'h01);
+    wire [7:0] free_mask=(~active) & (multi ? (event_timbre<2 ? 8'h7f:8'h80) : (timbre<2 ? 8'hff:8'h01));
     wire [7:0] first_free=free_mask & (~free_mask+8'd1);
     integer i,k,wrong_delta,miss_delta;
     reg [7:0] target_vel;
@@ -76,6 +85,7 @@ module bt_song_player #(
     end
     always @(posedge clk) begin
         if(!rst_n) begin
+            v_timbre<=0;v_lead<=0;lead_timbre<=0;
             playing<=0; teaching<=0; overflow<=0; position_ms<=0; elapsed_ms<=0; song_time<=0;
             divider<=0; event_index<=0; state<=0; read_addr<=0; event_word<=0;
             note_end<=0;note_absolute<=0;early_open<=0;next_key<=7;event_due<=0;early_hit<=0;grant<=0;
@@ -109,6 +119,7 @@ module bt_song_player #(
                 v_gate<=0;v_vel<=0;active<=0;state<=0;
             end else if(start) begin
                 playing<=count!=0 && count<=MAX_EVENTS;
+                lead_timbre<=timbre;v_lead<=0;
                 teaching<=TEACH_ENABLED!=0 && teach_mode;overflow<=count>MAX_EVENTS;
                 position_ms<=0;elapsed_ms<=0;song_time<=0;divider<=0;event_index<=0;read_addr<=0;
                 v_gate<=0;v_vel<=0;active<=0;hit<=0;press_valid<=0;press_used<=0;
@@ -158,8 +169,8 @@ module bt_song_player #(
                     1:state<=2; // synchronous RAM address settle
                     2:begin event_word<=read_data;state<=3;end
                     3:begin
-                        next_key<=pitch_key(event_word[38:32]);
-                        note_end<=note_start+{16'd0,event_word[55:40]};
+                        next_key<=event_lead?pitch_key(event_word[38:32]):7;
+                        note_end<=note_start+{16'd0,event_duration};
                         note_absolute<=note_start+delay_ms;state<=4;
                     end
                     4:begin early_open<=note_absolute>WINDOW_MS ? note_absolute-WINDOW_MS : 0;state<=5;end
@@ -171,6 +182,8 @@ module bt_song_player #(
                     6:begin
                         for(i=0;i<8;i=i+1) if(grant[i]) begin
                             v_note[i*7+:7]<=event_word[38:32];
+                            v_timbre[i*2+:2]<=event_timbre;v_lead[i]<=event_lead;
+                            if(event_lead)lead_timbre<=event_timbre;
                             full_vel[i]<={event_word[62:56],1'b0};
                             v_vel[i*8+:8]<=teaching && next_key<7 && !early_hit ?
                                 {1'b0,event_word[62:56]} : {event_word[62:56],1'b0};

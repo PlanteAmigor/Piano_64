@@ -1,18 +1,19 @@
-//Copyright (C)2014-2024 Gowin Semiconductor Corporation.
-//All rights reserved.
-//File Title: IP file
-//Tool Version: V1.9.9.01 (64-bit)
-//Part Number: GW5AST-LV138PG484AC2/I1
-//Device: GW5AST-138B
-//Device Version: B
-//Created Time: Tue Mar 12 14:17:48 2024
+// Native 1080p60. Both PLLs stay inside GW5AST-138C PFD/VCO limits.
+// Reference: 50 MHz *22 /40 =27.5 MHz (VCO1100, PFD50).
+// Video: 27.5 MHz *27 =742.5 MHz VCO; /5 pixels, /1 serializer.
+// Retain the public module name for existing build scripts.
+module Gowin_PLL_720P(output lock,output clkout0,output clkout1,input clkin);
+    wire ref_clk,ref_lock,pixel_lock;
+    ui_pll_core #(.FREQ("50"),.MDIV(22),.FRAC(0),.DIV0(40),.DIV1(40),.OUT1("FALSE"))
+        u_ref(.clkin(clkin),.reset(1'b0),.clkout0(ref_clk),.clkout1(),.lock(ref_lock));
+    ui_pll_core u_pixel(.clkin(ref_clk),.reset(!ref_lock),.clkout0(clkout0),.clkout1(clkout1),.lock(pixel_lock));
+    assign lock=ref_lock && pixel_lock;
+endmodule
 
-module Gowin_PLL_720P (lock, clkout0, clkout1, clkin);
+module ui_pll_core #(
+    parameter FREQ="27.5",MDIV=27,FRAC=0,DIV0=5,DIV1=1,OUT1="TRUE"
+)(output lock,output clkout0,output clkout1,input clkin,input reset);
 
-output lock;
-output clkout0;
-output clkout1;
-input clkin;
 
 wire clkout2;
 wire clkout3;
@@ -38,7 +39,7 @@ PLL PLL_inst (
     .CLKFBOUT(clkfbout),
     .CLKIN(clkin),
     .CLKFB(gw_gnd),
-    .RESET(gw_gnd),
+    .RESET(reset),
     .PLLPWD(gw_gnd),
     .RESET_I(gw_gnd),
     .RESET_O(gw_gnd),
@@ -77,21 +78,21 @@ PLL PLL_inst (
     .SSCMDSEL_FRAC({gw_gnd,gw_gnd,gw_gnd})
 );
 
-defparam PLL_inst.FCLKIN = "50";
+defparam PLL_inst.FCLKIN = FREQ;
 defparam PLL_inst.IDIV_SEL = 1;
 defparam PLL_inst.FBDIV_SEL = 1;
-defparam PLL_inst.ODIV0_SEL = 10;
-defparam PLL_inst.ODIV1_SEL = 2;
+defparam PLL_inst.ODIV0_SEL = DIV0;
+defparam PLL_inst.ODIV1_SEL = DIV1;
 defparam PLL_inst.ODIV2_SEL = 8;
 defparam PLL_inst.ODIV3_SEL = 8;
 defparam PLL_inst.ODIV4_SEL = 8;
 defparam PLL_inst.ODIV5_SEL = 8;
 defparam PLL_inst.ODIV6_SEL = 8;
-defparam PLL_inst.MDIV_SEL = 15;
-defparam PLL_inst.MDIV_FRAC_SEL = 0;
+defparam PLL_inst.MDIV_SEL = MDIV;
+defparam PLL_inst.MDIV_FRAC_SEL = FRAC;
 defparam PLL_inst.ODIV0_FRAC_SEL = 0;
 defparam PLL_inst.CLKOUT0_EN = "TRUE";
-defparam PLL_inst.CLKOUT1_EN = "TRUE";
+defparam PLL_inst.CLKOUT1_EN = OUT1;
 defparam PLL_inst.CLKOUT2_EN = "FALSE";
 defparam PLL_inst.CLKOUT3_EN = "FALSE";
 defparam PLL_inst.CLKOUT4_EN = "FALSE";

@@ -443,7 +443,9 @@ module add_engine_harm #(
     wire [18:0]        dphi   = v_phl[hv] - v_php[hv];      // 模 2^19 的差
     wire signed [15:0] dphi_s = dphi[15:0];                 // 解成有符号小量
     // 音高比下限保护：万一 bend_q14 变成 0（未驱动），相位会冻死成直流
-    wire        [15:0] ratio  = (bend_q14 < 16'd2048) ? 16'd2048 : bend_q14;
+    reg [15:0] ratio;
+    always @(posedge clk)if(!rst_n)ratio<=16'd16384;
+        else ratio<=(bend_q14<16'd2048)?16'd2048:bend_q14;
 
     // ── G5 指颤 LFO（音频速率，6 Hz 三角波，峰值 ±2048/16384 = ±12.5% ≈ ±203 音分）──
     //   ★ 为什么放在引擎里而不是控制器里：控制器只有 83.3 Hz 帧率，
@@ -501,7 +503,15 @@ module add_engine_harm #(
     //     （+0.125 → +204 音分，−0.125 → −231 音分），平均会低 13.6 音分。
     //     乘一个 1+1/128 ≈ 1.0079 把几何平均拉回 1（1/√(1−a²)，a=0.125）。
     wire signed [16:0] trem_bias = trem_en ? $signed({8'd0, ratio[15:7]}) : 17'sd0;
-    wire signed [16:0] ratio_eff = $signed({1'b0, ratio}) + trem_off + vib_off + trem_bias;
+    reg signed [16:0] ratio_base,ratio_mod,ratio_eff;
+    always @(posedge clk)begin
+        if(!rst_n)begin ratio_base<=17'sd16384;ratio_mod<=0;ratio_eff<=17'sd16384;end
+        else begin
+            ratio_base<=$signed({1'b0,ratio})+trem_bias;
+            ratio_mod<=$signed(trem_off)+$signed(vib_off);
+            ratio_eff<=ratio_base+ratio_mod;
+        end
+    end
     wire signed [16:0] ratio_use = (ratio_eff < 17'sd1024) ? 17'sd1024 : ratio_eff;
 
     // ★★ 流水线 2：总比值再打一拍，把 33 位乘法单独留在后一级

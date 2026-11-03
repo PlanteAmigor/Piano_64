@@ -3,7 +3,7 @@
 #
 #  与 build.tcl 的区别：
 #    build.tcl       顶 = add_top     只有音频（频谱逻辑在但没人消费）
-#    build_full.tcl  顶 = piano64_top  音频 + 720p 频谱显示
+#    build_full.tcl  顶 = piano64_top  音频 + 1080p 频谱显示
 #
 #  ★ 约束文件必须用【拼接过】的 piano64_hdmi.cst / piano64_hdmi.sdc，
 #    因为 gw_sh 只认最后一个 .cst/.sdc。
@@ -14,6 +14,7 @@ set_device GW5AST-LV138PG484AC1/I0 -name GW5AST-138 -device_version C
 #  音频引擎（与 build.tcl 完全相同的文件列表）
 #══════════════════════════════════════════════════════════════════
 add_file src/add_top.v
+add_file src/audio_soft_limiter.v
 add_file src/add_engine8.v
 add_file src/add_engine_harm.v
 add_file src/harm_buf.v
@@ -55,10 +56,11 @@ add_file src/song/song_system.v
 add_file src/song/song_menu_keys.v
 
 #══════════════════════════════════════════════════════════════════
-#  HDMI 720p 频谱显示（复用 ir4 已验证的 DVI 栈）
+#  HDMI 1080p 频谱显示（复用 ir4 已验证的 DVI 栈）
 #══════════════════════════════════════════════════════════════════
 add_file src/hdmi/hdmi_ui3_top.v
 add_file src/hdmi/ui/ui_liss_ram.v
+add_file src/hdmi/ui/ui_scope_points.v
 add_file src/hdmi/ir4/dvi_tx_tmds_enc.v
 add_file src/hdmi/ir4/dvi_tx_tmds_phy.v
 add_file src/hdmi/ir4/dvi_tx_clk_drv.v
@@ -72,6 +74,7 @@ add_file src/piano64_top.v
 
 # ── DDR3 1 GiB（仓层）──
 add_file src/ddr/ddr_wrap.v
+add_file src/ddr/ddr_ui_pipeline.v
 add_file src/ddr/ddr3_memory_interface.v
 add_file src/ddr/gowin_pll.v
 add_file src/ddr/gowin_pll_mod.v

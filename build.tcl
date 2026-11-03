@@ -4,6 +4,7 @@
 set_device GW5AST-LV138PG484AC1/I0 -name GW5AST-138 -device_version C
 
 add_file src/add_top.v
+add_file src/audio_soft_limiter.v
 # ★ 128 分量引擎（当前使用）。旧的 64 分量版本 add_voice.v / add_engine.v
 #   保留在仓库里作为参考与回退方案，但不参与本次综合。
 add_file src/add_engine8.v
@@ -52,6 +53,7 @@ add_file src/piano64.sdc
 
 # ── DDR3 1 GiB（仓层）──
 add_file src/ddr/ddr_wrap.v
+add_file src/ddr/ddr_ui_pipeline.v
 add_file src/ddr/ddr3_memory_interface.v
 add_file src/ddr/gowin_pll.v
 add_file src/ddr/gowin_pll_mod.v

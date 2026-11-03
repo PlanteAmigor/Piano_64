@@ -1,39 +1,9 @@
-//==========================================================================
-//  ui_liss_ram —— 相图（李萨如）帧存 128×128，【4 bit 强度/像素】
-//
-//  4096 word × 16 bit：一个 word = 一行里的 4 个像素（4 个 nibble）
-//      addr = row*32 + (x>>2)，nibble = x&3
-//
-//  ★ 2026-11-03 从 256×256 缩到 128×128（16 块 BSRAM → 4 块，省 12 块）
-//    显示窗口只有 212×212 px，原来 256 位图是【缩小】显示（0.83×），
-//    现在是【放大】显示（1.66×）。打点区 32..224 缩半成 16..112，
-//    换算到屏幕仍是 10..202，与原来像素范围完全一致，视觉几乎无差别。
-//    输入坐标保持 8 位（0..255）不变，内部取 [7:1] 折扣。
-//
-//  16384 → 4096 word 后：
-//    全清 4096 拍（82 us），衰减 4096×3 = 12288 拍 = 164 us
-//    （720p 每帧消隐 328650 拍 = 4.4 ms，余量 26 倍）
-//
-//  为什么是 4 bit 而不是 1 bit：这是「数字荧光屏」的核心。
-//    · 打点 = 该像素强度 +1（饱和到 15）
-//    · 每帧整屏强度 -1（饱和到 0）
-//    于是「停留时间」自动变成亮度：
-//      稳定轨迹每个周期都被扫一遍 → 很快累到 15 级 → 刺眼
-//      瞬态垃圾（限幅跳变、起始杂散）只被扫过一次 → 一直是 1 级 → 很暗
-//      并且不管是什么，15 帧内衰减干净
-//    ★ 这一步是「瞬时状态下画面更清晰」的关键，比滤波直接得多：
-//      滤波改的是【形状】，荧光改的是【权重】。
-//
-//  写口只有一个 always 块（★ 数组不能多块驱动，否则综合器报多驱动）：
-//    · 全清：4096 拍（82 us），仅上电用
-//    · 衰减：4096 字 × 2 拍（读+写）= 8192 拍 = 109 us，每帧一次
-//            （720p 每帧消隐 328650 拍 = 4.4 ms，余量 40 倍）
-//    · 打点：Bresenham 连线，每像素 3 拍读-改-写
-//  读口：扫描时读一个 word，按 nibble 选像素强度
-//==========================================================================
+// Persistence plot RAM. Defaults retain the legacy 128x128/4-bit interface.
+// Native 1080p uses 256x256 with 2-bit intensities (eight pixels/word).
+// All plotting, clear and decay writes share the same RAM port.
 `default_nettype none
 
-module ui_liss_ram (
+module ui_liss_ram #(parameter integer COORD_BITS=7, PIXEL_BITS=4, PACK_BITS=PIXEL_BITS==2?3:2, RAM_AW=2*COORD_BITS-PACK_BITS) (
     input  wire        clk,
     input  wire        rst_n,
 
@@ -53,41 +23,37 @@ module ui_liss_ram (
     output reg         decay_busy,
 
     // ── 读口（扫描）：一个 word = 4 个像素 ───────────────────────
-    input  wire [11:0] raddr,
+    input  wire [RAM_AW-1:0] raddr,
     output reg  [15:0] rdata
 );
-    reg [15:0] m [0:4095];
+    reg [15:0] m [0:(1<<RAM_AW)-1];
 
-    localparam [11:0] LAST_A = 12'd4095;
+    localparam [RAM_AW-1:0] LAST_A = (1<<RAM_AW)-1;
 
     // 输入坐标 0..255 → 帧存坐标 0..127（折扣）
-    wire [7:0] px7 = {1'b0, plot_x[7:1]};
-    wire [7:0] py7 = {1'b0, plot_y[7:1]};
+    wire [7:0] px7 = COORD_BITS==8 ? plot_x : {1'b0, plot_x[7:1]};
+    wire [7:0] py7 = COORD_BITS==8 ? plot_y : {1'b0, plot_y[7:1]};
 
     // ── 4 位饱和减 / 饱和加 ─────────────────────────────────────
-    function [15:0] dec16;                  // 4 个 nibble 各自饱和 -step
-        input [15:0] w;
-        input [3:0]  s;
+    function [15:0] dec16;
+        input [15:0] w;input [3:0] step;
+        integer i;reg [PIXEL_BITS-1:0] v;
         begin
-            dec16[3:0]   = (w[3:0]   >= s) ? (w[3:0]   - s) : 4'd0;
-            dec16[7:4]   = (w[7:4]   >= s) ? (w[7:4]   - s) : 4'd0;
-            dec16[11:8]  = (w[11:8]  >= s) ? (w[11:8]  - s) : 4'd0;
-            dec16[15:12] = (w[15:12] >= s) ? (w[15:12] - s) : 4'd0;
+            for(i=0;i<16/PIXEL_BITS;i=i+1)begin
+                v=w[i*PIXEL_BITS+:PIXEL_BITS];
+                dec16[i*PIXEL_BITS+:PIXEL_BITS]=v>=step?v-step:0;
+            end
         end
     endfunction
-
-    function [15:0] inc16;                  // sel 号 nibble 饱和 +step
-        input [15:0] w;
-        input [1:0]  sel;
-        input [3:0]  s;
-        reg   [15:0] sh;
-        reg   [4:0]  n2;
+    function [15:0] inc16;
+        input [15:0] w;input [PACK_BITS-1:0] sel;input [3:0] step;
+        reg [4:0] v;integer i;
         begin
-            sh = w >> {sel, 2'b00};         // 把要改的 nibble 移到低 4 位
-            n2 = {1'b0, sh[3:0]} + {1'b0, s};
-            if (n2 > 5'd15) n2 = 5'd15;     // 饱和到 15
-            inc16 = (w & ~(16'h000F << {sel, 2'b00}))
-                  | ({12'd0, n2[3:0]} << {sel, 2'b00});
+            inc16=w;
+            for(i=0;i<16/PIXEL_BITS;i=i+1)if(sel==i)begin
+                v={1'b0,w[i*PIXEL_BITS+:PIXEL_BITS]}+step;
+                inc16[i*PIXEL_BITS+:PIXEL_BITS]=v>((1<<PIXEL_BITS)-1)?{PIXEL_BITS{1'b1}}:v[PIXEL_BITS-1:0];
+            end
         end
     endfunction
 
@@ -105,29 +71,26 @@ module ui_liss_ram (
     reg [7:0]  pdx, pdy;
 
     // ── 打点状态机 ───────────────────────────────────────────────
-    localparam [1:0] S_IDLE = 2'd0, S_ADDR = 2'd1,
-                     S_RD   = 2'd2, S_WR   = 2'd3;
-    reg [1:0]  st;
-    reg [1:0]  p_sel;
+    localparam [2:0] S_IDLE=0,S_ADDR=1,S_RD=2,S_WR=3,S_PRE=4,S_BEGIN=5;
+    reg [2:0] st;
+    reg line_ok,step_x,step_y;
+    reg signed [10:0] neg_ady,err_x,err_y_add;
+    reg [PACK_BITS-1:0] p_sel;
 
     // ── 全清 / 衰减扫描 ──────────────────────────────────────────
     localparam [1:0] D_ADDR = 2'd0, D_READ = 2'd1, D_WRITE = 2'd2;
-    reg [11:0] c_addr, d_addr;
+    reg [RAM_AW-1:0] c_addr, d_addr;
     reg        c_run,  d_run;
     reg [1:0]  d_ph;
 
-    // ── Bresenham 组合逻辑 ───────────────────────────────────────
-    //   ★ berr 在同一拍要减一次加一次，写成两次非阻塞赋值会丢掉前一次，
-    //     所以先算出 berr_n 再一次性赋值。
-    wire signed [11:0] berr12 = $signed(berr);
-    wire signed [11:0] e2     = berr12 <<< 1;
-    wire signed [11:0] adx_s  = {4'b0000, adx};
-    wire signed [11:0] ady_s  = {4'b0000, ady};
-    wire        do_x = (e2 > -ady_s);
-    wire        do_y = (e2 <  adx_s);
-    wire signed [11:0] berr_n = berr12
-                              - (do_x ? ady_s : 12'sd0)
-                              + (do_y ? adx_s : 12'sd0);
+    // Compare directions in S_ADDR, subtract in S_RD, add in S_WR.
+    // The error recurrence spans existing RAM access cycles without changing
+    // the set of pixels. Negative dy is prepared once per segment.
+    wire signed [11:0] berr12=$signed(berr);
+    wire signed [11:0] e2=berr12<<<1;
+    wire signed [11:0] adx_s={4'b0000,adx};
+    wire do_x=e2>$signed(neg_ady);
+    wire do_y=e2<adx_s;
     wire        at_tgt = (cur_x == tgt_x) && (cur_y == tgt_y);
 
     wire        busy  = c_run || clr_en || d_run || decay_req;
@@ -147,7 +110,6 @@ module ui_liss_ram (
     //      不需要靠断笔来防了。
     //   每样点有 1536 拍、每像素 3 拍 → 理论上可画 512 px，64 很安全。
     //   ★ 帧存缩到 128×128 后，同样 32 px 相当于原来的 64 px，阈值同比减半。
-    wire        seg_ok = (ndx <= 8'd32) && (ndy <= 8'd32);
 
     // ══════════════════════════════════════════════════════════════
     //  存储接口：★ 严格两个读表达式 + 一个写表达式
@@ -160,7 +122,7 @@ module ui_liss_ram (
     //      B 口：读 m[b_addr] 并写 m[b_addr]   —— 打点 / 衰减 / 全清 三合一
     //  三个写者互斥（优先级 全清 > 衰减 > 打点），所以共用一个写表达式。
     // ══════════════════════════════════════════════════════════════
-    reg  [11:0] b_ra, b_wa;         // B 口独立的读/写地址
+    reg  [RAM_AW-1:0] b_ra, b_wa;         // B 口独立的读/写地址
     reg  [15:0] b_q;                // B 口读出，1 拍后有效
 
     // 单 always 块驱动 m
@@ -172,6 +134,7 @@ module ui_liss_ram (
             tgt_x    <= 8'd0;   tgt_y <= 8'd0;
             adx      <= 8'd0;   ady   <= 8'd0;
             berr     <= 11'sd0;
+            line_ok<=0;step_x<=0;step_y<=0;neg_ady<=0;err_x<=0;err_y_add<=0;
             sx       <= 1'b1;   sy    <= 1'b1;
             pend     <= 1'b0;   pdx   <= 8'd0;   pdy <= 8'd0;
             b_ra     <= 12'd0;  b_wa  <= 12'd0;  b_q   <= 16'd0;
@@ -248,36 +211,33 @@ module ui_liss_ram (
             else begin
                 case (st)
                 S_IDLE: if (pend) begin
-                    if (!pen_vld) begin
-                        // 全清后第一个点：只画一个像素，不从 (0,0) 连线
-                        cur_x <= pdx;  cur_y <= pdy;
-                        tgt_x <= pdx;  tgt_y <= pdy;
-                        adx   <= 8'd0; ady   <= 8'd0;
-                        sx    <= 1'b1; sy    <= 1'b1;
-                        berr  <= 11'sd0;
-                    end
-                    else begin
-                        // 段太长 → 断笔，直接跳到目标点画一个孤立点
-                        cur_x <= seg_ok ? pen_x : pdx;
-                        cur_y <= seg_ok ? pen_y : pdy;
-                        tgt_x <= pdx;   tgt_y <= pdy;
-                        adx   <= seg_ok ? ndx : 8'd0;
-                        ady   <= seg_ok ? ndy : 8'd0;
-                        sx    <= (pdx >= pen_x);
-                        sy    <= (pdy >= pen_y);
-                        berr  <= seg_ok ? ($signed({3'b000, ndx}) -
-                                           $signed({3'b000, ndy})) : 11'sd0;
-                    end
-                    st <= S_ADDR;
+                    // Capture the segment before deciding whether to connect.
+                    tgt_x<=pdx;tgt_y<=pdy;adx<=ndx;ady<=ndy;
+                    sx<=(pdx>=pen_x);sy<=(pdy>=pen_y);st<=S_PRE;
+                end
+                S_PRE: begin
+                    line_ok<=pen_vld && adx<=(COORD_BITS==8?64:32) && ady<=(COORD_BITS==8?64:32);
+                    berr<=$signed({3'b000,adx})-$signed({3'b000,ady});
+                    st<=S_BEGIN;
+                end
+                S_BEGIN: begin
+                    cur_x<=line_ok?pen_x:tgt_x;cur_y<=line_ok?pen_y:tgt_y;
+                    adx<=line_ok?adx:0;ady<=line_ok?ady:0;
+                    berr<=line_ok?berr:0;
+                    neg_ady<=line_ok?-$signed({3'b000,ady}):0;
+                    st<=S_ADDR;
                 end
                 S_ADDR: begin
+                    step_x<=do_x;step_y<=do_y;
                     // addr = y*32 + (x>>2)；cur_y / cur_x 均为 0..127
-                    b_ra   <= {cur_y[6:0], 5'd0} + {9'd0, cur_x[6:2]};
-                    b_wa   <= {cur_y[6:0], 5'd0} + {9'd0, cur_x[6:2]};
-                    p_sel  <= cur_x[1:0];
+                    b_ra   <= {cur_y[COORD_BITS-1:0], cur_x[COORD_BITS-1:PACK_BITS]};
+                    b_wa   <= {cur_y[COORD_BITS-1:0], cur_x[COORD_BITS-1:PACK_BITS]};
+                    p_sel  <= cur_x[PACK_BITS-1:0];
                     st     <= S_RD;
                 end
                 S_RD: begin
+                    err_x<=berr-(step_x?$signed({3'b000,ady}):11'sd0);
+                    err_y_add<=step_y?$signed({3'b000,adx}):11'sd0;
                     b_q <= m[b_ra];            // b_q 在 S_WR 那一拍有效
                     st  <= S_WR;
                 end
@@ -288,10 +248,10 @@ module ui_liss_ram (
                     pen_vld   <= 1'b1;
                     if (at_tgt) st <= S_IDLE;
                     else begin
-                        berr  <= berr_n;
-                        cur_x <= do_x ? (sx ? cur_x + 8'd1 : cur_x - 8'd1)
+                        berr  <= err_x+err_y_add;
+                        cur_x <= step_x ? (sx ? cur_x + 8'd1 : cur_x - 8'd1)
                                       : cur_x;
-                        cur_y <= do_y ? (sy ? cur_y + 8'd1 : cur_y - 8'd1)
+                        cur_y <= step_y ? (sy ? cur_y + 8'd1 : cur_y - 8'd1)
                                       : cur_y;
                         st    <= S_ADDR;
                     end

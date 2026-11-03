@@ -1,7 +1,9 @@
 `timescale 1ns/1ps
 `default_nettype none
 module tb_song_sd;
-    parameter integer CORRUPT_IMAGE=0;
+    parameter integer CORRUPT_IMAGE=0,BACKPRESSURE=0,PIPELINE=0;
+    reg [7:0] throttle=1;
+    always @(posedge c100)throttle<={throttle[6:0],throttle[7]^throttle[5]^throttle[4]^throttle[3]};
     reg csd=0,clk=0,c100=0,rst_n=0;
     always #10 csd=~csd;
     always #11 clk=~clk; // unrelated phase and frequency, as real CDC must allow
@@ -25,18 +27,38 @@ module tb_song_sd;
     wire en,wren;
     wire [28:0] addr;
     wire [255:0] wdata;
+    wire cmd_ready=!BACKPRESSURE || throttle[0],data_ready=!BACKPRESSURE || throttle[2];
+    wire client_ready,client_wready,client_rvalid;
+    wire [255:0] client_rdata;
+    wire [2:0] mem_cmd;
+    wire mem_en,mem_we,mem_en_raw,mem_we_raw;
+    wire [28:0] mem_addr;
+    wire [255:0] mem_wdata;
+    generate if(PIPELINE)begin
+        ddr_ui_pipeline pipe(.clk(c100),.rst_n(rst_n),.s_cmd(cmd),.s_en(en),.s_addr(addr),
+            .s_wdata(wdata),.s_wren(wren),.s_ready(client_ready),.s_wready(client_wready),
+            .s_rvalid(client_rvalid),.s_rdata(client_rdata),.m_cmd(mem_cmd),.m_en(mem_en_raw),.m_addr(mem_addr),
+            .m_wdata(mem_wdata),.m_wren(mem_we_raw),.m_ready(cmd_ready),.m_wready(data_ready),.m_rvalid(rv),.m_rdata(rdata));
+        assign mem_en=mem_en_raw && cmd_ready;assign mem_we=mem_we_raw && data_ready;
+    end else begin
+        assign client_ready=cmd_ready;assign client_wready=data_ready;assign client_rvalid=rv;assign client_rdata=rdata;
+        assign mem_cmd=cmd;assign mem_en=en;assign mem_addr=addr;assign mem_wdata=wdata;assign mem_we=wren;
+    end endgenerate
     reg [255:0] mem[0:127],rdata=0;
     reg [28:0] wa=0;
     reg rv=0;
     integer ddr_writes=0,sd_bytes=0;
+    reg command_pending=0,data_pending=0;
+    reg [255:0] pending_data;
     always @(posedge c100) begin
-        rv<=en && cmd==1;
-        if(en && cmd==1) rdata<=mem[addr>>3] ^ (CORRUPT_IMAGE && addr==8 ? 256'd1 : 256'd0);
-        if(en && cmd==0) wa<=addr;
-        if(wren) begin
-            if(cat) $fatal(1,"song traffic entered DDR FIFO");
-            mem[(en && cmd==0 ? addr : wa)>>3]<=wdata;
-            ddr_writes=ddr_writes+1;
+        rv<=mem_en && mem_cmd==1;
+        if(mem_en && mem_cmd==1) rdata<=mem[mem_addr>>3] ^ (CORRUPT_IMAGE && mem_addr==8 ? 256'd1 : 256'd0);
+        if(mem_en && mem_cmd==0)begin wa<=mem_addr;command_pending<=1;end
+        if(mem_we)begin pending_data<=mem_wdata;data_pending<=1;end
+        if((command_pending || (mem_en && mem_cmd==0)) && (data_pending || mem_we))begin
+            if(cat)$fatal(1,"song traffic entered DDR FIFO");
+            mem[(mem_en && mem_cmd==0?mem_addr:wa)>>3]<=mem_we?mem_wdata:pending_data;
+            command_pending<=0;data_pending<=0;ddr_writes=ddr_writes+1;
         end
     end
     always @(posedge csd) if(valid) sd_bytes=sd_bytes+1;
@@ -44,8 +66,8 @@ module tb_song_sd;
         .clk50(csd),.clk100(c100),.arst_n(rst_n),.calib_done(rst_n),
         .dbg_pll(1'b1),.dbg_por_n(1'b1),.dbg_reset_n(1'b1),.sd_clk(),.sd_cmd(),.sd_dat0(1'b1),
         .app_cmd(cmd),.app_en(en),.app_addr(addr),.app_wdf_data(wdata),.app_wdf_wren(wren),
-        .app_wdf_end(),.app_wdf_mask(),.app_burst(),.app_rdy(1'b1),.wr_data_rdy(1'b1),
-        .app_rd_data_valid(rv),.app_rd_data(rdata),.load_done(load_done),.load_ok(load_ok),
+        .app_wdf_end(),.app_wdf_mask(),.app_burst(),.app_rdy(client_ready),.wr_data_rdy(client_wready),
+        .app_rd_data_valid(client_rvalid),.app_rd_data(client_rdata),.load_done(load_done),.load_ok(load_ok),
         .stage(),.nbytes(),.nwords(),.err_ov(),.nfiles(),.file_no(),.uart_txd(),
         .song_request(req),.song_request_index(selected),.song_file_count(nc),.song_ids(ids),
         .song_catalog_done(cat),.song_busy(),.song_byte(data),.song_byte_valid(valid),

@@ -398,6 +398,17 @@ reg  [ 7:0] lastchar = 8'h0;
 reg  [ 7:0] fdtnamelen = 8'h0 , fdtnamelen_t;
 reg  [ 7:0] sdtnamelen = 8'h0 , sdtnamelen_t;
 reg  [ 7:0] file_namelen = 8'h0;
+// LFN entries hold at most four groups of thirteen characters (52 bytes).
+// Calculate their base one cycle after the entry header, before its first
+// UTF-16 high byte. This removes a byte->multiply->variable-write path.
+reg [7:0] lfn_base=0;
+always @(posedge clk or negedge rstn)begin
+    if(!rstn)lfn_base<=0;
+    else case(longno)
+        1:lfn_base<=0;2:lfn_base<=13;3:lfn_base<=26;4:lfn_base<=39;default:lfn_base<=0;
+    endcase
+end
+
 reg  [15:0] file_1st_cluster = 16'h0 , file_1st_cluster_t;
 reg  [31:0] file_1st_size = 0 , file_1st_size_t;
 
@@ -486,7 +497,8 @@ always @ (posedge clk or negedge rstn) begin
                 end
             end
             
-            if(islong_t) begin
+            if(islong_t && (longno_t==0 || longno_t>4))longvalid_t=1'b0;
+            if(islong_t && longno_t>=1 && longno_t<=4) begin
                 if(raddr[4:0]>5'h0&&raddr[4:0]<5'hB || raddr[4:0]>=5'hE&&raddr[4:0]<5'h1A || raddr[4:0]>=5'h1C)begin
                     if(raddr[4:0]<5'hB ? raddr[0] : ~raddr[0]) begin
                         lastchar <= rdata;
@@ -494,11 +506,11 @@ always @ (posedge clk or negedge rstn) begin
                     end else begin
                         //automatic logic [15:0] unicode = {rdata,lastchar};
                         if({rdata,lastchar} == 16'h0000) begin
-                            file_namelen <= fdtnamelen_t-8'd1 + (longno_t-8'd1)*8'd13;
+                            file_namelen <= fdtnamelen_t-8'd1 + lfn_base;
                         end else if({rdata,lastchar} != 16'hFFFF) begin
                             if(rdata == 8'h0) begin
-//                                file_name[fdtnamelen_t-8'd1+(longno_t-8'd1)*8'd13] <= (lastchar>=8'h61 && lastchar<=8'h7A) ? lastchar&8'b11011111 : lastchar;     // convert to upper case
-                                file_name[fdtnamelen_t-8'd1+(longno_t-8'd1)*8'd13] <= lastchar; 
+//                                file_name[fdtnamelen_t-8'd1+lfn_base] <= (lastchar>=8'h61 && lastchar<=8'h7A) ? lastchar&8'b11011111 : lastchar;     // convert to upper case
+                                file_name[fdtnamelen_t-8'd1+lfn_base] <= lastchar;
                             end else begin
                                 longvalid_t = 1'b0;
                             end

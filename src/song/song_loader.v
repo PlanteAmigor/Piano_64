@@ -50,6 +50,7 @@ module song_loader #(
     output reg          song_valid,      // 1 = 曲谱已完整提交
     output reg  [15:0]  song_count,      // 事件数
     output reg  [31:0]  song_duration,   // 总时长 ms
+    output reg          song_multi,
     output reg  [1:0]   song_timbre,     // 0钢琴 1古筝 2唢呐 3笛子
     output reg  [7:0]   err_code,        // 0=OK，含义见文件末尾
     output reg          busy,            // 正在装填
@@ -167,18 +168,19 @@ module song_loader #(
     reg        allow_drop;      // BEGIN.flags[0]，允许超额丢音
 
     wire [31:0] ev_start    = event_word[31:0];
-    wire [7:0]  ev_note     = event_word[39:32];
-    wire [15:0] ev_duration = event_word[55:40];
-    wire [7:0]  ev_velocity = event_word[63:56];
+    wire [7:0]  ev_note     = song_multi ? {1'b0,event_word[38:32]} : event_word[39:32];
+    wire [1:0] ev_timbre = song_multi ? {event_word[39],event_word[63]} : song_timbre;
+    wire [15:0] ev_duration = song_multi ? {1'b0,event_word[54:40]} : event_word[55:40];
+    wire [7:0]  ev_velocity = song_multi ? {1'b0,event_word[62:56]} : event_word[63:56];
     wire [32:0] ev_end      = {1'b0, ev_start} + {17'd0, ev_duration};
 
     // 音域随音色（与队友 BoardProtocol.kt / bt_midi_top.v 一致）
-    wire [7:0]  note_lo = (song_timbre == 2'd0) ? 8'd21 :
-                          (song_timbre == 2'd1) ? 8'd38 :
-                          (song_timbre == 2'd2) ? 8'd69 : 8'd67;
-    wire [7:0]  note_hi = (song_timbre == 2'd0) ? 8'd108 :
-                          (song_timbre == 2'd1) ? 8'd86 :
-                          (song_timbre == 2'd2) ? 8'd96 : 8'd91;
+    wire [7:0]  note_lo = (ev_timbre == 2'd0) ? 8'd21 :
+                          (ev_timbre == 2'd1) ? 8'd38 :
+                          (ev_timbre == 2'd2) ? 8'd69 : 8'd67;
+    wire [7:0]  note_hi = (ev_timbre == 2'd0) ? 8'd108 :
+                          (ev_timbre == 2'd1) ? 8'd86 :
+                          (ev_timbre == 2'd2) ? 8'd96 : 8'd91;
 
     //======================================================================
     //  4. 并发声部检查
@@ -190,7 +192,7 @@ module song_loader #(
     always @(*) begin
         chosen = -1;
         for (k = 7; k >= 0; k = k - 1)
-            if ((song_timbre < 2 || k == 0) && end_ms[k] <= ev_start)
+            if ((song_multi ? (ev_timbre<2 ? k<7 : k==7) : (song_timbre<2 || k==0)) && end_ms[k]<=ev_start)
                 chosen = k;
     end
 
@@ -220,7 +222,7 @@ module song_loader #(
             song_valid     <= 1'b0;
             song_count     <= 16'd0;
             song_duration  <= 32'd0;
-            song_timbre    <= 2'd0;
+            song_timbre    <= 2'd0; song_multi<=0;
             err_code       <= 8'd0;
             busy           <= 1'b0;
             for (i = 0; i < 8; i = i + 1) end_ms[i] <= 32'd0;
@@ -270,13 +272,14 @@ module song_loader #(
                     else if (header[47:16] == 32'd0 ||
                              header[47:16] > 32'd86_400_000 ||
                              header[55:48] > 8'd3 ||
-                             header[63:56] > 8'd1)                   err_code <= 8'd5;
+                             (header[63:56] & 8'h7e) != 0)                   err_code <= 8'd5;
                     else begin
                         song_valid     <= 1'b0;                  // 新曲谱开始，旧的作废
                         uploading      <= 1'b1;
                         song_count     <= header[15:0];
                         song_duration  <= header[47:16];
                         song_timbre    <= header[49:48];
+                        song_multi     <= header[63];
                         allow_drop     <= header[56];
                         previous_start <= 32'd0;
                         wptr           <= 11'd0;                 // ★ 写指针必须归零
@@ -365,7 +368,7 @@ module song_loader #(
                     uploading <= 1'b0;
                     st        <= S_DONE;
                 end
-                else if (chosen < 0 && !allow_drop) begin
+                else if (chosen < 0 && (!allow_drop || song_multi)) begin
                     err_code  <= 8'd9;                       // 超出声部容量
                     uploading <= 1'b0;
                     st        <= S_DONE;

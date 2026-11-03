@@ -8,7 +8,7 @@
 //
 //        piano64_top
 //          ├── u_audio : add_top        音频引擎 / DDR / SD / I2S（clk_sys 域）
-//          └── u_hdmi  : hdmi_ui3_top   720p 三页面渲染 + DVI（clk_p 75 MHz 域）
+//          └── u_hdmi  : hdmi_ui3_top   1080p 三页面渲染 + DVI（clk_p 148.5 MHz 域）
 //
 //    两者唯一的连接是 SPEC_BANDS（256 位慢变数据）与 UI_INFO（16 位慢变量），
 //    跨域方式见 hdmi_ui3_top 里的注释（慢变量直接打拍，数据窗口几十 ms）。
@@ -78,10 +78,12 @@ module piano64_top #(
     wire [32*8-1:0] spec_bands;
     wire            spec_tick;
     wire [18:0]     ui_info;
-    wire [255:0] song_ui;
+    wire [383:0] song_ui;
+    wire [1023:0] song_roll;
     wire song_ui_toggle, song_ui_ack;
     wire [64*8-1:0] comp_amp;
     wire signed [15:0] scope_smp;
+    wire scope_clk;
     wire               scope_tog;
     wire               scope_trg;
 
@@ -132,15 +134,16 @@ module piano64_top #(
         .SPEC_BANDS (spec_bands),
         .SPEC_TICK  (spec_tick),
         .UI_INFO    (ui_info),
-        .SONG_UI(song_ui),.SONG_UI_TOGGLE(song_ui_toggle),.SONG_UI_ACK(song_ui_ack),
+        .SONG_UI(song_ui),.SONG_ROLL(song_roll),.SONG_UI_TOGGLE(song_ui_toggle),.SONG_UI_ACK(song_ui_ack),
         .COMP_AMP   (comp_amp),
+        .SCOPE_CLK(scope_clk),
         .SCOPE_SMP  (scope_smp),
         .SCOPE_TOG  (scope_tog),
         .SCOPE_TRG  (scope_trg)
     );
 
     // ══════════════════════════════════════════════════════════════
-    //  HDMI 三页面 UI（自带 720p PLL，独立 clk_p 域）
+    //  HDMI 三页面 UI（自带 1080p PLL，独立 clk_p 域）
     //
     //  ★ 用 RESET_n 直接复位：hdmi_ui3_top 内部已有「PLL 锁定后才放开」
     //    的 4 拍上电计数器（por），不需要外层再加同步器。
@@ -151,8 +154,9 @@ module piano64_top #(
         .BANDS        (spec_bands),
         .BANDS_TICK   (spec_tick),
         .UI_INFO      (ui_info),
-        .SONG_UI(song_ui),.SONG_UI_TOGGLE(song_ui_toggle),.SONG_UI_ACK(song_ui_ack),
+        .SONG_UI(song_ui),.SONG_ROLL(song_roll),.SONG_UI_TOGGLE(song_ui_toggle),.SONG_UI_ACK(song_ui_ack),
         .COMP_AMP     (comp_amp),
+        .CLK_SCOPE(scope_clk),
         .SCOPE_SMP    (scope_smp),
         .SCOPE_TOG    (scope_tog),
         .SCOPE_TRG    (scope_trg),
