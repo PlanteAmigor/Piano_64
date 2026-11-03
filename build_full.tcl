@@ -107,9 +107,8 @@ set_option -use_cpu_as_gpio  1
 set_option -use_sspi_as_gpio 1
 set_option -use_mspi_as_gpio 1
 set_option -verilog_std sysv2017
-# ★ 布局/布线档位（0/1/2，越大越费时）
-#   实测：2/2 → 0 违例（好解）；1/1 → 413 条违例（差解）。固定用 2/2。
-set_option -place_option 2
+# Layout/routing algorithms; validate global setup and hold after every build.
+set_option -place_option 3
 set_option -route_option 2
 
 run all
