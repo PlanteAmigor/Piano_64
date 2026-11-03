@@ -62,6 +62,10 @@ module suona_dma #(
     input  wire [255:0] app_rd_data
 );
 
+    // Local reset register removes the DDR calibration fanout from every
+    // captured beat bit; transfer requests start only after reset releases.
+    reg local_rst_n /* synthesis syn_preserve=1 */ =1'b0;
+    always @(posedge clk)local_rst_n<=rst_n;
     assign app_cmd = 3'b001;        // 只读
 
     // ── 描述符寄存器 ────────────────────────────────────────────────
@@ -140,6 +144,17 @@ module suona_dma #(
     reg [3:0]  st;
     reg [1:0]  desc_cnt;
     reg [28:0] cmd_addr;
+    wire [28:0] cmd_addr_inc /* synthesis syn_keep=1 */;
+    wire [3:0] cmd_addr_full /* synthesis syn_keep=1 */;
+    assign cmd_addr_full[0]=&cmd_addr[9:3];
+    assign cmd_addr_full[1]=&cmd_addr[17:10];
+    assign cmd_addr_full[2]=&cmd_addr[25:18];
+    assign cmd_addr_full[3]=&cmd_addr[28:26];
+    assign cmd_addr_inc[2:0]=cmd_addr[2:0];
+    assign cmd_addr_inc[9:3]=cmd_addr[9:3]+7'd1;
+    assign cmd_addr_inc[17:10]=cmd_addr[17:10]+{7'd0,cmd_addr_full[0]};
+    assign cmd_addr_inc[25:18]=cmd_addr[25:18]+{7'd0,(&cmd_addr_full[1:0])};
+    assign cmd_addr_inc[28:26]=cmd_addr[28:26]+{2'd0,(&cmd_addr_full[2:0])};
     reg        en_r;
     reg        st_prev;                 // start 的上一拍（边沿检测）
     wire       start_p = start ^ st_prev;
@@ -154,7 +169,7 @@ module suona_dma #(
     assign app_addr = cmd_addr;
 
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (!local_rst_n) begin
             st <= S_IDLE; busy <= 1'b0; done <= 1'b0;
             ab_we <= 0; bc_we <= 0; pi_we <= 0;
             ee_we <= 0; eo_we <= 0; pe_we <= 0; po_we <= 0; ph_we <= 0;
@@ -201,7 +216,7 @@ module suona_dma #(
                         d_eo   <= app_rd_data[191:160];
                         d_elen <= app_rd_data[223:192];
                         desc_cnt <= 2'd1;
-                        cmd_addr <= cmd_addr + 29'd8;
+                        cmd_addr <= cmd_addr_inc;
                         st <= S_DESC;
                     end
                     else begin
@@ -301,7 +316,7 @@ module suona_dma #(
                     else if (beat_cnt + 6'd1 >= s_per) begin
                         // 本 beat 用完 → 取下一拍
                         beat_cnt <= 6'd0;
-                        cmd_addr <= cmd_addr + 29'd8;
+                        cmd_addr <= cmd_addr_inc;
                         st       <= S_CMD;
                     end
                     else begin

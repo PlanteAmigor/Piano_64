@@ -91,7 +91,17 @@ module fat32_song_store #(parameter integer CLK_HZ=50000000,TIMEOUT_MS=3800)(
  reg [1:0] fsi_copy;
  reg [31:0] fsi_lba;
  wire [31:0] cluster_lba=data_start+((root_cluster-2)<<spc_shift)+root_sector;
- wire [31:0] data_lba=data_start+((allocated[data_cluster_index]-2)<<spc_shift)+data_sector_index;
+ // Allocation indices are fixed throughout each 512-byte fill. Pipeline
+ // their address arithmetic before issuing the completed sector.
+ reg [31:0] data_cluster_q,extension_cluster_q,data_offset_q,extension_offset_q;
+ reg [31:0] data_base_q,extension_base_q,data_lba,extension_lba;
+ always @(posedge clk)begin
+  data_cluster_q<=allocated[data_cluster_index];extension_cluster_q<=allocated[needed];
+  data_offset_q<=(data_cluster_q-32'd2)<<spc_shift;
+  extension_offset_q<=(extension_cluster_q-32'd2)<<spc_shift;
+  data_base_q<=data_start+data_offset_q;extension_base_q<=data_start+extension_offset_q;
+  data_lba<=data_base_q+data_sector_index;extension_lba<=extension_base_q+zero_sector;
+ end
  wire [31:0] read_fat_base=fat_start+(active_fat==1?fatsz:0);
  wire [31:0] patch_fat_base=fat_start+((mirrored?fat_copy:active_fat)==1?fatsz:0);
  wire [6:0] entry_id=(entry[4*8+:8]-8'd48)*7'd10+(entry[5*8+:8]-8'd48);
@@ -251,8 +261,8 @@ module fat32_song_store #(parameter integer CLK_HZ=50000000,TIMEOUT_MS=3800)(
     ROOT_CLEAR:begin
      buffer_we<=1;buffer_wa<=fill_index;buffer_wd<=0;
      if(fill_index==511)begin
-      slot_lba<=data_start+((allocated[needed]-2)<<spc_shift);slot_offset<=0;
-      write_sector(data_start+((allocated[needed]-2)<<spc_shift)+zero_sector,ROOT_ZERO_NEXT);
+      slot_lba<=extension_base_q;slot_offset<=0;
+      write_sector(extension_lba,ROOT_ZERO_NEXT);
      end else fill_index<=fill_index+1'b1;
     end
     ROOT_ZERO_NEXT:begin

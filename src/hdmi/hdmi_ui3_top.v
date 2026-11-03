@@ -458,11 +458,19 @@ endcase end endfunction
     wire [11:0] band_origin=page_show==1?96:64;
     wire [11:0] band_pitch=page_show==1?40:32;
 `ifdef UI_VIDEO_720P
-    // A 720p pixel advances one or two logical pixels. Derive the test bars
-    // from coordinates so their 40-pixel logical spacing cannot drift.
-    wire [11:0] test_band_x=px-12'd96;
-    wire [5:0] test_band_column=test_band_x/12'd40;
-    wire [5:0] test_band_phase=test_band_x%12'd40;
+    // A 720p pixel advances one or two logical pixels. Track that stride
+    // in a six-bit phase counter, avoiding constant division in pixel paths.
+    reg [5:0] test_band_column,test_band_phase;
+    reg pixel_odd;
+    wire [6:0] test_phase_next={1'b0,test_band_phase}+(pixel_odd?7'd2:7'd1);
+    always @(posedge clk_p)begin
+        pixel_odd<=physical_x[0];
+        if(!rst_n || px<96)begin test_band_column<=0;test_band_phase<=0;end
+        else if(px<1376)begin
+            if(test_phase_next>=40)begin test_band_phase<=test_phase_next-7'd40;test_band_column<=test_band_column+1'b1;end
+            else test_band_phase<=test_phase_next[5:0];
+        end
+    end
 `else
     reg [5:0] test_band_column,test_band_phase;
     always @(posedge clk_p)begin

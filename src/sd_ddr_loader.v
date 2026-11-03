@@ -452,7 +452,8 @@ localparam [3:0]
     //   用来区分三件事：① 串口/引脚/clk_x1 频率 ② DDR 校准过没过 ③ 加载逻辑
     //   等等，DDR 校准没过时它会每 0.5 s 重发一次，方便反复观察。
     S_BANNER = 4'd7,
-    S_BWATT  = 4'd8;
+    S_BWATT  = 4'd8,
+    S_V_INIT = 4'd9;
 
 reg [255:0] wbuf;
 reg [4:0]   bidx;
@@ -536,6 +537,20 @@ reg        end_seen, end_prev;
 reg [1:0]  end_cnt;             // end_tog 边沿计数：1=列目录完  2=读完
 reg [31:0] drain;
 reg [31:0] wcnt, rcnt;
+wire [31:0] wcnt_inc /* synthesis syn_keep=1 */;
+wire [31:0] cnt_inc /* synthesis syn_keep=1 */;
+wire [3:0] wcnt_full /* synthesis syn_keep=1 */;
+wire [3:0] cnt_full /* synthesis syn_keep=1 */;
+generate for(genvar vc=0;vc<4;vc=vc+1)begin:g_other_verify_counters
+    assign wcnt_full[vc]=&wcnt[vc*8+:8];assign cnt_full[vc]=&cnt[vc*8+:8];
+    if(vc==0)begin
+        assign wcnt_inc[vc*8+:8]=wcnt[vc*8+:8]+8'd1;
+        assign cnt_inc[vc*8+:8]=cnt[vc*8+:8]+8'd1;
+    end else begin
+        assign wcnt_inc[vc*8+:8]=wcnt[vc*8+:8]+{7'd0,(&wcnt_full[vc-1:0])};
+        assign cnt_inc[vc*8+:8]=cnt[vc*8+:8]+{7'd0,(&cnt_full[vc-1:0])};
+    end
+end endgenerate
 // ★ 倒计数：把「wcnt != nwords」「rcnt == nwords」这两个 32 位比较从 CE 路径上拿掉。
 //   nwords 是 32 位寄存器，wcnt 每次发出读命令都变，这个比较直接驱动
 //   大量 CE，合并 HDMI 后实测 DATA DELAY 11.25 ns（约束 10 ns），
@@ -883,7 +898,7 @@ always @(posedge clk100) begin
         // 持续出队 → 拼字 → 写 DDR
         S_READ: begin
             stage <= S_READ;
-            cnt   <= cnt + 32'd1;
+            cnt   <= cnt_inc;
 
             if (rinc_d) begin
                 nbytes <= nbytes + 32'd1;
@@ -919,15 +934,13 @@ always @(posedge clk100) begin
                 waddr    <= waddr + (29'd1 << ADDR_SHIFT);
                 enq_req  <= 1'b1;
             end
-            else if (!q0_v && !q1_v && !wr_cmd_req && !wdf_valid) begin
-                cnt   <= 32'd0;
-                wcnt  <= 32'd0;
-                rcnt  <= 32'd0;
-                rem_w <= nwords;        // ★ 倒计数初值
-                rem_r <= nwords;
-                chk_v <= 32'd0;
-                st    <= S_V_RD;
-            end
+            else if (!q0_v && !q1_v && !wr_cmd_req && !wdf_valid && !enq_req && !queue_pop)
+                st<=S_V_INIT;
+        end
+        // The completed write/drain decision never gates 32-bit counter loads.
+        S_V_INIT:begin
+            cnt<=0;wcnt<=0;rcnt<=0;rem_w<=nwords;rem_r<=nwords;chk_v<=0;
+            st<=S_V_RD;
         end
 
         // 读回校验：发命令 + 收数据
@@ -935,7 +948,7 @@ always @(posedge clk100) begin
         //    实测 SETUP = −0.144 ns。改用 6 位 ostd 计数器，且每 4 拍才发一次。
         S_V_RD: begin
             stage <= S_V_RD;
-            cnt   <= cnt + 32'd1;
+            cnt   <= cnt_inc;
             vph   <= vph + 2'd1;
 
             if (nwords == 32'd0) begin
@@ -951,7 +964,7 @@ always @(posedge clk100) begin
                     if (issue_nxt) begin
                         rd_cmd_req  <= 1'b1;
                         rd_cmd_addr <= wcnt[28:0] << ADDR_SHIFT;   // 常量移位，避免综合出真乘法器
-                        wcnt        <= wcnt + 32'd1;
+                        wcnt        <= wcnt_inc;
                         rem_w       <= rem_w_dec;
                         ostd        <= ostd + 6'd1;
                     end

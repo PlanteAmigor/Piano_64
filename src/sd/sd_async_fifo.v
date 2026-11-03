@@ -50,8 +50,8 @@ reg [7:0]  mem [0:DEPTH-1];
 
 reg [AW:0] wbin,  wgray;
 reg [AW:0] rbin,  rgray;
-reg [AW:0] rgray_w1, rgray_w2;               // 读指针同步到写域
-reg [AW:0] wgray_r1, wgray_r2;               // 写指针同步到读域
+reg [AW:0] rgray_w1 /* synthesis syn_preserve=1 */, rgray_w2 /* synthesis syn_preserve=1 */;               // 读指针同步到写域
+reg [AW:0] wgray_r1 /* synthesis syn_preserve=1 */, wgray_r2 /* synthesis syn_preserve=1 */;               // 写指针同步到读域
 
 wire [AW:0] wbin_nxt  = wbin + {{AW{1'b0}}, (win & ~wfull)};
 wire [AW:0] wgray_nxt = (wbin_nxt >> 1) ^ wbin_nxt;

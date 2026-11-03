@@ -129,7 +129,9 @@ module song_system #(
     end
     reg [3:0] scan_state;
     reg publish_preview;
-    reg [15:0] scan_index;
+    reg [10:0] scan_index;
+    reg [10:0] last_preview_index;
+    always @(posedge clk)last_preview_index<=count[10:0]-11'd1;
     reg [5:0] sprite_count;
     reg [1023:0] sprite_work;
     reg signed [32:0] scan_time, delta_start, delta_end;
@@ -189,7 +191,7 @@ module song_system #(
                 end
                 scan_state<=7;
             end
-            7:if(scan_index+1>=count || sprite_count==32)begin publish_preview<=1;scan_state<=0;end
+            7:if(scan_index>=last_preview_index || sprite_count==32)begin publish_preview<=1;scan_state<=0;end
               else begin scan_index<=scan_index+1'b1;preview_addr<=preview_addr+1'b1;scan_state<=1;end
             default:scan_state<=0;
         endcase

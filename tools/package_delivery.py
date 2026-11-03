@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package only a source-matched, timing-clean, SRAM-programmed delivery."""
+"""Package only a source-matched, timing-clean, programmed delivery."""
 from pathlib import Path
 import argparse
 import hashlib
@@ -25,6 +25,10 @@ def main():
     mode=manifest.get('video_mode','1080p60')
     resolution='1280×720' if mode=='720p60' else '1920×1080'
     board=json.loads((ROOT/'work/ui1080/board_delivery.json').read_text())
+    persistent=board.get('mode')=='flash'
+    programming='Flash 固化并读回校验' if persistent else 'SRAM 下载'
+    retention='Flash 版本可在重新上电后启动。' if persistent else 'SRAM 版本掉电后需重新下载。'
+    assert not persistent or board.get('verified') is True
     assert board['exit_code']==0 and board['fs_sha256']==manifest['bitstreams']['piano64_full.fs']
     assert 'All requested regressions passed.' in args.checks.read_text()
     for line in (ROOT/'work/song_checks/source_sha256.txt').read_text().splitlines():
@@ -73,7 +77,7 @@ def main():
     (folder/'版本.json').write_text(json.dumps({'commit':commit,'build':manifest,'board':board},ensure_ascii=False,indent=2)+'\n')
     (folder/'使用说明.md').write_text(f'''# 蓝牙自动存谱 · 多乐器教学 · {mode}
 
-版本：`{commit[:7]}`。已通过完整仿真、全局 setup/hold 零违例检查，并使用 openFPGALoader 完成 SRAM 下载。SRAM 版本掉电后需重新下载。本机没有视频采集或声音回录，板上观感与试听请按下面步骤检查。
+版本：`{commit[:7]}`。已通过完整仿真、全局 setup/hold 零违例检查，并使用 openFPGALoader 完成 {programming}。{retention}本机没有视频采集或声音回录，板上观感与试听请按下面步骤检查。
 
 ## 蓝牙收谱
 
@@ -105,7 +109,7 @@ SONG05 是约 34 秒的多乐器《小星星》：笛子→古筝→唢呐→钢
 
 切换视频目标：`python3 tools/set_video_mode.py 720p` 或 `python3 tools/set_video_mode.py 1080p`，然后重新构建。不能直接烧录与当前源码不匹配的旧固件。
 
-临时下载：`./flash.sh --ftdi-serial 2025030317 --write-sram --quiet`。已交付固件位于 `piano64_3/impl/pnr/piano64_full.fs`。构建、时序、测试、烧录和源码指纹记录均随包提供。
+Flash 固化并读回校验：`./flash.sh --ftdi-serial 2025030317 --write-flash --verify --quiet`。临时下载：`./flash.sh --ftdi-serial 2025030317 --write-sram --quiet`。已交付固件位于 `piano64_3/impl/pnr/piano64_full.fs`。构建、时序、测试、烧录和源码指纹记录均随包提供。
 
 固件 SHA-256：`{manifest['bitstreams']['piano64_full.fs']}`。
 ''')
