@@ -56,6 +56,7 @@ module add_engine_harm #(
     input  wire                    sustain,        // ★ 1 = 延音：松键后逐渐消失
     // ── 光学前端（2026-11-02 新增）──────────────────────────────
     input  wire [15:0]             bend_q14,       // Q2.14 音高比，16384 = 1.0（不弯）
+    input  wire                    trem_en,        // G5 指颤：1 = 叠加 6 Hz ±200 音分
     input  wire                    opt_en,         // 1 = 用光学力度
     input  wire [7:0]              opt_vel,        // 0..255
     input  wire                    sample_tick,
@@ -428,8 +429,51 @@ module add_engine_harm #(
     wire signed [15:0] dphi_s = dphi[15:0];                 // 解成有符号小量
     // 音高比下限保护：万一 bend_q14 变成 0（未驱动），相位会冻死成直流
     wire        [15:0] ratio  = (bend_q14 < 16'd2048) ? 16'd2048 : bend_q14;
-    wire signed [31:0] dphi_r = dphi_s * $signed({1'b0, ratio});
-    wire signed [19:0] dphi_s2 = (dphi_r + 32'sd8192) >>> 14;   // 带四舍五入
+
+    // ── G5 指颤 LFO（音频速率，6 Hz 三角波，峰值 ±2048/16384 = ±12.5% ≈ ±203 音分）──
+    //   ★ 为什么放在引擎里而不是控制器里：控制器只有 83.3 Hz 帧率，
+    //     6 Hz 一个周期只有 14 个台阶 → 音高一级一级跳（拉链噪声）。
+    //     这里跑在音频采样率上，完全平滑。
+    //   ★ 为什么用三角波不用正弦：只需要符号交替，三角波零延时、不要查表，
+    //     且 6 Hz 下三角/正弦听感差别很小。
+    localparam [23:0] LFO_INC = 24'd2061;      // 6 Hz × 2^24 / 48828.125
+    reg [23:0] lfo_ph;
+    always @(posedge clk) begin
+        if (!rst_n)           lfo_ph <= 24'd0;
+        else if (sample_tick) lfo_ph <= lfo_ph + LFO_INC;
+    end
+    // 三角波：0 → 2^23-1 → 0，中心 2^22
+    wire [23:0]        lfo_tri = lfo_ph[23] ? ~{1'b0, lfo_ph[22:0]} : {1'b0, lfo_ph[22:0]};
+    wire signed [24:0] lfo_c   = $signed({1'b0, lfo_tri}) - 25'sd4194304;
+    wire signed [13:0] trem_a  = lfo_c[24:11];                 // ±2048
+
+    // ★★ 流水线 1：LFO 输出打一拍。
+    //    否则 trem_en（来自 position_control 的 xa_gap_l 比较链）和三角波
+    //    会一路组合进 33 位乘法 → 实测 22.5 ns / 62 条违例。
+    //    LFO 本身是音频速率，晚一拍完全听不出来。
+    reg signed [15:0] trem_off;
+    always @(posedge clk) begin
+        if (!rst_n) trem_off <= 16'sd0;
+        else        trem_off <= trem_en ? {{2{trem_a[13]}}, trem_a} : 16'sd0;
+    end
+
+    // 比值叠加（带下限保护，不能让总比变 0/负）
+    //  ★ 平均音高补偿：±12.5% 的频率摆幅在【音分】上不对称
+    //     （+0.125 → +204 音分，−0.125 → −231 音分），平均会低 13.6 音分。
+    //     乘一个 1+1/128 ≈ 1.0079 把几何平均拉回 1（1/√(1−a²)，a=0.125）。
+    wire signed [16:0] trem_bias = trem_en ? $signed({8'd0, ratio[15:7]}) : 17'sd0;
+    wire signed [16:0] ratio_eff = $signed({1'b0, ratio}) + trem_off + trem_bias;
+    wire signed [16:0] ratio_use = (ratio_eff < 17'sd1024) ? 17'sd1024 : ratio_eff;
+
+    // ★★ 流水线 2：总比值再打一拍，把 33 位乘法单独留在后一级
+    reg signed [16:0] ratio_q;
+    always @(posedge clk) begin
+        if (!rst_n) ratio_q <= 17'sd16384;
+        else        ratio_q <= ratio_use;
+    end
+
+    wire signed [32:0] dphi_r = dphi_s * ratio_q;
+    wire signed [19:0] dphi_s2 = (dphi_r + 33'sd8192) >>> 14;   // 带四舍五入
 
     // ════════════════════════════════════════════════════════════════
     //  地址（组合）—— 用当前拍要发的声部 hv

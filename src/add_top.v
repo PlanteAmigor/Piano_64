@@ -763,6 +763,7 @@ module add_top #(
         .sustain    (fx_sus_on),
         // ★ 光学前端（步骤 1：先接常量，保证与改动前逐位等价）
         .bend_q14   (opt_bend_q14),
+        .trem_en    (opt_trem_en && is_suona),
         .opt_en     (opt_en),
         .opt_vel    (opt_vel),
         .sample_tick(tick),
@@ -1688,6 +1689,7 @@ module add_top #(
 
     wire signed [15:0] opt_bend_cent;
     wire        [15:0] opt_bend_q14_ctl;
+    wire               opt_trem_en;
 
     position_control u_opt_ctl (
         .clk         (clk_sys),
@@ -1698,7 +1700,8 @@ module add_top #(
         .rho_dc      (opt_rho_dc),
         .bend        (opt_bend_cent),
         .bend_q14    (opt_bend_q14_ctl),  // ★ 2^(cent/1200) 查表得到，不再用线性近似
-        .vel         (opt_vel)
+        .vel         (opt_vel),
+        .trem_en     (opt_trem_en)
     );
 
     // ★★★ 临时诊断（DIAG_FORCE_BEND=1）：把音高比钉死成常量，绕开控制器。

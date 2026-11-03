@@ -37,7 +37,8 @@ module position_control (
 
     output reg  signed [15:0] bend,     // 音分，±700
     output wire        [7:0]  vel,      // 0..255
-    output wire        [15:0] bend_q14  // 音高比 Q2.14（16384 = 不弯）
+    output wire        [15:0] bend_q14, // 音高比 Q2.14（16384 = 不弯）
+    output wire               trem_en   // G5 指颤：检测到左右大幅快速摇手
 );
 
     localparam signed [16:0] X_CENTER = 17'sd1894;   // 7.40 cm
@@ -79,9 +80,56 @@ module position_control (
         else if (frame_valid && x_valid) x_last <= x_q8;
     end
 
+    //======================================================================
+    //  G5 指颤检测：左右大幅快速摇手
+    //
+    //  ★ 必须从【原始】质心 x_last 取抖动，不能从 x_hold 取：
+    //     x_hold 已被 96 ms 低通（截止 1.7 Hz），6 Hz 摇手会被衰减 3.6 倍。
+    //  ★ x_dc 用更慢的低通（τ = 32 帧 ≈ 384 ms，截止 0.41 Hz）得到
+    //     “手停在哪里”，x_ac = x_last − x_dc 就是摇动分量。
+    //  ★ 判据用【过零间隔】：6 Hz 摇手相邻过零约 7 帧。
+    //     间隔落在 5~20 帧（2.1~8.3 Hz）且幅度 > 1.5 cm 才算。
+    //     单向滑音只会产生一次过零，间隔远大于 20 帧 → 不会误触发。
+    //======================================================================
+    reg [17:0] xd_acc;                  // 32 × x_dc
+    reg        xa_prev;
+    reg [5:0]  xa_gap;                  // 距上次过零的帧数（63 = 很久没动）
+    reg [5:0]  xa_gap_l;                // 上一次的过零间隔
+
+    wire [15:0]        x_dc = xd_acc[17:5];
+    wire signed [17:0] xac  = $signed({2'b00, x_last}) - $signed({2'b00, x_dc});
+    wire               xac_big = (xac > 18'sd384) || (xac < -18'sd384);   // 1.5 cm
+    wire               xa_sgn  = xac[17];
+
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            xd_acc   <= (18'd1894 << 5);
+            xa_prev  <= 1'b0;
+            xa_gap   <= 6'd63;
+            xa_gap_l <= 6'd63;
+        end else if (frame_valid) begin
+            xd_acc <= xd_acc - (xd_acc >> 5) + {2'b00, x_last};
+            if (xa_gap != 6'd63) xa_gap <= xa_gap + 6'd1;
+            if (xac_big && (xa_sgn != xa_prev)) begin
+                xa_prev  <= xa_sgn;
+                xa_gap_l <= xa_gap;
+                xa_gap   <= 6'd0;
+            end
+        end
+    end
+
+    // 两次过零间隔在 5~20 帧，且下一次过零没迟到 → 正在摇
+    // ★ 这里只能 assign，不能再写 `wire trem_en = ...`：
+    //   端口表里已经声明过这个 net，重复声明在 Gowin 里只给 WARN
+    //   然后当成【无驱动】处理（EX3671/EX1998），iverilog 直接报错。
+    assign trem_en = (xa_gap_l >= 6'd5) && (xa_gap_l <= 6'd20) && (xa_gap <= 6'd24);
+
     always @(posedge clk) begin
         if (!rst_n)         x_acc <= (18'd1894 << 3);
-        else if (frame_valid)
+        // ★ 指颤期间冻结基准音高：摇手本身会把 x 拉来拉去，
+        //   不冻结的话基准音高会跟着摇（±3 cm 摇幅 = ±400 音分），
+        //   和引擎里的 ±200 音分颤音叠在一起 → 又乱又过头。
+        else if (frame_valid && !trem_en)
             x_acc <= x_acc - (x_acc >> 3) + {2'b00, x_last};
     end
 
