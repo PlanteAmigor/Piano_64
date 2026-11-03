@@ -528,11 +528,21 @@ reg [31:0] wcnt, rcnt;
 //   SETUP −1.532 ns。改成 rem_w != 0 / rem_r == 0 后只剩一个 32 输入
 //   归约或，深度从「32 位减法/比较器」降到 3 级 LUT。
 reg [31:0] rem_w, rem_r;        // 还没发的读命令数 / 还没收回的数据数
-wire [31:0] rem_r_dec;
-assign rem_r_dec[7:0]=rem_r[7:0]-8'd1;
+// Keep the byte predicates as physical nets: without these boundaries the
+// mapper refactors saturation and prefix borrows into a serial LUT chain.
+wire [3:0] rem_r_byte_zero /* synthesis syn_keep=1 */;
+wire [3:0] rem_r_borrow /* synthesis syn_keep=1 */;
+wire rem_r_zero /* synthesis syn_keep=1 */;
+wire [31:0] rem_r_dec /* synthesis syn_keep=1 */;
+assign rem_r_zero=&rem_r_byte_zero;
+assign rem_r_borrow[0]=1'b1;
+assign rem_r_borrow[1]=rem_r_byte_zero[0];
+assign rem_r_borrow[2]=rem_r_byte_zero[0]&rem_r_byte_zero[1];
+assign rem_r_borrow[3]=rem_r_byte_zero[0]&rem_r_byte_zero[1]&rem_r_byte_zero[2];
 genvar rb;
-generate for(rb=1;rb<4;rb=rb+1)begin:g_read_remaining
-    assign rem_r_dec[rb*8+:8]=rem_r[rb*8+:8]-(rem_r[rb*8-1:0]==0);
+generate for(rb=0;rb<4;rb=rb+1)begin:g_read_remaining
+    assign rem_r_byte_zero[rb]=~|rem_r[rb*8+:8];
+    assign rem_r_dec[rb*8+:8]=rem_r[rb*8+:8]-{7'd0,rem_r_borrow[rb]};
 end endgenerate
 reg [5:0]  ostd;                // 已发未回的读命令数（代替 wcnt-rcnt 的 32 位减法）
 
@@ -610,7 +620,7 @@ always @(posedge clk100) begin
         chk_half[0]<=chk_pair[0]+chk_pair[1];chk_half[1]<=chk_pair[2]+chk_pair[3];
         chk_word<=chk_half[0]+chk_half[1];
         chk_valid<={chk_valid[1:0],rdv && rcnt!=0 && st==S_V_RD};
-        verify_drained<=st==S_V_RD && rcnt!=0 && rem_r==0 && !rd_cmd_req && !rdv && chk_valid==0;
+        verify_drained<=st==S_V_RD && rcnt!=0 && rem_r_zero && !rd_cmd_req && !rdv && chk_valid==0;
         verify_match<=(chk_v==hdr_chk) && (hdr_total==nwords);
         verify_timeout<=cnt>=32'd400_000_000;
     end
@@ -759,7 +769,7 @@ always @(posedge clk100) begin
                 dbg_d1 <= rd_v[63:32];
             end
             rcnt <= rcnt + 32'd1;
-            if (rem_r != 32'd0) rem_r <= rem_r_dec;   // Parallel byte borrows; retain saturation.
+            if (!rem_r_zero) rem_r <= rem_r_dec;
             if (ostd != 6'd0) ostd <= ostd - 6'd1;
         end
 

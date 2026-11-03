@@ -44,10 +44,10 @@ module harm_buf #(
     output reg  [31:0]           ph_d,
 
     input  wire [13:0]           u_a,
-    output reg  [31:0]           u_d,
+    output wire [31:0]           u_d,
 
     input  wire [9:0]            sn_a,
-    output reg  [31:0]           sn_d,
+    output wire [31:0]           sn_d,
 
     input  wire [7:0]            inf_a,
     output reg  [31:0]           inf_d,
@@ -91,8 +91,22 @@ module harm_buf #(
     reg [31:0] m_ph [0:PHI_DEPTH-1];
 
     // ── 3 个常驻表 ─────────────────────────────────────────────────
-    reg [31:0] m_u   [0:16383];
-    reg [31:0] m_sn  [0:1023];
+    // The original 16384-word curve becomes constant at address 9156.
+    // Separate power-of-two banks avoid rounding the live prefix back to
+    // 16384 words. Both synchronous reads and the selector take one cycle,
+    // preserving the original interpolation interface exactly.
+    reg [31:0] m_u_head [0:8191];
+    reg [31:0] m_u_tail [0:1023];
+    reg [31:0] u_head_q,u_tail_q;
+    reg u_bank_q,u_constant_q;
+    always @(posedge clk)begin
+        u_head_q<=m_u_head[u_a[12:0]];
+        u_tail_q<=m_u_tail[u_a[9:0]];
+        u_bank_q<=u_a[13];
+        u_constant_q<=u_a>=14'd9156;
+    end
+    assign u_d=u_constant_q?32'hFFFFFFFF:(u_bank_q?u_tail_q:u_head_q);
+    add_sine_lut u_sine(.clk(clk),.addr(sn_a),.dout(sn_d));
     // ★ info 表扩容到 224 词：
     //    0   .. 111  唢呐 28 音 × 4 词（原表刚好用满）
     //    112 .. 211  笛子 25 音 × 4 词
@@ -101,8 +115,8 @@ module harm_buf #(
     reg [31:0] m_inf [0:223];
 
     initial begin
-        $readmemh("harm_u.hex",     m_u);
-        $readmemh("add_sine.hex",   m_sn);
+        $readmemh("harm_u_head.hex",m_u_head);
+        $readmemh("harm_u_tail.hex",m_u_tail);
         $readmemh("suona_info.hex", m_inf);            // 写到 0..111
         $readmemh("dizi_info.hex",  m_inf, 112, 211);  // 写到 112..211
     end
@@ -129,8 +143,6 @@ module harm_buf #(
         pe_d  <= m_pe[pe_a[11:0]];
         po_d  <= m_po[po_a[11:0]];
         ph_d  <= m_ph[ph_a[9:0]];
-        u_d   <= m_u[u_a];
-        sn_d  <= m_sn[sn_a];
         inf_d <= m_inf[inf_a[7:0]];
     end
 

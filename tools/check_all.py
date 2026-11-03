@@ -94,6 +94,7 @@ def main():
         parameters=['-Ptb_song_sd.BACKPRESSURE=1','-Ptb_song_sd.PIPELINE=1'])
     results+=bench('tb_soft_limiter',['sim/tb_soft_limiter.v','src/audio_soft_limiter.v'])
     results+=bench('tb_component_bars',['sim/tb_component_bars.v','src/ui_component_bars.v'])
+    results+=bench('tb_sd_remaining',['sim/tb_sd_remaining.v','sim/sd_stub_songs.v','src/sd_ddr_loader.v','src/sd/sd_async_fifo.v','src/sd/uart_tx.v'])
     results+=bench('tb_sd_longname',['sim/tb_sd_longname.v','src/sd/sd_file_list_reader.v','src/sd/sd_reader.sv','src/sd/sdcmd_ctrl.sv'])
     # Run the real FAT parser, SD command engine and a read-only SDHC card model.
     run([sys.executable,ROOT/'tools/make_test_card.py'])
@@ -107,7 +108,9 @@ def main():
     results+=bench('tb_modal_multi',['sim/tb_modal_multi.v',*['src/'+x+'.v' for x in engine]])
     results+=bench('tb_audio_controls',['sim/tb_audio_controls.v',*['src/'+x+'.v' for x in engine]])
     results+=bench('tb_guzheng_vibrato',['sim/tb_guzheng_vibrato.v',*['src/'+x+'.v' for x in engine]])
-    results+=bench('tb_harm_hold',['sim/tb_harm_hold.v','src/add_engine_harm.v','src/harm_buf.v','src/suona_dma.v','src/mix_sum.v'])
+    results+=bench('tb_harm_hold',['sim/tb_harm_hold.v','src/add_engine_harm.v','src/harm_buf.v','src/add_sine_lut.v','src/suona_dma.v','src/mix_sum.v'])
+    results+=bench('tb_harm_rom_compact',['sim/tb_harm_rom_compact.v','src/harm_buf.v','src/add_sine_lut.v'])
+    results+=bench('tb_sine_quarter',['sim/tb_sine_quarter.v','src/add_sine_lut.v'])
     # Existing optical gesture regression returns zero even on failed assertions:
     # inspect its explicit failure count instead of trusting the process status.
     results+=bench('tb_art',['tb_art.v','src/optical/position_control.v'])

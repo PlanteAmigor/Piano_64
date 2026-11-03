@@ -215,10 +215,16 @@ module hdmi_ui3_top (
     // Keep local coordinate registers for four descriptors per bank. Shared
     // low coordinate bits otherwise drive every wide comparison across the
     // device and routing, rather than arithmetic, dominates the pixel path.
-    (* syn_preserve=1, syn_keep=1 *) reg [11:0] roll_x[0:7],roll_y[0:7];
-    always @(posedge clk_p)for(integer bank=0;bank<8;bank=bank+1)begin
-        roll_x[bank]<=hcnt-H_START;roll_y[bank]<=vcnt-V_START;
-    end
+    wire [11:0] roll_x[0:7],roll_y[0:7];
+    generate for(genvar bank=0;bank<8;bank=bank+1)begin:g_roll_coord
+        reg [11:0] x_q /* synthesis syn_preserve=1 */;
+        reg [11:0] y_q /* synthesis syn_preserve=1 */;
+        wire [11:0] x_keep /* synthesis syn_keep=1 */;
+        wire [11:0] y_keep /* synthesis syn_keep=1 */;
+        always @(posedge clk_p)begin x_q<=hcnt-H_START;y_q<=vcnt-V_START;end
+        assign x_keep=x_q;assign y_keep=y_q;
+        assign roll_x[bank]=x_keep;assign roll_y[bank]=y_keep;
+    end endgenerate
     always @(posedge clk_p) begin
         if(!rst_n)begin hcnt<=0;vcnt<=0;end
         else if(hcnt==H_TOTAL-1)begin hcnt<=0;vcnt<=vcnt==V_TOTAL-1?0:vcnt+1'b1;end
@@ -567,10 +573,16 @@ endcase end endfunction
     reg testkey_any,testkey_down,testind_any,testind_down,card_any,card_selected,card_stripe;
     reg [11:0] level_end,progress_end;
     reg [7:0] visible_cards;
-    (* syn_preserve=1, syn_keep=1 *) reg [11:0] bg_x[0:3],bg_y[0:3];
-    always @(posedge clk_p)for(integer bank=0;bank<4;bank=bank+1)begin
-        bg_x[bank]<=x1c;bg_y[bank]<=y1c;
-    end
+    wire [11:0] bg_x[0:3],bg_y[0:3];
+    generate for(genvar bank=0;bank<4;bank=bank+1)begin:g_background_coord
+        reg [11:0] x_q /* synthesis syn_preserve=1 */;
+        reg [11:0] y_q /* synthesis syn_preserve=1 */;
+        wire [11:0] x_keep /* synthesis syn_keep=1 */;
+        wire [11:0] y_keep /* synthesis syn_keep=1 */;
+        always @(posedge clk_p)begin x_q<=x1c;y_q<=y1c;end
+        assign x_keep=x_q;assign y_keep=y_q;
+        assign bg_x[bank]=x_keep;assign bg_y[bank]=y_keep;
+    end endgenerate
     reg [7:0] testkey_rect2,testind_rect2,card_rect2,card_stripe2;
     always @(posedge clk_p)for(integer k=0;k<8;k=k+1)begin
         testkey_rect2[k]<=box(x1c,y1c,1504,304+k*64,1856,352+k*64);

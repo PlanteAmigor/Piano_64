@@ -435,7 +435,7 @@ Logic 20383（15%）、Register 16932（13%）、BSRAM 201（60%）、DSP 89.5�
 
 ```bash
 iverilog -g2012 -DSIM_INIT -o ../.tmp/simpd/tb_harm_hw.vvp -s tb_harm_hw \
-    src/add_engine_harm.v src/harm_buf.v src/suona_dma.v src/mix_sum.v \
+    src/add_engine_harm.v src/harm_buf.v src/add_sine_lut.v src/suona_dma.v src/mix_sum.v \
     sim/tb_harm_hw.v
 vvp ../.tmp/simpd/tb_harm_hw.vvp      # 输出 harm_hw_dump.txt
 ```

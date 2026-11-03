@@ -114,5 +114,7 @@ set_option -verilog_std sysv2017
 # Layout/routing algorithms; validate global setup and hold after every build.
 set_option -place_option 3
 set_option -route_option 2
+set_option -replicate_resources 1
+set_option -route_maxfan 16
 
 run all

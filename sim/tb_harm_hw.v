@@ -7,7 +7,7 @@
 //
 //  跑法（工程根目录）：
 //    iverilog -g2012 -DSIM_INIT -o ../.tmp/simpd/tb_harm_hw.vvp -s tb_harm_hw \
-//        src/add_engine_harm.v src/harm_buf.v src/suona_dma.v src/mix_sum.v \
+//        src/add_engine_harm.v src/harm_buf.v src/add_sine_lut.v src/suona_dma.v src/mix_sum.v \
 //        sim/tb_harm_hw.v
 //    vvp ../.tmp/simpd/tb_harm_hw.vvp
 //==========================================================================
