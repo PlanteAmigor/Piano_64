@@ -1,0 +1,74 @@
+{
+  "source_commit": "4e2fcabb8584ba1adc035e9112602af75872f3c6",
+  "status": "digital_simulation_and_build_passed_sram_programmed_physical_acceptance_pending",
+  "video_mode": "720p60.606",
+  "debounce": {
+    "press_cycles": 25000,
+    "release_cycles": 100000,
+    "press_ms": 0.5,
+    "release_ms": 2
+  },
+  "worst_dac_us": 2791.99,
+  "scenario_count": 18,
+  "full_regression_pass_lines": 67,
+  "build": {
+    "video_mode": "720p60.606",
+    "bitstreams": {
+      "piano64_full.fs": "8b3b77c9fa98dc8adb7044078ee142e154c54b5b85610e27e73ad45b336d56f6",
+      "piano64_full.bin": "e8fabe0ee2f3eb86d0a8f906393b9d6af914b3ff0abaa8b9cadcc77901255898"
+    },
+    "violations": {
+      "setup": 0,
+      "hold": 0
+    },
+    "resources": {
+      "Logic": [
+        56880.0,
+        138240.0
+      ],
+      "Register": [
+        40104.0,
+        139095.0
+      ],
+      "BSRAM": [
+        329.0,
+        340.0
+      ],
+      "DSP": [
+        157.5,
+        298.0
+      ]
+    },
+    "worst_reported_setup_ns": 0.111
+  },
+  "board": {
+    "mode": "sram",
+    "board_serial": "2025030317",
+    "fs_sha256": "8b3b77c9fa98dc8adb7044078ee142e154c54b5b85610e27e73ad45b336d56f6",
+    "video_mode": "720p60.606",
+    "screen_verified": false,
+    "physical_keyboard_verified": false,
+    "flash_changed": false,
+    "exit_code": 0,
+    "command": [
+      "openFPGALoader",
+      "-b",
+      "tangmega138k",
+      "--ftdi-serial",
+      "2025030317",
+      "--write-sram",
+      "--quiet",
+      "/mnt/project/InstruementSound/piano64_3/impl/pnr/piano64_full.fs"
+    ],
+    "uart_bytes": 5672,
+    "uart_preview": "!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n",
+    "uart_active": true,
+    "time": 1793744347.8589194
+  },
+  "limitations": [
+    "数字仿真结果，模拟DAC/功放/扬声器延迟未实测",
+    "音源预先加载且手势已有效",
+    "覆盖0.6ms按下抖动，不能外推到任意持续抖动或任意DDR阻塞",
+    "声学试听与屏幕待用户确认"
+  ]
+}
