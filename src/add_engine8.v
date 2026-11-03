@@ -60,6 +60,8 @@ module add_engine8 #(
     input  wire [NVOICE-1:0]       v_trig,
     input  wire [NVOICE-1:0]       v_gate,
     input  wire [NVOICE*8-1:0]     v_vel,
+    input  wire [15:0]             bend_q14,     // ★ 音高比 Q2.14（16384 = 不弯）
+    input  wire                    vib_en,       // ★ G3 揉弦（古筝），±53 音分 5 Hz
     input  wire                    sustain,      // ★ 延音开关（1 = 松键后继续自然衰减）
     input  wire                    timbre,
     input  wire                    sample_tick,
@@ -79,6 +81,28 @@ module add_engine8 #(
 
     localparam [6:0] P_LO = 21, P_HI = 108, P_BASE = 21;
     localparam [6:0] G_LO = 38, G_HI = 86,  G_BASE = 38;
+
+    // ════════════════════════════════════════════════════════════════
+    //  G3 揉弦 LFO（音频速率，5 Hz 三角波，±512/16384 ≈ ±53 音分）
+    //
+    //  ★ 必须放在【引擎级】而不是每个声部里：古筝是多声部，
+    //    各声部 LFO 相位必须完全一致，否则和弦里每个音揉的相位不同。
+    //  ★ 为什么用音频速率：控制器只有 83.3 Hz 帧率，5 Hz 一个周期
+    //    只有 17 个台阶 → 音高会一级一级跳（拉链噪声）。
+    // ════════════════════════════════════════════════════════════════
+    localparam [23:0] VIB_INC = 24'd1717;      // 5 Hz × 2^24 / 48828.125
+    reg [23:0] vib_ph;
+    always @(posedge clk) begin
+        if (!rst_n)           vib_ph <= 24'd0;
+        else if (sample_tick) vib_ph <= vib_ph + VIB_INC;
+    end
+    wire [23:0]        vib_tri = vib_ph[23] ? ~{1'b0, vib_ph[22:0]} : {1'b0, vib_ph[22:0]};
+    wire signed [24:0] vib_c   = $signed({1'b0, vib_tri}) - 25'sd4194304;
+    wire signed [16:0] vib_off = vib_en ? {{5{vib_c[24]}}, vib_c[24:13]} : 17'sd0;
+
+    // 滑音 + 揉弦合成一个音高比，限幅后分发给所有声部
+    wire signed [16:0] bend_s  = $signed({1'b0, bend_q14}) + vib_off;
+    wire        [15:0] bend_gz = (bend_s < 17'sd2048) ? 16'd2048 : bend_s[15:0];
 
     // ════════════════════════════════════════════════════════════════
     //  音域钳位 → 表内偏移（每声部独立）
@@ -354,6 +378,7 @@ module add_engine8 #(
                 .gate     (v_gate[g]),
                 .sustain  (sustain),
                 .vel_gain (v_vel[g*8 +: 8]),
+                .bend_q14 (bend_gz),            // ★ 滑音 + 揉弦
                 .rd0      (c_d0),
                 .rd1      (c_d1),
                 .rd2      (c_d2),

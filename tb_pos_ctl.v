@@ -65,13 +65,13 @@ initial begin
         $display("    FAIL: 正中应该 bend≈0"); errs = errs + 1;
     end
 
-    // ---- 2. 手在 10 cm ----
+    // ---- 2. 手在 10 cm（dx=666，已扣 384 死区 → 208 音分）----
     frame(16'd2560, 24'sd24000, 1'b1);
-    ratio_expect = 2.0 ** (351.0/1200.0) * 16384.0;
+    ratio_expect = 2.0 ** (208.0/1200.0) * 16384.0;
     $display("[2] x=10.0cm bend=%0d  bend_q14=%0d (期望 %0.0f)  vel=%0d",
              bend, bend_q14, ratio_expect, vel);
-    if (bend < 300 || bend > 400) begin
-        $display("    FAIL: 应该约 +351 音分"); errs = errs + 1;
+    if (bend < 190 || bend > 225) begin
+        $display("    FAIL: 应该约 +208 音分（1.5cm 死区）"); errs = errs + 1;
     end
 
     // ---- 3. 手在 2.2 cm（左端）----
@@ -117,8 +117,8 @@ initial begin
             x_valid     <= ((i % 4) == 1);
         end
     end
-    $display("[7] 稀疏有效帧(25%%) x=10cm bend=%0d（期望 ≈+351）", bend);
-    if (bend < 300 || bend > 400) begin
+    $display("[7] 稀疏有效帧(25%%) x=10cm bend=%0d（期望 ≈+208）", bend);
+    if (bend < 190 || bend > 225) begin
         $display("    FAIL: 稀疏有效帧下弯音没跟上去"); errs = errs + 1;
     end
 

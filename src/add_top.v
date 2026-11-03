@@ -658,6 +658,10 @@ module add_top #(
         .v_trig     (eng_trig),
         .v_gate     (eng_gate),
         .v_vel      (vel_eng),           // ★ 光学力度优先，否则用键盘力度
+        // ★★ 滑音只给古筝（技法表：钢琴没有滑音）。
+        //    二者共用同一个 add_engine8 实例，所以在顶层按音色选。
+        .bend_q14   (is_gz ? opt_bend_q14 : 16'd16384),
+        .vib_en     (opt_vib_en && is_gz),   // G3 揉弦（古筝）
         // ★ 延音：由效果器档位控制（SUSTAIN 单独一档，也可与 DELAY 叠加）——
         //   松键后按每个音自己的自然衰减率继续响，而不是 0.30 s 一刀煞掉。
         .sustain    (fx_sus_on),
@@ -775,6 +779,8 @@ module add_top #(
         // ★ 光学前端（步骤 1：先接常量，保证与改动前逐位等价）
         .bend_q14   (opt_bend_q14),
         .trem_en    (opt_trem_en && is_suona),
+        .vib_pitch  (opt_vib_en && is_suona),   // G3 颤音（音高） 唢呐
+        .vib_am     (opt_vib_en && is_dizi),    // G3 颤音（幅度） 笛子
         .opt_en     (opt_en),
         .opt_vel    (opt_vel),
         .sample_tick(tick),
@@ -1701,6 +1707,7 @@ module add_top #(
     wire signed [15:0] opt_bend_cent;
     wire        [15:0] opt_bend_q14_ctl;
     wire               opt_trem_en;
+    wire               opt_vib_en;
 
     position_control u_opt_ctl (
         .clk         (clk_sys),
@@ -1709,10 +1716,14 @@ module add_top #(
         .x_q8        (opt_x_q8),
         .x_valid     (opt_x_valid),
         .rho_dc      (opt_rho_dc),
+        .rho_ac      (opt_rho_ac),
+        .ac_env      (opt_ac_env),
+        .half_period (opt_half_period),
         .bend        (opt_bend_cent),
         .bend_q14    (opt_bend_q14_ctl),  // ★ 2^(cent/1200) 查表得到，不再用线性近似
         .vel         (opt_vel),
-        .trem_en     (opt_trem_en)
+        .trem_en     (opt_trem_en),
+        .vib_en      (opt_vib_en)
     );
 
     // ★★★ 临时诊断（DIAG_FORCE_BEND=1）：把音高比钉死成常量，绕开控制器。

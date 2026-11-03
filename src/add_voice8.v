@@ -59,6 +59,7 @@ module add_voice8 #(
     input  wire [31:0]         rd2,          // bank2 = {a16, phi8}
     input  wire [6:0]          note_off,     // 保留（旧接口，现由 DMA 使用）
     input  wire [7:0]          vel_gain,     // ★ 力度增益 2..254（来自双触点 Δt）
+    input  wire [15:0]         bend_q14,     // ★ 音高比 Q2.14（16384 = 不弯，古筝滑音）
     output wire [6:0]          rom_addr,     // ★ 改成“分量号 p”：cache 里就是本音的数据
 
     output reg  signed [15:0]  sample,       // 本声部在本样点的和（保持到下一个样点）
@@ -103,6 +104,16 @@ module add_voice8 #(
     reg  [9:0]  laddr;
     wire [31:0] sw_raw;
     add_sine_lut u_sine (.clk(clk), .addr(laddr), .dout(sw_raw));
+
+    // ★★ 滑音：把每个分量的【相位增量】rd0 乘上音高比。
+    //   这里的相位是真正的 32 位累加器（ph_n <= ph_q + inc），
+    //   所以缩放增量就是改变频率 —— 不存在 add_engine_harm 里
+    //   「缩放已回绕的相位」那个错误（那里相位是模一圈的查表值）。
+    //   48 位 = 32 × 16，最大 2^32 × 28526 = 1.22e14 < 2^47，不会溢出。
+    //   取 [45:14] = (rd0 × bend) >> 14，只保留低 32 位（相位自然回绕）。
+    wire [15:0] bend_u  = (bend_q14 < 16'd2048) ? 16'd2048 : bend_q14;
+    wire [47:0] inc_m   = {16'd0, rd0} * {32'd0, bend_u};
+    wire [31:0] inc_b   = inc_m[45:14];
 
     // ════════════════════════════════════════════════════════════════
     //  逐分量状态 RAM（相位 / 包络 / 起音），各声部独立
@@ -298,8 +309,9 @@ module add_voice8 #(
                     R1_r   <= rd1;
                     phi8_r <= {24'd0, rd2[15:8]};
                     a16_r  <= {16'd0, rd2[31:16]};
-                    ph_n   <= ph_q + rd0;
-                    laddr  <= (ph_q + rd0) >> 22;
+                    // ★ 用【缩放后】的增量（滑音）；bend_u = 16384 时 inc_b == rd0
+                    ph_n   <= ph_q + inc_b;
+                    laddr  <= (ph_q + inc_b) >> 22;
                 end
                 3'd2: begin end       // laddr 在这一拍送到正弦表，下一拍输出有效
                 3'd3: begin

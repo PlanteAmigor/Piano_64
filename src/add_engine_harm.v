@@ -57,6 +57,8 @@ module add_engine_harm #(
     // ── 光学前端（2026-11-02 新增）──────────────────────────────
     input  wire [15:0]             bend_q14,       // Q2.14 音高比，16384 = 1.0（不弯）
     input  wire                    trem_en,        // G5 指颤：1 = 叠加 6 Hz ±200 音分
+    input  wire                    vib_pitch,      // G3 颤音（音高）：唢呐
+    input  wire                    vib_am,         // G3 颤音（幅度）：笛子（基础模型自带气颤，不能再改音高）
     input  wire                    opt_en,         // 1 = 用光学力度
     input  wire [7:0]              opt_vel,        // 0..255
     input  wire                    sample_tick,
@@ -457,12 +459,36 @@ module add_engine_harm #(
         else        trem_off <= trem_en ? {{2{trem_a[13]}}, trem_a} : 16'sd0;
     end
 
+    // ── G3 颤音 LFO（音频速率，5 Hz 三角波）──────────────────────────
+    //   唢呐：音高 ±434/16384 ≈ ±45 音分（技法表 5.0 Hz / 25~62 音分）
+    //   笛子：只做幅度颤音（基础模型自带气颤 h2=0.40 φ=4°，再改音高会叠成两重）
+    localparam [23:0] VIB_INC = 24'd1717;      // 5 Hz × 2^24 / 48828.125
+    reg [23:0] vib_ph;
+    always @(posedge clk) begin
+        if (!rst_n)           vib_ph <= 24'd0;
+        else if (sample_tick) vib_ph <= vib_ph + VIB_INC;
+    end
+    wire [23:0]        vib_tri = vib_ph[23] ? ~{1'b0, vib_ph[22:0]} : {1'b0, vib_ph[22:0]};
+    wire signed [24:0] vib_c   = $signed({1'b0, vib_tri}) - 25'sd4194304;
+    wire signed [15:0] vib_a   = vib_c[24:10];                 // ±4096,
+
+    // 音高颤音：±434（= 4096/16 × 1.7）；用一次右移近似
+    reg signed [15:0] vib_off;
+    always @(posedge clk) begin
+        if (!rst_n) vib_off <= 16'sd0;
+        else vib_off <= vib_pitch ? (vib_a >>> 4) : 16'sd0;    // ±256 ≈ ±27 音分
+    end
+
+    // 幅度颤音：Q7（128 = 1.0），96..160 = 0.75..1.25
+    wire signed [15:0] am_off = vib_am ? (vib_a >>> 7) : 16'sd0;   // ±32
+    wire        [7:0]  am_q8  = 8'd128 + am_off[7:0];
+
     // 比值叠加（带下限保护，不能让总比变 0/负）
     //  ★ 平均音高补偿：±12.5% 的频率摆幅在【音分】上不对称
     //     （+0.125 → +204 音分，−0.125 → −231 音分），平均会低 13.6 音分。
     //     乘一个 1+1/128 ≈ 1.0079 把几何平均拉回 1（1/√(1−a²)，a=0.125）。
     wire signed [16:0] trem_bias = trem_en ? $signed({8'd0, ratio[15:7]}) : 17'sd0;
-    wire signed [16:0] ratio_eff = $signed({1'b0, ratio}) + trem_off + trem_bias;
+    wire signed [16:0] ratio_eff = $signed({1'b0, ratio}) + trem_off + vib_off + trem_bias;
     wire signed [16:0] ratio_use = (ratio_eff < 17'sd1024) ? 17'sd1024 : ratio_eff;
 
     // ★★ 流水线 2：总比值再打一拍，把 33 位乘法单独留在后一级
@@ -548,7 +574,17 @@ module add_engine_harm #(
     wire        opt_act = opt_en && (opt_vel > 8'd8);
     wire [7:0]  vel_all = opt_act ? opt_vel_eff : v_vel[7:0];
     wire [7:0]  vel_eff  = sus_rel ? rel_gain : vel_all;
-
+    // ★ G3 幅度颤音（笛子）：vel_eff × am_q8(Q7) >> 7
+    //   先算好并打一拍再送进 ST_DRAIN，不然输出路径上会串两个乘法。
+    //   am_q8 = 128 时 vel_am == vel_eff（不颤）。
+    wire [15:0] vel_am_p = vel_eff * am_q8;
+    wire [8:0]  vel_am_s = vel_am_p[15:7];
+    wire [7:0]  vel_am_n = (vel_am_s > 9'd255) ? 8'd255 : vel_am_s[7:0];
+    reg  [7:0]  vel_am;
+    always @(posedge clk) begin
+        if (!rst_n) vel_am <= 8'd0;
+        else        vel_am <= vel_am_n;
+    end
     function signed [15:0] sat16; input signed [63:0] x;
         begin
             if      (x >  64'sd32767) sat16 =  16'sd32767;
@@ -752,8 +788,9 @@ module add_engine_harm #(
                     if (dr == 4'd5) begin
                         // ★ 力度只调音量；DMA 覆盖表期间强制静音
                         //   延音档松键时 vel_eff = rel_gain → 输出逐渐变轻
+                        //   vel_am = vel_eff × 幅度颤音增益（Q7），不颤时逐位相等
                         smp <= quiet ? 16'sd0
-                             : sat16((mix * $signed({1'b0, vel_eff})) >>> 8);
+                             : sat16((mix * $signed({1'b0, vel_am})) >>> 8);
                         st  <= ST_IDLE;
                     end
                 end

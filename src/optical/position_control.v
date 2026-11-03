@@ -34,11 +34,15 @@ module position_control (
     input  wire [15:0]       x_q8,
     input  wire              x_valid,
     input  wire signed [23:0] rho_dc,
+    input  wire signed [23:0] rho_ac,     // rho_raw − rho_dc（opt_feat）
+    input  wire signed [23:0] ac_env,     // |rho_ac| 的包络（opt_feat）
+    input  wire [15:0]       half_period, // rho_ac 两次过零之间的帧数
 
     output reg  signed [15:0] bend,     // 音分，±700
     output wire        [7:0]  vel,      // 0..255
     output wire        [15:0] bend_q14, // 音高比 Q2.14（16384 = 不弯）
-    output wire               trem_en   // G5 指颤：检测到左右大幅快速摇手
+    output wire               trem_en,  // G5 指颤：检测到左右大幅快速摇手
+    output wire               vib_en    // G3 颤音：检测到上下轻摇
 );
 
     localparam signed [16:0] X_CENTER = 17'sd1894;   // 7.40 cm
@@ -124,6 +128,42 @@ module position_control (
     //   然后当成【无驱动】处理（EX3671/EX1998），iverilog 直接报错。
     assign trem_en = (xa_gap_l >= 6'd5) && (xa_gap_l <= 6'd20) && (xa_gap <= 6'd24);
 
+    //======================================================================
+    //  G3 颤音检测：上下轻摇
+    //
+    //  信号全部来自 opt_feat（它本来就是为这个算的）：
+    //    rho_ac      = rho_raw − rho_dc
+    //    ac_env      = |rho_ac| 的包络（τ=4 帧 ≈ 48 ms）
+    //    half_period = rho_ac 两次过零之间的帧数（带 256 码值死区）
+    //
+    //  频率窗口：4~8 Hz ⇒ 半周期 = 83.3/(2f) = 5.2~10.4 帧 ⇒ 取 [5, 11]
+    //  幅度门限：ac_env > rho_dc/8（摆动幅度 > 12.5%）
+    //
+    //  ★ half_period 是「最后一次过零的间隔」，停手后不会自己归零，
+    //    所以靠 ac_env 快速衰减（τ=4 帧）来收尾。
+    //  ★ 与 G5 指颤互斥：左右大幅摇手优先级更高。
+    //======================================================================
+    wire signed [23:0] vib_thr = rho_dc >>> 3;
+    wire vib_amp  = (ac_env > vib_thr) && (rho_dc > 24'sd4000);
+    wire vib_rate = (half_period >= 16'd5) && (half_period <= 16'd11);
+    // 总开关：门限是估的（串口挂了没法实测 ac_env），现场如果误触发就改 0
+    localparam integer G3_EN = 1;
+
+    // ★★ 必须加迟滞保持：ac_env 是 |rho_ac| 的低通（τ=4 帧），
+    //    而 |rho_ac| 每个半周期都要掉到 0 → 包络跟着掉，5 Hz 时
+    //    每 8 帧里有 2~3 帧 ac_env < 门限 → vib_en 断续（实测占空比只有 67%）。
+    //    保持 16 帧（0.19 s）：停手后 ac_env 在 ~1 帧内就掉下去，
+    //    所以 16 帧只影响收尾，不影响判定。
+    reg [4:0] vib_hold;
+    always @(posedge clk) begin
+        if (!rst_n)                    vib_hold <= 5'd0;
+        else if (!frame_valid)         vib_hold <= vib_hold;
+        else if (vib_amp && vib_rate)  vib_hold <= 5'd16;
+        else if (vib_hold != 5'd0)     vib_hold <= vib_hold - 5'd1;
+    end
+
+    assign vib_en = G3_EN && (vib_hold != 5'd0) && !trem_en;
+
     always @(posedge clk) begin
         if (!rst_n)         x_acc <= (18'd1894 << 3);
         // ★ 指颤期间冻结基准音高：摇手本身会把 x 拉来拉去，
@@ -139,13 +179,33 @@ module position_control (
     // 弯音目标
     //----------------------------------------------------------------------
     wire signed [16:0] dx  = $signed({1'b0, x_hold}) - X_CENTER;
-    // ★ 系数 270/512 = 0.5273 音分/Q8-LSB = 135 音分/cm
-    //   → 可用区 2.2–12.6 cm（±5.2 cm）正好打满 ±700（纯五度），
-    //     手移 1 cm ≈ 1.36 个半音，一动就听得出来。
-    //   （96 = 48 音分/cm 太柔，移 2 cm 才 1 个半音；
-    //     154 = 77 音分/cm 曾试过，2.6 cm 打满、没有中间量，不可用）
-    wire signed [23:0] dxm = dx * 24'sd270;
-    wire signed [23:0] bq  = dxm >>> 9;
+
+    // ★★★ 中央死区（中立区）：手放在中间 1.5 cm 内音高就是原音，
+    //   在这个位置可以【只调音量】（左右手抖不会跑调）。
+    //
+    //   为什么必须有：可用跨度只有 2.2–12.6 cm（±5.2 cm），
+    //   原来是纯线性 135 音分/cm —— 手抖 1 mm 就是 13 音分，
+    //   想安静地只改力度根本站不住。
+    //
+    //   标定（Q8 = 256/cm）：
+    //     死区 ±384（1.5 cm）→ 音分 0
+    //     剩下 5.2−1.5 = 3.7 cm 走完 700 音分
+    //     → 系数 378/512 = 0.7383 音分/Q8-LSB = 189 音分/cm
+    //     （比原来 135 更陡，但中间多了一段完全稳的区）
+    //   验算：|dx|=1331（5.2 cm）→ (1331−384)×378/512 = 699 音分 ✓
+    localparam signed [16:0] BEND_DZ = 17'sd384;
+    // 死区内 → 0；区外 → 扣掉死区半宽（三路比较，不做 abs/取反，少两级 LUT）
+    wire signed [16:0] dxs = (dx >  BEND_DZ) ? (dx - BEND_DZ) :
+                             (dx < -BEND_DZ) ? (dx + BEND_DZ) : 17'sd0;
+    wire signed [23:0] dxm = dxs * 24'sd378;
+    // ★ 打一拍：x_acc → 死区 → 乘法 → 移位 → 钳位 → bend 实测 19.8 ns（20 ns 超边缘）
+    //   多 1 帧（12 ms）延迟对滑音无影响 —— 后面还有 B_SLEW 限速，本来就要几百 ms
+    reg signed [23:0] bq_r;
+    always @(posedge clk) begin
+        if (!rst_n)           bq_r <= 24'sd0;
+        else if (frame_valid) bq_r <= dxm >>> 9;
+    end
+    wire signed [23:0] bq = bq_r;
 
     // ★ 三个分支都必须是 signed，否则整条表达式退化成无符号比较
     //
