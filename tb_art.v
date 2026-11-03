@@ -172,9 +172,10 @@ initial begin
     if (hand_on !== 1'b1) begin $display("    FAIL"); errs = errs + 1; end
 
     // 手抽走：rho_raw 掉到无手电平，注意 rho_dc 仍是慢基线（故意不跟着改）
+    // 现在去抖是 16 帧（192 ms），要跑够帧数
     rho_raw = 24'sd2068; rho_ac = 24'sd2068 - 24'sd9491;
-    for (i = 0; i < 5; i = i + 1) one_frame;
-    $display("[8b] 手抽走        hand_on=%0d（应在 3 帧内变 0）", hand_on);
+    for (i = 0; i < 20; i = i + 1) one_frame;
+    $display("[8b] 手抽走(20帧)  hand_on=%0d（应在 16 帧后变 0）", hand_on);
     if (hand_on !== 1'b0) begin $display("    FAIL: 手走了 hand_on 应该掉下来"); errs = errs + 1; end
 
     // 手回来
@@ -182,6 +183,21 @@ initial begin
     for (i = 0; i < 3; i = i + 1) one_frame;
     $display("[8c] 手回来        hand_on=%0d（应 1）", hand_on);
     if (hand_on !== 1'b1) begin $display("    FAIL: 手回来应该立刻恢复"); errs = errs + 1; end
+
+    // 横向扫手期间 rho 短暂掉下去，不该判"手走了"（否则混响会chopping噪声）
+    begin : lateral
+        integer k;
+        rho_raw = 24'sd9491; rho_ac = 24'sd0; x_q8 = 16'd1894;
+        for (k = 0; k < 6; k = k + 1) one_frame;
+        for (k = 0; k < 20; k = k + 1) begin
+            x_q8   = 16'd2894;              // 横向移动 4 cm
+            rho_raw = 24'sd2500;            // 同时 rho 掉到门限以下
+            rho_ac  = 24'sd2500 - 24'sd9491;
+            one_frame;
+        end
+    end
+    $display("[8e] 横扫时 rho 掉 hand_on=%0d（应仍 1：lateral_mv 互斥）", hand_on);
+    if (hand_on !== 1'b1) begin $display("    FAIL: 横向扫手不该判手走了"); errs = errs + 1; end
 
     // 单帧毛刺不该让声音断：rho_raw 只掉 1 帧
     begin : glitch
