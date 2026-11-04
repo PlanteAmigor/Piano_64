@@ -1,7 +1,7 @@
 {
   "revision": 2,
   "source_commit": "80239bf6553dbc9d79453b1eaf9b5e7bb8305937",
-  "status": "revision2_user_accepted_720p_flash_readback_verified_coldboot_pending",
+  "status": "revision2_user_accepted_720p_flash_readback_and_coldboot_verified",
   "video_mode": "720p60.606",
   "goal_note_on_us": 5000,
   "debounce": {
@@ -300,8 +300,7 @@
     "5ms指标指按下起音，释放连续确认20ms；松开不足20ms的同键重按可能合并",
     "数字仿真不含模拟DAC、功放、扬声器与声传播延迟",
     "有效手势、P64已载入及模型限定的DDR等待为测量前提",
-    "用户已确认画面、按键和声音正常；先前UART无数据仍作为独立诊断现象保留，不据此推翻或替代实物验收",
-    "本次Flash已100%读回校验；断电冷启动尚待单独确认"
+    "用户已确认画面、按键和声音正常；先前UART无数据仍作为独立诊断现象保留，不据此推翻或替代实物验收"
   ],
   "uart_followup": {
     "time": 1793751139.4474392,
@@ -327,9 +326,18 @@
     "fs_sha256": "01198ac8a7547f963be728f345e2334af594c40e91f66b9439eac5f6e02bdff7",
     "verify_requested": true,
     "user_confirmed_sram": true,
-    "flash_cold_boot_user_confirmed": false,
+    "flash_cold_boot_user_confirmed": true,
     "time": 1793752721.4525292,
-    "write_verified": true
+    "write_verified": true,
+    "coldboot_confirmation": {
+      "date": "2026-11-04",
+      "confirmed_by": "user",
+      "feedback": "断电重启后画面、按键和声音都正常",
+      "screen_verified": true,
+      "keyboard_and_sound_verified": true,
+      "flash_cold_boot_verified": true,
+      "fs_sha256": "01198ac8a7547f963be728f345e2334af594c40e91f66b9439eac5f6e02bdff7"
+    }
   },
   "physical_acceptance": {
     "confirmed_by": "user",
@@ -337,7 +345,8 @@
     "feedback": "都正常，固化",
     "screen_verified": true,
     "keyboard_and_sound_verified": true,
-    "flash_cold_boot_verified": false
+    "flash_cold_boot_verified": true,
+    "coldboot_feedback": "断电重启后画面、按键和声音都正常"
   },
   "theoretical_latency": {
     "press_qualification_ms": 0.5,
