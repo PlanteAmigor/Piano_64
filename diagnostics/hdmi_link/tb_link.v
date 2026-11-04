@@ -5,12 +5,29 @@ module tb_link;
  hdmi_link_probe #(.WINDOW(5000)) dut(.CLOCK_50(clk),.RESET_n(rst),.UART_TX(tx),
   .tmds_clk_p_0(cp),.tmds_clk_n_0(cn),.tmds_d_p_0(dp),.tmds_d_n_0(dn));
  initial begin #1000;rst=1;wait(request_reset);@(negedge clk);rst=0;#500;rst=1;reset_tested=1;end
+`ifdef PROBE_900P
+ localparam HA=1600,HT=1760,HW=32;
+ real want_pixel=10.256410,want_serial=2.051282;
+`else
 `ifdef PROBE_720P
  localparam HA=1280,HT=1650,HW=40;
  real want_pixel=13.333333,want_serial=2.666667;
 `else
  localparam HA=1920,HT=2200,HW=44;
+`ifdef PROBE_1080_SINGLE
+`ifdef PROBE_1080_FAST
+ real want_pixel=6.666667,want_serial=1.333333;
+`else
+ real want_pixel=13.333333,want_serial=2.666667;
+`endif
+`else
+`ifdef PROBE_30HZ
+ real want_pixel=13.468013,want_serial=2.693603;
+`else
  real want_pixel=6.734007,want_serial=1.346801;
+`endif
+`endif
+`endif
 `endif
  function automatic is_ctrl(input [9:0] v);
   is_ctrl=(v==10'b1101010100 || v==10'b0010101011 || v==10'b0101010100 || v==10'b1010101011);
@@ -37,7 +54,7 @@ module tb_link;
    if(dn!==~dp || cn!==~cp)$fatal(1,"differential polarity invalid");
    s0={dp[0],s0[9:1]};s1={dp[1],s1[9:1]};s2={dp[2],s2[9:1]};
    if(!aligned)begin
-    if(s0==10'b1101010100 && s1==10'b1101010100 && s2==10'b1101010100)begin aligned=1;bits=0;end
+    if(is_ctrl(s0) && s1==10'b1101010100 && s2==10'b1101010100)begin aligned=1;bits=0;end
    end else begin
     bits=bits+1;
     if(bits==10)begin

@@ -27,9 +27,12 @@ def main():
         assert inputs()==json.loads(opt.inputs.read_text()),'Sources changed during build; rebuild'
         mode_file=ROOT/'src/hdmi/ui_video_mode.vh'
         low=mode_file.exists() and '`define UI_VIDEO_720P' in mode_file.read_text()
+        single='`define UI_VIDEO_1080P_SINGLE' in mode_file.read_text()
+        half='`define UI_VIDEO_1080P_HALF' in mode_file.read_text()
         sdc=(ROOT/'src/piano64_hdmi.sdc').read_text()
-        if low:
-            for pin,mul,div in [('CLKOUT0',3,2),('CLKOUT1',15,2)]:
+        if low or single:
+            div=2 if low or half else 1
+            for pin,mul,div in [('CLKOUT0',3,div),('CLKOUT1',15,div)]:
                 assert f'-multiply_by {mul} -divide_by {div} [get_pins {{u_hdmi/u_pll/u_pixel/PLL_inst/{pin}}}]' in sdc,'Video PLL/constraint mode mismatch'
         else:
             assert '-multiply_by 27 -divide_by 1 [get_pins {u_hdmi/u_pll/u_pixel/PLL_inst/CLKOUT1}]' in sdc,'Serializer clock mismatch'
@@ -44,7 +47,9 @@ def main():
             cells=[re.sub(r'<[^>]+>','',c).strip() for c in re.findall(r'<td[^>]*>(.*?)</td>',row,re.S)]
             if len(cells)>=10 and cells[2]=='Generated' and cells[1].startswith('u_hdmi/u_pll/') and cells[1].endswith('.default_gen_clk'):
                 pll_clocks[cells[1]]=float(cells[4])
-        for leaf,want in [(('u_pixel/PLL_inst/CLKOUT0' if low else 'u_pixel_div/CLKOUT'),75.0 if low else 148.5),('u_pixel/PLL_inst/CLKOUT1',375.0 if low else 742.5)]+([] if low else [('u_ref/PLL_inst/CLKOUT0',27.5)]):
+        pixel_mhz=75.0 if low or half else (150.0 if single else 148.5)
+        serial_mhz=pixel_mhz*5
+        for leaf,want in [(('u_pixel/PLL_inst/CLKOUT0' if low or single else 'u_pixel_div/CLKOUT'),pixel_mhz),('u_pixel/PLL_inst/CLKOUT1',serial_mhz)]+([] if low or single else [('u_ref/PLL_inst/CLKOUT0',27.5)]):
             name='u_hdmi/u_pll/'+leaf+'.default_gen_clk'
             assert abs(pll_clocks.get(name,-1)-want)<0.001,'PLL frequency mismatch: '+name
         html=(PNR/'piano64_full_tr_content.html').read_text()
@@ -61,7 +66,8 @@ def main():
             resources[key]=[float(m[1]),float(m[2])];assert float(m[1])<=float(m[2])
         paths=(PNR/'piano64_full.timing_paths').read_text().split('=====')
         setup=[float(p.strip().splitlines()[1]) for p in paths if p.strip().startswith('SETUP')]
-        record={'video_mode':'720p60.606' if low else '1080p60','pll_clocks_mhz':pll_clocks,'inputs':inputs(),'bitstreams':{name:sha(PNR/name) for name in ['piano64_full.fs','piano64_full.bin']},
+        mode_name='720p60.606' if low else ('1080p30.303' if half else '1080p60.606') if single else '1080p60'
+        record={'video_mode':mode_name,'pll_clocks_mhz':pll_clocks,'inputs':inputs(),'bitstreams':{name:sha(PNR/name) for name in ['piano64_full.fs','piano64_full.bin']},
             'violations':violations,'resources':resources,'worst_reported_setup_ns':min(setup)}
         manifest.write_text(json.dumps(record,indent=2)+'\n')
     else:

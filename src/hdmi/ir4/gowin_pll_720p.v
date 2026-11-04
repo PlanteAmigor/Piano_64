@@ -10,6 +10,16 @@ module Gowin_PLL_720P(output lock,output clkout0,output clkout1,input clkin);
     ui_pll_core #(.FREQ("50"),.MDIV(15),.DIV0(10),.DIV1(2)) u_pixel(
         .clkin(clkin),.reset(1'b0),.clkout0(clkout0),.clkout1(clkout1),.lock(lock));
 `else
+`ifdef UI_VIDEO_1080P_SINGLE
+    // Board-accepted colorbars: 750MHz VCO, 150/750MHz for 1080p60.606.
+`ifdef UI_VIDEO_1080P_HALF
+    localparam SINGLE_DIV0=10,SINGLE_DIV1=2;
+`else
+    localparam SINGLE_DIV0=5,SINGLE_DIV1=1;
+`endif
+    ui_pll_core #(.FREQ("50"),.MDIV(15),.DIV0(SINGLE_DIV0),.DIV1(SINGLE_DIV1)) u_pixel(
+        .clkin(clkin),.reset(1'b0),.clkout0(clkout0),.clkout1(clkout1),.lock(lock));
+`else
     wire ref_clk,ref_lock,pixel_lock;
     ui_pll_core #(.FREQ("50"),.IDIV(1),.MDIV(22),.FRAC(0),.DIV0(40),.DIV1(40),.OUT1("FALSE"))
         u_ref(.clkin(clkin),.reset(1'b0),.clkout0(ref_clk),.clkout1(),.lock(ref_lock));
@@ -19,6 +29,7 @@ module Gowin_PLL_720P(output lock,output clkout0,output clkout1,input clkin);
     CLKDIV #(.DIV_MODE("5")) u_pixel_div(
         .HCLKIN(clkout1),.RESETN(pixel_lock),.CALIB(1'b0),.CLKOUT(clkout0));
     assign lock=ref_lock && pixel_lock;
+`endif
 `endif
 endmodule
 

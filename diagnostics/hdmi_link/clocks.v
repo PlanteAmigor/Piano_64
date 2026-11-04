@@ -1,6 +1,21 @@
 // Test matrices: existing cascade; board-measured reference; HCLK divide-by-5.
 module probe_clocks(input clkin,output pixel,output serial_clk,
  output reference_clk,output reference_lock,output video_lock);
+`ifdef PROBE_1080_SINGLE
+`ifdef PROBE_1080_FAST
+ localparam SINGLE_DIV0=5,SINGLE_DIV1=1;
+`else
+ localparam SINGLE_DIV0=10,SINGLE_DIV1=2;
+`endif
+ assign reference_clk=clkin;assign reference_lock=1'b1;
+ ui_pll_core #(.FREQ("50"),.MDIV(15),.DIV0(SINGLE_DIV0),.DIV1(SINGLE_DIV1)) video(
+ .clkin(clkin),.reset(1'b0),.clkout0(pixel),.clkout1(serial_clk),.lock(video_lock));
+`else
+`ifdef PROBE_900P
+ assign reference_clk=clkin;assign reference_lock=1'b1;
+ ui_pll_core #(.FREQ("50"),.IDIV(2),.MDIV(39),.FRAC(0),.DIV0(10),.DIV1(2)) video(
+ .clkin(clkin),.reset(1'b0),.clkout0(pixel),.clkout1(serial_clk),.lock(video_lock));
+`else
 `ifdef PROBE_720P
  assign reference_clk=clkin;assign reference_lock=1'b1;
  ui_pll_core #(.FREQ("50"),.MDIV(15),.DIV0(10),.DIV1(2)) video(
@@ -14,10 +29,16 @@ module probe_clocks(input clkin,output pixel,output serial_clk,
  .clkin(clkin),.reset(1'b0),.clkout0(reference_clk),.clkout1(),.lock(reference_lock));
 `ifdef PROBE_DIV5
  wire unused_pixel;
+`ifdef PROBE_30HZ
+ ui_pll_core #(.DIV0(10),.DIV1(2)) video(.clkin(reference_clk),.reset(!reference_lock),.clkout0(unused_pixel),.clkout1(serial_clk),.lock(video_lock));
+`else
  ui_pll_core video(.clkin(reference_clk),.reset(!reference_lock),.clkout0(unused_pixel),.clkout1(serial_clk),.lock(video_lock));
+`endif
  CLKDIV #(.DIV_MODE("5")) divide_pixel(.HCLKIN(serial_clk),.RESETN(video_lock),.CALIB(1'b0),.CLKOUT(pixel));
 `else
  ui_pll_core video(.clkin(reference_clk),.reset(!reference_lock),.clkout0(pixel),.clkout1(serial_clk),.lock(video_lock));
+`endif
+`endif
 `endif
 `endif
 endmodule

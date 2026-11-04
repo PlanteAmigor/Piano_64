@@ -16,10 +16,15 @@ module hdmi_link_probe #(parameter WINDOW=5000000)(
   else if(video_por!=255)video_por<=video_por+1'b1;
  end
  wire video_reset=video_por!=255;
+`ifdef PROBE_900P
+ // Local cvt -r 1600 900 60: CVT-RB 59.82Hz, +HS/-VS, 97.5MHz.
+ localparam HA=1600,HT=1760,HS0=1648,HS1=1680,VA=900,VT=926,VS0=903,VS1=908;
+`else
 `ifdef PROBE_720P
  localparam HA=1280,HT=1650,HS0=1390,HS1=1430,VA=720,VT=750,VS0=725,VS1=730;
 `else
  localparam HA=1920,HT=2200,HS0=2008,HS1=2052,VA=1080,VT=1125,VS0=1084,VS1=1089;
+`endif
 `endif
  reg [11:0] x=0;reg [10:0] y=0;
  always @(posedge pixel)begin
@@ -28,7 +33,12 @@ module hdmi_link_probe #(parameter WINDOW=5000000)(
   else x<=x+1'b1;
  end
  wire de=x<HA && y<VA;
- wire hs=x>=HS0 && x<HS1,vs=y>=VS0 && y<VS1;
+ wire hs=x>=HS0 && x<HS1;
+`ifdef PROBE_900P
+ wire vs=!(y>=VS0 && y<VS1);
+`else
+ wire vs=y>=VS0 && y<VS1;
+`endif
  wire [23:0] rgb=x<HA/8?24'hffffff:x<HA/4?24'hffff00:
   x<HA*3/8?24'h00ffff:x<HA/2?24'h00ff00:x<HA*5/8?24'hff00ff:
   x<HA*3/4?24'hff0000:x<HA*7/8?24'h0000ff:24'h000000;

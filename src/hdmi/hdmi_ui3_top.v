@@ -187,9 +187,11 @@ module hdmi_ui3_top (
     reg [3:0]  fade_lvl;
     reg        fading_out;
     reg [16:0] fade_cnt;
+    // Register the next carry predicates to keep the long counter off the pixel critical path.
+    reg fade_carry6,fade_carry12;
     wire [16:0] fade_increment={
-        fade_cnt[16:12]+{4'd0,(&fade_cnt[11:0])},
-        fade_cnt[11:6]+{5'd0,(&fade_cnt[5:0])},
+        fade_cnt[16:12]+{4'd0,fade_carry12},
+        fade_cnt[11:6]+{5'd0,fade_carry6},
         fade_cnt[5:0]+6'd1};
 
     always @(posedge clk_p) begin
@@ -198,17 +200,27 @@ module hdmi_ui3_top (
             page_pend  <= 2'd0;
             fade_lvl   <= 4'd15;
             fading_out <= 1'b0;
-            fade_cnt   <= 16'd0;
+            fade_cnt   <= 17'd0;
+            fade_carry6 <= 1'b0;
+            fade_carry12 <= 1'b0;
         end
         else if (!fading_out && (page_req != page_show)) begin
             fading_out <= 1'b1;              // 开始淡出
             page_pend  <= page_req;
-            fade_cnt   <= 16'd0;
+            fade_cnt   <= 17'd0;
+            fade_carry6 <= 1'b0;
+            fade_carry12 <= 1'b0;
         end
         else if (fading_out) begin
-            if (fade_cnt != FADE_STEP) fade_cnt <= fade_increment;
+            if (fade_cnt != FADE_STEP) begin
+                fade_cnt <= fade_increment;
+                fade_carry6 <= fade_cnt[5:0]==6'd62;
+                fade_carry12 <= fade_cnt[11:0]==12'd4094;
+            end
             else begin
-                fade_cnt <= 16'd0;
+                fade_cnt <= 17'd0;
+                fade_carry6 <= 1'b0;
+                fade_carry12 <= 1'b0;
                 if (fade_lvl != 4'd0) fade_lvl <= fade_lvl - 4'd1;
                 else begin
                     page_show  <= page_pend; // 全黑时换页
@@ -217,9 +229,15 @@ module hdmi_ui3_top (
             end
         end
         else if (fade_lvl != 4'd15) begin    // 淡入
-            if (fade_cnt != FADE_STEP) fade_cnt <= fade_increment;
+            if (fade_cnt != FADE_STEP) begin
+                fade_cnt <= fade_increment;
+                fade_carry6 <= fade_cnt[5:0]==6'd62;
+                fade_carry12 <= fade_cnt[11:0]==12'd4094;
+            end
             else begin
-                fade_cnt <= 16'd0;
+                fade_cnt <= 17'd0;
+                fade_carry6 <= 1'b0;
+                fade_carry12 <= 1'b0;
                 fade_lvl <= fade_lvl + 4'd1;
             end
         end
