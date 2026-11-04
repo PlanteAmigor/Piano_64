@@ -2,7 +2,7 @@
 from pathlib import Path
 import argparse,hashlib,json,os,select,subprocess,termios,time,re
 R=Path(__file__).resolve().parents[2];D=Path(__file__).resolve().parent
-ap=argparse.ArgumentParser();ap.add_argument('variant',choices=['control720','cascade_old','cascade_ref','div5_ref','mode1080p30','mode900p60','mode1080p30_single','mode1080p60_single']);a=ap.parse_args()
+ap=argparse.ArgumentParser();ap.add_argument('variant',choices=['control720','cascade_old','cascade_ref','div5_ref','mode1080p30','mode900p60','mode1080p30_single','mode1080p60_single','mode1080p60_registered']);a=ap.parse_args()
 w=R/'work/hdmi_link'/a.variant;m=json.loads((w/'manifest.json').read_text());assert m['exit_code']==0 and m['violations']=={'setup':0,'hold':0}
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 for p,h in m['inputs'].items():assert sha(w/p)==h,p
@@ -16,7 +16,7 @@ for row in re.findall(r'<tr[^>]*>(.*?)</tr>',syn,re.S):
  cells=[re.sub(r'<[^>]+>','',x).strip() for x in re.findall(r'<td[^>]*>(.*?)</td>',row,re.S)]
  if len(cells)>=10 and cells[2]=='Generated':freq[cells[1]]=float(cells[4])
 if a.variant in ['control720','mode1080p30_single']:pix,ser=75.0,375.0
-elif a.variant=='mode1080p60_single':pix,ser=150.0,750.0
+elif a.variant in ['mode1080p60_single','mode1080p60_registered']:pix,ser=150.0,750.0
 elif a.variant=='mode1080p30':pix,ser=74.25,371.25
 elif a.variant=='mode900p60':pix,ser=97.5,487.5
 else:pix,ser=148.5,742.5

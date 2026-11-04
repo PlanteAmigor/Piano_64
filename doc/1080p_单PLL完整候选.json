@@ -1,6 +1,6 @@
 {
   "date": "2026-11-04",
-  "status": "full_firmware_loaded_sram_user_acceptance_pending",
+  "status": "full_firmware_failed_signal_present_black_screen",
   "commit": "9c6acc31a54648c4a7be1ba415d2a31a1b4fa870",
   "build": {
     "video_mode": "1080p60.606",
@@ -674,7 +674,9 @@
     "exit_code": 0,
     "mode": "sram",
     "flash_changed": false,
-    "full_ui_and_audio_user_acceptance": "pending",
-    "program_log_sha256": "2cf11a378ec770c3255e7450efa68a96ec1a312c95e03423c7a3d83166d50dee"
+    "full_ui_and_audio_user_acceptance": "failed_signal_present_black_screen",
+    "program_log_sha256": "2cf11a378ec770c3255e7450efa68a96ec1a312c95e03423c7a3d83166d50dee",
+    "user_feedback": "彩条正常；完整工程有信号但黑屏",
+    "feedback_time": 1793759567.710228
   }
 }

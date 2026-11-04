@@ -3,7 +3,7 @@ from pathlib import Path
 import argparse,hashlib,json,os,re,shutil,subprocess,time
 R=Path(__file__).resolve().parents[2];D=Path(__file__).resolve().parent
 ap=argparse.ArgumentParser();ap.add_argument('--variants',nargs='+',default=['control720','cascade_old','cascade_ref','div5_ref']);a=ap.parse_args()
-variants={'control720':['PROBE_720P'],'cascade_old':['PROBE_OLD_REF'],'cascade_ref':[],'div5_ref':['PROBE_DIV5'],'mode1080p30':['PROBE_DIV5','PROBE_30HZ'],'mode900p60':['PROBE_900P'],'mode1080p30_single':['PROBE_1080_SINGLE'],'mode1080p60_single':['PROBE_1080_SINGLE','PROBE_1080_FAST']}
+variants={'control720':['PROBE_720P'],'cascade_old':['PROBE_OLD_REF'],'cascade_ref':[],'div5_ref':['PROBE_DIV5'],'mode1080p30':['PROBE_DIV5','PROBE_30HZ'],'mode900p60':['PROBE_900P'],'mode1080p30_single':['PROBE_1080_SINGLE'],'mode1080p60_single':['PROBE_1080_SINGLE','PROBE_1080_FAST'],'mode1080p60_registered':['PROBE_1080_SINGLE','PROBE_1080_FAST']}
 for name in a.variants:
  defs=variants[name];w=R/'work/hdmi_link'/name;assert not w.exists(),w;w.mkdir(parents=True)
  for f in ['probe.v','clocks.v']:(w/f).write_text(''.join('`define '+x+'\n' for x in defs)+(D/f).read_text())
@@ -23,7 +23,7 @@ for name in a.variants:
  sdc='create_clock -name CLOCK_50 -period 20 [get_ports {CLOCK_50}]\nset_false_path -from [get_ports {RESET_n}]\n'
  if name=='mode900p60':
   sdc+='create_generated_clock -name pix -source [get_ports {CLOCK_50}] -multiply_by 39 -divide_by 20 [get_pins {clocks/video/PLL_inst/CLKOUT0}]\ncreate_generated_clock -name ser -source [get_ports {CLOCK_50}] -multiply_by 39 -divide_by 4 [get_pins {clocks/video/PLL_inst/CLKOUT1}]\n'
- elif name=='mode1080p60_single':
+ elif name in ['mode1080p60_single','mode1080p60_registered']:
   sdc+='create_generated_clock -name pix -source [get_ports {CLOCK_50}] -multiply_by 3 [get_pins {clocks/video/PLL_inst/CLKOUT0}]\ncreate_generated_clock -name ser -source [get_ports {CLOCK_50}] -multiply_by 15 [get_pins {clocks/video/PLL_inst/CLKOUT1}]\n'
  elif name in ['control720','mode1080p30_single']:
   sdc+='create_generated_clock -name pix -source [get_ports {CLOCK_50}] -multiply_by 3 -divide_by 2 [get_pins {clocks/video/PLL_inst/CLKOUT0}]\ncreate_generated_clock -name ser -source [get_ports {CLOCK_50}] -multiply_by 15 -divide_by 2 [get_pins {clocks/video/PLL_inst/CLKOUT1}]\n'
@@ -31,7 +31,7 @@ for name in a.variants:
   sdc+='create_generated_clock -name ref -source [get_ports {CLOCK_50}] -multiply_by 11 -divide_by 20 [get_pins {clocks/reference/PLL_inst/CLKOUT0}]\ncreate_generated_clock -name ser -source [get_pins {clocks/reference/PLL_inst/CLKOUT0}] -multiply_by 27 [get_pins {clocks/video/PLL_inst/CLKOUT1}]\n'
   if name in ['div5_ref','mode1080p30']:sdc+='create_generated_clock -name pix -source [get_pins {clocks/video/PLL_inst/CLKOUT1}] -divide_by 5 [get_pins {clocks/divide_pixel/CLKOUT}]\n'
   else:sdc+='create_generated_clock -name pix -source [get_pins {clocks/reference/PLL_inst/CLKOUT0}] -multiply_by 27 -divide_by 5 [get_pins {clocks/video/PLL_inst/CLKOUT0}]\n'
- sdc+='set_false_path -from [get_clocks {pix ser'+('' if name in ['control720','mode900p60','mode1080p30_single','mode1080p60_single'] else ' ref')+'}] -to [get_clocks {CLOCK_50}]\n'
+ sdc+='set_false_path -from [get_clocks {pix ser'+('' if name in ['control720','mode900p60','mode1080p30_single','mode1080p60_single','mode1080p60_registered'] else ' ref')+'}] -to [get_clocks {CLOCK_50}]\n'
  if name=='mode1080p30':sdc=sdc.replace('-multiply_by 27 [get_pins','-multiply_by 27 -divide_by 2 [get_pins')
  (w/'probe.sdc').write_text(sdc)
  files=['probe.v','clocks.v','uart_tx.v','probe.cst','probe.sdc']+[str(p.relative_to(w)) for p in sorted((w/'src').rglob('*.v'))]

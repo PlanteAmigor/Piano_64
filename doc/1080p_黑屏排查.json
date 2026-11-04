@@ -1,0 +1,262 @@
+{
+  "date": "2026-11-04",
+  "status": "full_debug_build_pending",
+  "full_firmware_board": {
+    "time": 1793759386.36356,
+    "video_mode": "1080p60.606",
+    "fs_sha256": "fdbd34467f1a0a12651968bd1eacd440ed179e7ae74b3c142410ba9abd2b50b3",
+    "exit_code": 0,
+    "mode": "sram",
+    "flash_changed": false,
+    "full_ui_and_audio_user_acceptance": "failed_signal_present_black_screen",
+    "program_log_sha256": "2cf11a378ec770c3255e7450efa68a96ec1a312c95e03423c7a3d83166d50dee",
+    "user_feedback": "彩条正常；完整工程有信号但黑屏",
+    "feedback_time": 1793759567.710228
+  },
+  "registered_phy_probe": {
+    "variant": "mode1080p60_registered",
+    "fs_sha256": "c29fe32cba714bc15732725ab97001033a6e074ce44e667d44831120ab3ee708",
+    "exit_code": 0,
+    "flash_changed": false,
+    "user_screen_acceptance": "passed",
+    "time": 1793759887.1934755,
+    "uart_bytes": 420,
+    "observed_windows": [
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29296
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29296
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29296
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29296
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29297
+      }
+    ],
+    "uart_tail": "L3 2625 7271\r\nL3 2626 7271\r\nL3 2626 7271\r\nL3 2625 7271\r\nL3 2626 7271\r\nL3 2626 7271\r\nL3 2625 7270\r\nL3 2626 7271\r\nL3 2625 7271\r\nL3 2626 7271\r\nL3 2626 7271\r\nL3 2625 7271\r\nL3 2626 7271\r\nL3 2626 7271\r\nL3 2625 7270\r\nL3 2626 7271\r\nL3 2625 7271\r\nL3 2626 7271\r\nL3 2626 7271\r\nL3 2625 7271\r\nL3 2626 7271\r\nL3 2626 7271\r\nL3 2625 7270\r\nL3 2626 7271\r\nL3 2625 7271\r\n",
+    "fresh_clock_windows": [
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29296
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9766,
+        "pixel_edges": 29297
+      },
+      {
+        "locks": 3,
+        "reference_edges": 9765,
+        "pixel_edges": 29297
+      }
+    ],
+    "clock_count_matches": true,
+    "synthesized_pixel_mhz": 150.0,
+    "synthesized_serial_mhz": 750.0,
+    "user_feedback": "彩条正常",
+    "feedback_time": 1793760247.5149927
+  },
+  "natural_boot_checks": {
+    "pass": true,
+    "sources": {
+      "sim/tb_ui_natural_boot.v": "7ea1b8d8d391dcf60499cdd651754a3f86ba5b8886294fcc9847201fe6ba3aaf",
+      "sim/tb_ui_serial_boot.v": "e011a2e0c4f65ed4995cf65907cfeef29b33dc5166012ad389b868dd5e7929ca",
+      "src/hdmi/hdmi_ui3_top.v": "afc75e9988f58146653944f7bba2c6787b41d20e81ff901884cc87374d5142f3",
+      "src/hdmi/ui/ui_liss_ram.v": "34510578be552b92d1b3a787500686333a4dcf4bee0a9a39a5e68aa2ef5671ae",
+      "src/hdmi/ui/ui_scope_points.v": "d14ce25018229bbbb1d91d9a1982cd47a025e1cc56829fa2adab33a81eb2aad5",
+      "src/hdmi/ir4/gowin_pll_720p.v": "de4b60c68c33ad5c205246e0ae960b7731926955dce3a659e3093fbdc2b9828f",
+      "src/hdmi/ir4/dvi_tx_top.v": "a16cf49a57f53daf3d653087c077f80f49d2792b30e62ee38160b853c6af92d7",
+      "src/hdmi/ir4/dvi_tx_tmds_enc.v": "d9ce5e96648278b262576c7ebdeaca7b1b6c01f92a8d70e047f155563cd2fc5a",
+      "src/hdmi/ir4/dvi_tx_tmds_phy.v": "5ded7a9f77aade77440e926fe82117ddc9c57459a83d375e2ea71dbb45980976",
+      "src/hdmi/ir4/dvi_tx_clk_drv.v": "ecba868280092effcc40d7b87df6edea15e91b19cae75fc8420ab01c3f539cf6",
+      "src/hdmi/ui_video_mode.vh": "f0e8bf6dac413d3025230a2f9671069b7baf759173f9f20ba7281c162d930597",
+      "src/hdmi/ir4/tmds_encode.mem": "31fdd0137aba70499c760b91b76e5778c375aaca627bee706af073fc3ee17ee8",
+      "src/hdmi/ui/ui1080_font.hex": "296ab10938ab3bdef3504ba482632ee1431e442ec5a9a88e5be1373817e01ca9",
+      "src/hdmi/ui/ui1080_tiles.hex": "497dc6dc54265ed8ec380311d8ba701a76b42afe7334c89f9545c2ea360daaa5",
+      "work/hdmi_production_link/vendor.v": "d3ea97ae502a958baea202cde190d237e4cfbb36cbf6c5817cf82aff3c2a3144",
+      "work/video_primitives/dpb.v": "8026aa0d9d3ea76493e745be363580dbec94271923ffe13d4258ab13ee30916d"
+    },
+    "logs": {
+      "work/hdmi_black/natural.log": "434115ba6d7775e696bc398a270e3dda233095027c5763ce1f2175f2845cdcd3",
+      "work/hdmi_black/ui_serial.log": "71d8ed18b4e29d00c51f2a2ffb10b06ace245de20d3f93971be81f62e3f8ea3d"
+    }
+  },
+  "full_debug_snapshot_inputs": "9b86b90bb0e714a7956dbfb3a0fdf1767445a54b3480cc3ef02ba6b88e03b5d6",
+  "flash_changed": false
+}
