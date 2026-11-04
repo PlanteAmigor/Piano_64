@@ -2,4 +2,5 @@
 `ifndef UI_VIDEO_MODE_VH
 `define UI_VIDEO_MODE_VH
 `define UI_VIDEO_1080P_SINGLE
+`define UI_VIDEO_1080P_HALF
 `endif
