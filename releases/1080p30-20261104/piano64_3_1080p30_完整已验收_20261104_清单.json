@@ -1,0 +1,15 @@
+{
+  "archive": "piano64_3_1080p30_完整已验收_20261104.rar",
+  "bytes": 14913609,
+  "sha256": "03912e5c465027e899f04c9106c9bd312fe917ceb6e353d2f6927c8dd7f5cee3",
+  "source_commit": "013b166b48a90e2ac62b1f12d87681209b38e8fd",
+  "fs_sha256": "b415d6f7619be92d72ee1d4ecf28be18f72244677ebdc6c01758b69f92541508",
+  "files": 496,
+  "format": "RAR5",
+  "integrity_test": "PASS",
+  "extract_all_files_sha256": "PASS",
+  "extracted_source_firmware_check": "PASS",
+  "video_mode": "1080p30.303",
+  "user_accepted": true,
+  "flash_written_for_this_release": false
+}

@@ -1,0 +1,14 @@
+{
+  "mode": "1080p30.303",
+  "resolution": [
+    1920,
+    1080
+  ],
+  "refresh_hz": 30.303030303030305,
+  "archive": "1080p30-20261104/piano64_3_1080p30_完整已验收_20261104.rar",
+  "archive_sha256": "03912e5c465027e899f04c9106c9bd312fe917ceb6e353d2f6927c8dd7f5cee3",
+  "source_commit": "013b166b48a90e2ac62b1f12d87681209b38e8fd",
+  "fs_sha256": "b415d6f7619be92d72ee1d4ecf28be18f72244677ebdc6c01758b69f92541508",
+  "user_accepted": true,
+  "flash_written_for_this_release": false
+}
