@@ -13,6 +13,10 @@ assert sim['frozen_inputs_sha256']==sha(W/'inputs.json')
 assert {x['mode'] for x in sim['results']}=={1,2}
 for row in sim['results']:
  assert row['pass'] and all(sha(Path(p))==h for p,h in row['sources'].items())
+uart_check=json.loads((R/'work/hdmi_black/debug_uart.json').read_text())
+assert uart_check['pass'] and all(sha(R/p)==h for p,h in uart_check['sources'].items())
+assert sha(W/'diagnostics/hdmi_link/full_debug_uart.v')==uart_check['sources']['diagnostics/hdmi_link/full_debug_uart.v']
+assert sha(W/'src/sd/uart_tx.v')==uart_check['sources']['src/sd/uart_tx.v']
 fs=W/'impl/pnr/piano64_full.fs';assert sha(fs)==m['fs_sha256']
 syn=(W/'impl/gwsynthesis/piano64_full_syn.rpt.html').read_text();clocks={}
 for row in re.findall(r'<tr[^>]*>(.*?)</tr>',syn,re.S):

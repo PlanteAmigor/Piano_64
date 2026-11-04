@@ -652,5 +652,15 @@
       "programmer_sha256": "7d1ebf1d2a9f7fc677b0e017e0ca285904d57a5fe3676211aa1145365c93292b"
     },
     "loaded": false
+  },
+  "debug_uart_check": {
+    "pass": true,
+    "sources": {
+      "sim/tb_hdmi_debug_uart.v": "1e31a69d49fb9507f314bbc1790173c53482f5c35407ddaeecaa955d482bde8a",
+      "diagnostics/hdmi_link/full_debug_uart.v": "e7155da1abf09d1372d1822485b8aeb9d99580d44d54ecca0026d81f308b1302",
+      "src/sd/uart_tx.v": "cf55d0aa1647183b7a1a2106c45dc3f0b56b71c54f58f224bd86f1c987807393"
+    },
+    "log_sha256": "3d3c523f0e463dd842942785e8ee4e03eed9d4dc18635d3a097be763b7238d28",
+    "limits": "Constant 96-bit status through actual UART pins at 115200 8N1; full diagnostic multi-bit CDC remains approximate."
   }
 }
