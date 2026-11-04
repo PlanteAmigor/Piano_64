@@ -11,9 +11,11 @@ R = Path(__file__).resolve().parents[2]
 D = Path(__file__).resolve().parent
 ap = argparse.ArgumentParser()
 ap.add_argument('--prepare-only', action='store_true')
-ap.add_argument('--optimize-ui', action='store_true', help='Shorten the two measured UI timing failures without changing pixel latency')
+ap.add_argument('--optimize-ui', action='store_true', help='Previous parallel-mask experiment; retained for reproducibility')
+ap.add_argument('--group-ui', action='store_true', help='Register palette groups in the existing stage5; preserve pixel latency')
 a = ap.parse_args()
-W = R / ('work/hdmi_serial_clock60_opt' if a.optimize_ui else 'work/hdmi_serial_clock60')
+assert not (a.optimize_ui and a.group_ui)
+W = R / ('work/hdmi_serial_clock60_group' if a.group_ui else ('work/hdmi_serial_clock60_opt' if a.optimize_ui else 'work/hdmi_serial_clock60'))
 assert not W.exists(), W
 subprocess.run(['python3', 'tools/check_build.py'], cwd=R, check=True)
 m = json.loads((R / 'impl/pnr/piano64_full.manifest.json').read_text())
@@ -59,7 +61,7 @@ p.write_text(s.replace(old, old + '\n        .ddr_bit_clock(ddr_bit_clock),'))
         .reset(1'b0), .data(10'b0000011111), .tmds_lane(tmds_clk));
 endmodule
 ''')
-if a.optimize_ui:
+if a.optimize_ui or a.group_ui:
     p = W / 'src/hdmi/hdmi_ui3_top.v'
     s = p.read_text()
     old = '    wire lane_in0=px>=768 && px<1792 && py>=256 && py<880 && px[6:0]>=16 && px[6:0]<112;'
@@ -81,7 +83,8 @@ if a.optimize_ui:
         if(text5)rgb=text_color5;
     end'''
     assert old in s
-    s = s.replace(old, '''    // Highest layer wins, as before, using parallel masks instead of a mux chain.
+    if a.optimize_ui:
+        s = s.replace(old, '''    // Highest layer wins, as before, using parallel masks instead of a mux chain.
     wire [8:0] overlay_flags5={text5,judgment5,note_edge5,note_hit5,note_lead5,note_auto5,liss5,component5,spectrum5};
     reg [8:0] overlay_pick5;
     always @(*)begin
@@ -98,9 +101,26 @@ if a.optimize_ui:
             (24'hF6C77E & {24{overlay_pick5[7]}}) |
             (text_color5 & {24{overlay_pick5[8]}});
     end''')
-    old = '    reg [23:0] rgb_base,rgb_faded,rgb_direct,rgb_r;'
-    assert old in s
-    s = s.replace(old, '    reg [23:0] rgb_base /* synthesis syn_preserve=1 */;\n    reg [23:0] rgb_faded,rgb_direct,rgb_r;')
+        old = '    reg [23:0] rgb_base,rgb_faded,rgb_direct,rgb_r;'
+        assert old in s
+        s = s.replace(old, '    reg [23:0] rgb_base /* synthesis syn_preserve=1 */;\n    reg [23:0] rgb_faded,rgb_direct,rgb_r;')
+    else:
+        s = s.replace(old, '''    // Stage5 resolves two palette groups from stage4 instead of forwarding
+    // every flag/color into one long stage6 priority chain. Total pixel latency
+    // remains identical; stage6 selects only high/low/background.
+    reg [24:0] overlay_hi5 /* synthesis syn_preserve=1 */;
+    reg [24:0] overlay_lo5 /* synthesis syn_preserve=1 */;
+    always @(posedge clk_p)begin
+        overlay_hi5<={text4 || judgment4 || note_edge4 || note_hit4,
+            text4?text_color4:judgment4?24'hF6C77E:note_edge4?24'hD5F5EE:24'h75E6BC};
+        overlay_lo5<={note_lead4 || note_auto4 || liss4 || component4 || spectrum4,
+            note_lead4?note_color4:note_auto4?24'h354957:liss4?liss_color4:
+            component4?24'h718FD0:(spectrum_high4?24'h7DE1DA:24'h3DABB7)};
+    end
+    always @(*)begin
+        rgb=overlay_hi5[24]?overlay_hi5[23:0]:
+            overlay_lo5[24]?overlay_lo5[23:0]:background3;
+    end''')
     p.write_text(s)
 # Freeze the same benches and original vendor models used by production checks.
 for name in ['probe.v', 'tb_link.v']:

@@ -85,5 +85,27 @@
     "fs_sha256": "eea6d32be791d6d9463a037ca414c3552c6d6e14e565c01a8ae5f7600952a439"
   },
   "flash_changed": false,
-  "root_30hz_production_inputs_changed": false
+  "root_30hz_production_inputs_changed": false,
+  "grouped_variant": {
+    "status": "pnr_running_not_loaded",
+    "source_sha256": "5557527444430af6b89582571395e2bc67b2aa181bbf37bd2bf079d1e52c2826",
+    "inputs_sha256": "e7a4f2020fbeb7a249d63e94d6d860da54f8f756514086d669337c2b4f2c432a",
+    "equivalence": {
+      "pass": true,
+      "source_sha256": "5557527444430af6b89582571395e2bc67b2aa181bbf37bd2bf079d1e52c2826",
+      "reference_sha256": "afc75e9988f58146653944f7bba2c6787b41d20e81ff901884cc87374d5142f3",
+      "bench_sha256": "fc28bbc3abebf8ef776ffc55e42f900f4e6466326c89f5704dda92381c5f45c7",
+      "test_log_sha256": "ca9fff2fc6ea00ddf28d2ba67b0a741ddb8b2e069279e9865c24617d42feec42",
+      "render_sources_sha256": "f3b1e17141db9efd343dcf96c63cf5e9281e062e30a99f67b78c92254d7e3346",
+      "identical_pages": 13,
+      "coverage": "Two actual UI modules: all512 overlay combinations across all16 fade levels, random palette; every12-bit X and Y coordinate with cross-axis window boundaries; exact RGB and registered fade/area latency. All13 rendered pages match accepted30Hz pixel for pixel."
+    },
+    "changes": [
+      "Preserve total pixel latency; resolve upper/lower overlay groups in existing stage5, only two palette muxes in stage6",
+      "Precompute teaching vertical range beside py"
+    ],
+    "constraints_relaxed": false,
+    "flash_changed": false
+  },
+  "current_flash": "1080p30.303,100%readback verified and user-confirmed cold boot picture keys audio"
 }

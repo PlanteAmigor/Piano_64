@@ -4,8 +4,8 @@ from pathlib import Path
 import argparse,hashlib,json,re,subprocess,time
 
 R=Path(__file__).resolve().parents[2]
-ap=argparse.ArgumentParser();ap.add_argument('--optimize-ui',action='store_true');a=ap.parse_args()
-W=R/('work/hdmi_serial_clock60_opt' if a.optimize_ui else 'work/hdmi_serial_clock60')
+ap=argparse.ArgumentParser();ap.add_argument('--optimize-ui',action='store_true');ap.add_argument('--group-ui',action='store_true');a=ap.parse_args();assert not(a.optimize_ui and a.group_ui)
+W=R/('work/hdmi_serial_clock60_group' if a.group_ui else ('work/hdmi_serial_clock60_opt' if a.optimize_ui else 'work/hdmi_serial_clock60'))
 B=R/'work/hdmi_production30'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 m=json.loads((W/'manifest.json').read_text())
@@ -23,7 +23,7 @@ assert accepted['status']=='user_accepted_sram'
 assert accepted['fs_sha256']==base['bitstreams']['piano64_full.fs']
 changed={p for p,h in base['inputs'].items() if sha(W/p)!=h}
 allowed={'src/hdmi/ui_video_mode.vh','src/piano64_hdmi.sdc','src/hdmi/ir4/dvi_tx_top.v','src/hdmi/ir4/dvi_tx_clk_drv.v'}
-if a.optimize_ui:
+if a.optimize_ui or a.group_ui:
  allowed.add('src/hdmi/hdmi_ui3_top.v')
  proof=json.loads((W/'ui_equivalence.json').read_text())
  assert proof['pass'] and proof['source_sha256']==sha(W/'src/hdmi/hdmi_ui3_top.v')

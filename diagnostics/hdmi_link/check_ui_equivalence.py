@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """Compare optimized real UI RTL with accepted UI and all 13 saved pages."""
 from pathlib import Path
-import hashlib,json,shutil,subprocess
+import argparse,hashlib,json,shutil,subprocess
 from PIL import Image,ImageChops
 R=Path(__file__).resolve().parents[2]
-W=R/'work/hdmi_serial_clock60_opt';T=W/'equivalence';T.mkdir(exist_ok=True)
+ap=argparse.ArgumentParser();ap.add_argument('--group-ui',action='store_true');a=ap.parse_args()
+W=R/('work/hdmi_serial_clock60_group' if a.group_ui else 'work/hdmi_serial_clock60_opt');T=W/'equivalence';T.mkdir(exist_ok=True)
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 old=R/'work/hdmi_production30/screens/inputs/src/hdmi/hdmi_ui3_top.v'
 base=json.loads((R/'work/hdmi_production30/offline_verified/piano64_full.manifest.json').read_text())
 assert sha(old)==base['inputs']['src/hdmi/hdmi_ui3_top.v']
 (T/'reference.v').write_text(old.read_text().replace('module hdmi_ui3_top (','module hdmi_ui3_top_reference (',1))
-bench=R/'diagnostics/hdmi_link/tb_ui_equivalence.v';shutil.copy2(bench,T/bench.name)
+bench=R/'diagnostics/hdmi_link/tb_ui_equivalence.v';s=bench.read_text()
+if a.group_ui:
+ for name in ['spectrum','component','liss','note_auto','note_lead','note_hit','note_edge','judgment','text','spectrum_high','liss_color','note_color','text_color']:
+  s=s.replace('.'+name+'5=','.'+name+'4=')
+(T/bench.name).write_text(s)
 files=[T/bench.name,T/'reference.v',W/'src/hdmi/hdmi_ui3_top.v',W/'src/hdmi/ui/ui_liss_ram.v',W/'src/hdmi/ui/ui_scope_points.v']
 source=sha(W/'src/hdmi/hdmi_ui3_top.v')
 cmd=['iverilog','-g2012','-DSIM_UI3','-s','tb_ui_equivalence','-o',str(T/'check.vvp'),*[str(p) for p in files]]
