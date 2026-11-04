@@ -1,5 +1,5 @@
 {
-  "status": "flash_verified_cold_boot_pending",
+  "status": "flash_cold_boot_user_accepted",
   "build": {
     "video_mode": "1080p30.303",
     "pll_clocks_mhz": {
@@ -65,11 +65,10 @@
     "user_feedback": "pending"
   },
   "diagnostic_feedback": "all original UI, blue and independent bars visible; audio not separately accepted",
-  "main_flash": "accepted1080p30.303; write and100%readback verified; cold boot pending",
+  "main_flash": "accepted1080p30.303;100%readback verified; user confirmed cold boot picture/keys/audio normal",
   "limits": [
     "60.606Hz full production black screen unresolved",
-    "18 latency scenarios reused only after every recorded source SHA matched; not remeasured",
-    "1080p30.303 Flash cold boot pending user confirmation"
+    "18 latency scenarios reused only after every recorded source SHA matched; not remeasured"
   ],
   "acceptance": {
     "time": 1793764650.1311524,
@@ -106,5 +105,13 @@
     "verify_requested": true,
     "readback_verified": true,
     "cold_boot": "pending_user_confirmation"
+  },
+  "cold_boot_acceptance": {
+    "time": 1793767810.7803836,
+    "status": "flash_cold_boot_user_accepted",
+    "user_feedback": "冷启动后三页、按键和声音都正常",
+    "fs_sha256": "b415d6f7619be92d72ee1d4ecf28be18f72244677ebdc6c01758b69f92541508",
+    "flash_record_sha256": "50982aeaddbb4dce6f78800604039daac46c01266f7ee743eb2a1353573bff91",
+    "readback_verified": true
   }
 }

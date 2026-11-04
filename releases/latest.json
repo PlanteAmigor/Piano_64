@@ -12,5 +12,5 @@
   "user_accepted": true,
   "flash_written_for_this_release": true,
   "flash_readback_verified": true,
-  "cold_boot": "pending_user_confirmation"
+  "cold_boot": "user_confirmed_pass"
 }

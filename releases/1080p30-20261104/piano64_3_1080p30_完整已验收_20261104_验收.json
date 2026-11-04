@@ -221,5 +221,13 @@
     "readback_verified": true,
     "cold_boot": "pending_user_confirmation"
   },
-  "archive_unchanged_after_flash": true
+  "archive_unchanged_after_flash": true,
+  "cold_boot_acceptance": {
+    "time": 1793767810.7803836,
+    "status": "flash_cold_boot_user_accepted",
+    "user_feedback": "冷启动后三页、按键和声音都正常",
+    "fs_sha256": "b415d6f7619be92d72ee1d4ecf28be18f72244677ebdc6c01758b69f92541508",
+    "flash_record_sha256": "50982aeaddbb4dce6f78800604039daac46c01266f7ee743eb2a1353573bff91",
+    "readback_verified": true
+  }
 }
