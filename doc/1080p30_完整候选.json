@@ -1,5 +1,5 @@
 {
-  "status": "sram_loaded_user_acceptance_pending",
+  "status": "user_accepted_sram",
   "build": {
     "video_mode": "1080p30.303",
     "pll_clocks_mhz": {
@@ -67,8 +67,19 @@
   "diagnostic_feedback": "all original UI, blue and independent bars visible; audio not separately accepted",
   "main_flash": "stable accepted 720p; unchanged",
   "limits": [
-    "Full production 30.303Hz user acceptance pending",
     "60.606Hz full production black screen unresolved",
-    "18 latency scenarios reused only after every recorded source SHA matched; not remeasured"
-  ]
+    "18 latency scenarios reused only after every recorded source SHA matched; not remeasured",
+    "1080p30.303 not flashed or cold-boot tested; Flash remains accepted 720p"
+  ],
+  "acceptance": {
+    "time": 1793764650.1311524,
+    "status": "user_accepted_sram",
+    "user_feedback": "三页、按键和声音都正常",
+    "scope": "Response to full 1080p30.303 candidate checklist: sustained three pages and page switching, fast/chord/release keys, dizi/suona sustain and reverb",
+    "fs_sha256": "b415d6f7619be92d72ee1d4ecf28be18f72244677ebdc6c01758b69f92541508",
+    "load_record_sha256": "7b105921ab03aa15e1a87373d37069cac2ee59289fc8485af28165f21e117558",
+    "verification_sha256": "bb62a9bc57ebc7bd875880d25c6f2e4ded48a96a83f80ef63eea054f8ebfb9b0",
+    "flash_changed": false,
+    "cold_boot_tested": false
+  }
 }
