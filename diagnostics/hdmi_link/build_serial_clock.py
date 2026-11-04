@@ -11,8 +11,9 @@ R = Path(__file__).resolve().parents[2]
 D = Path(__file__).resolve().parent
 ap = argparse.ArgumentParser()
 ap.add_argument('--prepare-only', action='store_true')
+ap.add_argument('--optimize-ui', action='store_true', help='Shorten the two measured UI timing failures without changing pixel latency')
 a = ap.parse_args()
-W = R / 'work/hdmi_serial_clock60'
+W = R / ('work/hdmi_serial_clock60_opt' if a.optimize_ui else 'work/hdmi_serial_clock60')
 assert not W.exists(), W
 subprocess.run(['python3', 'tools/check_build.py'], cwd=R, check=True)
 m = json.loads((R / 'impl/pnr/piano64_full.manifest.json').read_text())
@@ -58,6 +59,49 @@ p.write_text(s.replace(old, old + '\n        .ddr_bit_clock(ddr_bit_clock),'))
         .reset(1'b0), .data(10'b0000011111), .tmds_lane(tmds_clk));
 endmodule
 ''')
+if a.optimize_ui:
+    p = W / 'src/hdmi/hdmi_ui3_top.v'
+    s = p.read_text()
+    old = '    wire lane_in0=px>=768 && px<1792 && py>=256 && py<880 && px[6:0]>=16 && px[6:0]<112;'
+    assert old in s
+    s = s.replace(old, '''    // Compute this vertical window alongside py; lane_in0 keeps its pixel stage.
+    reg roll_y_valid0 /* synthesis syn_preserve=1 */;
+    always @(posedge clk_p)roll_y_valid0<=logical_y>=256 && logical_y<880;
+    wire lane_in0=px>=768 && px<1792 && roll_y_valid0 && px[6:0]>=16 && px[6:0]<112;''')
+    old = '''    always @(*)begin
+        rgb=background3;
+        if(spectrum5)rgb=spectrum_high5?24'h7DE1DA:24'h3DABB7;
+        if(component5)rgb=24'h718FD0;
+        if(liss5)rgb=liss_color5;
+        if(note_auto5)rgb=24'h354957;
+        if(note_lead5)rgb=note_color5;
+        if(note_hit5)rgb=24'h75E6BC;
+        if(note_edge5)rgb=24'hD5F5EE;
+        if(judgment5)rgb=24'hF6C77E;
+        if(text5)rgb=text_color5;
+    end'''
+    assert old in s
+    s = s.replace(old, '''    // Highest layer wins, as before, using parallel masks instead of a mux chain.
+    wire [8:0] overlay_flags5={text5,judgment5,note_edge5,note_hit5,note_lead5,note_auto5,liss5,component5,spectrum5};
+    reg [8:0] overlay_pick5;
+    always @(*)begin
+        for(integer layer=0;layer<9;layer=layer+1)
+            overlay_pick5[layer]=overlay_flags5[layer] && !(|(overlay_flags5>>(layer+1)));
+        rgb=(background3 & {24{!(|overlay_flags5)}}) |
+            ((spectrum_high5?24'h7DE1DA:24'h3DABB7) & {24{overlay_pick5[0]}}) |
+            (24'h718FD0 & {24{overlay_pick5[1]}}) |
+            (liss_color5 & {24{overlay_pick5[2]}}) |
+            (24'h354957 & {24{overlay_pick5[3]}}) |
+            (note_color5 & {24{overlay_pick5[4]}}) |
+            (24'h75E6BC & {24{overlay_pick5[5]}}) |
+            (24'hD5F5EE & {24{overlay_pick5[6]}}) |
+            (24'hF6C77E & {24{overlay_pick5[7]}}) |
+            (text_color5 & {24{overlay_pick5[8]}});
+    end''')
+    old = '    reg [23:0] rgb_base,rgb_faded,rgb_direct,rgb_r;'
+    assert old in s
+    s = s.replace(old, '    reg [23:0] rgb_base /* synthesis syn_preserve=1 */;\n    reg [23:0] rgb_faded,rgb_direct,rgb_r;')
+    p.write_text(s)
 # Freeze the same benches and original vendor models used by production checks.
 for name in ['probe.v', 'tb_link.v']:
     shutil.copy2(D / name, W / name)

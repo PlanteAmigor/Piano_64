@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Load only the timing-clean, frozen 60.606Hz serialized-clock experiment."""
 from pathlib import Path
-import hashlib,json,re,subprocess,time
+import argparse,hashlib,json,re,subprocess,time
 
 R=Path(__file__).resolve().parents[2]
-W=R/'work/hdmi_serial_clock60'
+ap=argparse.ArgumentParser();ap.add_argument('--optimize-ui',action='store_true');a=ap.parse_args()
+W=R/('work/hdmi_serial_clock60_opt' if a.optimize_ui else 'work/hdmi_serial_clock60')
 B=R/'work/hdmi_production30'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 m=json.loads((W/'manifest.json').read_text())
@@ -21,7 +22,17 @@ assert m['base_manifest']==base
 assert accepted['status']=='user_accepted_sram'
 assert accepted['fs_sha256']==base['bitstreams']['piano64_full.fs']
 changed={p for p,h in base['inputs'].items() if sha(W/p)!=h}
-assert changed=={'src/hdmi/ui_video_mode.vh','src/piano64_hdmi.sdc','src/hdmi/ir4/dvi_tx_top.v','src/hdmi/ir4/dvi_tx_clk_drv.v'},changed
+allowed={'src/hdmi/ui_video_mode.vh','src/piano64_hdmi.sdc','src/hdmi/ir4/dvi_tx_top.v','src/hdmi/ir4/dvi_tx_clk_drv.v'}
+if a.optimize_ui:
+ allowed.add('src/hdmi/hdmi_ui3_top.v')
+ proof=json.loads((W/'ui_equivalence.json').read_text())
+ assert proof['pass'] and proof['source_sha256']==sha(W/'src/hdmi/hdmi_ui3_top.v')
+ assert proof['identical_pages']==13
+ assert proof['bench_sha256']==sha(W/'equivalence/tb_ui_equivalence.v')
+ assert proof['test_log_sha256']==sha(W/'equivalence/check.log')
+ assert proof['render_sources_sha256']==sha(W/'screens/sources.json')
+ for p,h in json.loads((W/'screens/sources.json').read_text()).items():assert sha(W/p)==h,p
+assert changed==allowed,changed
 for leaf,mhz in [('CLKOUT0',150),('CLKOUT1',750)]:
  assert m['pll_clocks_mhz']['u_hdmi/u_pll/u_pixel/PLL_inst/'+leaf+'.default_gen_clk']==mhz
 # A fresh parse guards the actual post-route report as well as its manifest.

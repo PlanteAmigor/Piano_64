@@ -1,0 +1,57 @@
+{
+  "video_mode": "1920x1080 approximately60.606Hz,150/750MHz",
+  "accepted_fallback": {
+    "time": 1793764650.1311524,
+    "status": "user_accepted_sram",
+    "user_feedback": "三页、按键和声音都正常",
+    "scope": "Response to full 1080p30.303 candidate checklist: sustained three pages and page switching, fast/chord/release keys, dizi/suona sustain and reverb",
+    "fs_sha256": "b415d6f7619be92d72ee1d4ecf28be18f72244677ebdc6c01758b69f92541508",
+    "load_record_sha256": "7b105921ab03aa15e1a87373d37069cac2ee59289fc8485af28165f21e117558",
+    "verification_sha256": "bb62a9bc57ebc7bd875880d25c6f2e4ded48a96a83f80ef63eea054f8ebfb9b0",
+    "flash_changed": false,
+    "cold_boot_tested": false
+  },
+  "initial_variant": {
+    "violations": {
+      "setup": 2,
+      "hold": 0
+    },
+    "failed_paths": [
+      {
+        "slack_ns": -0.021,
+        "from": "u_hdmi/py_11_s0",
+        "to": "u_hdmi/roll_area1_s0"
+      },
+      {
+        "slack_ns": -0.013,
+        "from": "u_hdmi/liss5_s0",
+        "to": "u_hdmi/fade_g_11_s0"
+      }
+    ],
+    "fs_sha256": "e60c39e91ea473e93a7be7f4980c861cdf8f85325493dfe7c4f237e147c48747",
+    "manifest_sha256": "708a49d0c8187e756f973e5186fd68aa628a9ce1629fef69296a52544d6477ff",
+    "sram_loaded": false
+  },
+  "optimized_variant": {
+    "status": "synthesis_in_progress_not_loaded",
+    "inputs_sha256": "518a5b03c1902f3a8abe620d77d1ff11d59db2776bbff343f3ea5e79a721c281",
+    "equivalence": {
+      "pass": true,
+      "source_sha256": "1c6bbc45c0a1715bfd1e534279f0f1f460823b9240ec802186c367bf84e2d8a4",
+      "reference_sha256": "afc75e9988f58146653944f7bba2c6787b41d20e81ff901884cc87374d5142f3",
+      "bench_sha256": "56247976e19c3d31148dc966382e0125fa667f55f44ac997e3783ac524ec1d18",
+      "test_log_sha256": "d13e78ee64c84a78b8801acce8b89a6d1e0c287a5a3139b6e9fc288b4c285f3a",
+      "render_sources_sha256": "3d6576525327ea4fdfc2909055dbebe340feac9294121db815cec1a8adfb242e",
+      "identical_pages": 13,
+      "coverage": "Two actual UI modules: all512 overlay combinations across all16 fade levels, random palette; every12-bit X and Y coordinate with cross-axis window boundaries; exact RGB and registered fade/area latency. All13 rendered pages match accepted30Hz pixel for pixel."
+    },
+    "changes": [
+      "Precompute teaching vertical window beside py at the existing pixel stage",
+      "Replace serial overlay priority mux with equivalent parallel priority masks",
+      "Preserve rgb_base register boundary"
+    ],
+    "constraints_relaxed": false
+  },
+  "flash_changed": false,
+  "root_30hz_production_inputs_changed": false
+}
