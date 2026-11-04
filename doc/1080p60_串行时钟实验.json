@@ -33,7 +33,7 @@
     "sram_loaded": false
   },
   "optimized_variant": {
-    "status": "synthesis_in_progress_not_loaded",
+    "status": "timing_rejected_not_loaded",
     "inputs_sha256": "518a5b03c1902f3a8abe620d77d1ff11d59db2776bbff343f3ea5e79a721c281",
     "equivalence": {
       "pass": true,
@@ -50,7 +50,39 @@
       "Replace serial overlay priority mux with equivalent parallel priority masks",
       "Preserve rgb_base register boundary"
     ],
-    "constraints_relaxed": false
+    "constraints_relaxed": false,
+    "violations": {
+      "setup": 116,
+      "hold": 0
+    },
+    "worst_paths": [
+      {
+        "slack_ns": -2.706,
+        "from": "u_hdmi/g_roll_coord[4].y_q_6_s0",
+        "to": "u_hdmi/above_gt1_4_s1"
+      },
+      {
+        "slack_ns": -2.668,
+        "from": "u_hdmi/col1_1_s0",
+        "to": "u_hdmi/dynamic_char[4]_3_s0"
+      },
+      {
+        "slack_ns": -2.581,
+        "from": "u_hdmi/vcnt_1_s0",
+        "to": "u_hdmi/tile_addr_9_s0"
+      },
+      {
+        "slack_ns": -2.534,
+        "from": "u_hdmi/vcnt_1_s0",
+        "to": "u_hdmi/tile_addr_7_s0"
+      },
+      {
+        "slack_ns": -2.534,
+        "from": "u_hdmi/vcnt_1_s0",
+        "to": "u_hdmi/tile_addr_8_s0"
+      }
+    ],
+    "fs_sha256": "eea6d32be791d6d9463a037ca414c3552c6d6e14e565c01a8ae5f7600952a439"
   },
   "flash_changed": false,
   "root_30hz_production_inputs_changed": false
