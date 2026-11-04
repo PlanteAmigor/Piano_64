@@ -10,5 +10,7 @@
   "source_commit": "013b166b48a90e2ac62b1f12d87681209b38e8fd",
   "fs_sha256": "b415d6f7619be92d72ee1d4ecf28be18f72244677ebdc6c01758b69f92541508",
   "user_accepted": true,
-  "flash_written_for_this_release": false
+  "flash_written_for_this_release": true,
+  "flash_readback_verified": true,
+  "cold_boot": "pending_user_confirmation"
 }

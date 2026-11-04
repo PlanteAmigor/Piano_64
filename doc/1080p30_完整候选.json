@@ -1,5 +1,5 @@
 {
-  "status": "user_accepted_sram",
+  "status": "flash_verified_cold_boot_pending",
   "build": {
     "video_mode": "1080p30.303",
     "pll_clocks_mhz": {
@@ -65,11 +65,11 @@
     "user_feedback": "pending"
   },
   "diagnostic_feedback": "all original UI, blue and independent bars visible; audio not separately accepted",
-  "main_flash": "stable accepted 720p; unchanged",
+  "main_flash": "accepted1080p30.303; write and100%readback verified; cold boot pending",
   "limits": [
     "60.606Hz full production black screen unresolved",
     "18 latency scenarios reused only after every recorded source SHA matched; not remeasured",
-    "1080p30.303 not flashed or cold-boot tested; Flash remains accepted 720p"
+    "1080p30.303 Flash cold boot pending user confirmation"
   ],
   "acceptance": {
     "time": 1793764650.1311524,
@@ -81,5 +81,30 @@
     "verification_sha256": "bb62a9bc57ebc7bd875880d25c6f2e4ded48a96a83f80ef63eea054f8ebfb9b0",
     "flash_changed": false,
     "cold_boot_tested": false
+  },
+  "flash": {
+    "time": 1793767654.0832968,
+    "command": [
+      "openFPGALoader",
+      "-b",
+      "tangmega138k",
+      "--ftdi-serial",
+      "2025030317",
+      "--write-flash",
+      "--verify",
+      "--quiet",
+      "/mnt/project/InstruementSound/piano64_3/work/ui1080/review23/work/hdmi_production30/offline_verified/piano64_full.fs"
+    ],
+    "exit_code": 0,
+    "fs_sha256": "b415d6f7619be92d72ee1d4ecf28be18f72244677ebdc6c01758b69f92541508",
+    "manifest_sha256": "b8c76ff528eaf89a42791a0ec9050e094f143fc689ad1e91dd1c222f8ce0574f",
+    "sram_acceptance_sha256": "8f5eef515b29c80b1953a361609ab7388c272ec0110c03680cc2e13881fd1651",
+    "programmer_sha256": "5a7ee41723c708126da70283bb27b0d07763b726346a3e292e48a56a6bcbca45",
+    "log": "work/hdmi_production30/flash_1793767654083166009.log",
+    "log_sha256": "63f4fbbb9114f260a20bbd61163e153b97334c0b52c705d021cbaeaf138cc85a",
+    "mode": "flash",
+    "verify_requested": true,
+    "readback_verified": true,
+    "cold_boot": "pending_user_confirmation"
   }
 }
