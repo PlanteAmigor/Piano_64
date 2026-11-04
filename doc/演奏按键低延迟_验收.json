@@ -1,7 +1,7 @@
 {
   "revision": 2,
   "source_commit": "80239bf6553dbc9d79453b1eaf9b5e7bb8305937",
-  "status": "revision2_digital_and_build_passed_sram_programmed_physical_acceptance_pending",
+  "status": "revision2_user_accepted_720p_flash_readback_verified_coldboot_pending",
   "video_mode": "720p60.606",
   "goal_note_on_us": 5000,
   "debounce": {
@@ -235,8 +235,8 @@
     "board_serial": "2025030317",
     "fs_sha256": "01198ac8a7547f963be728f345e2334af594c40e91f66b9439eac5f6e02bdff7",
     "video_mode": "720p60.606",
-    "screen_verified": false,
-    "physical_keyboard_verified": false,
+    "screen_verified": true,
+    "physical_keyboard_verified": true,
     "flash_changed": false,
     "press_ms": 0.5,
     "release_ms": 20,
@@ -257,7 +257,10 @@
     "optical_valid_frame_lines": 0,
     "optical_error_lines": 0,
     "uart_tail_preview": "",
-    "time": 1793751111.6003118
+    "time": 1793751111.6003118,
+    "confirmed_by": "user",
+    "user_feedback": "都正常，固化",
+    "physical_confirmation_date": "2026-11-04"
   },
   "rejected_revision1": {
     "commit": "c8c0cde",
@@ -297,8 +300,8 @@
     "5ms指标指按下起音，释放连续确认20ms；松开不足20ms的同键重按可能合并",
     "数字仿真不含模拟DAC、功放、扬声器与声传播延迟",
     "有效手势、P64已载入及模型限定的DDR等待为测量前提",
-    "第一版实物失败的逻辑路径已复现，第二版实物声音仍需用户验收",
-    "加载后3秒及随后5秒UART窗口均为0字节；不能据此确认光学链路正常，待用户实物确认并继续核查"
+    "用户已确认画面、按键和声音正常；先前UART无数据仍作为独立诊断现象保留，不据此推翻或替代实物验收",
+    "本次Flash已100%读回校验；断电冷启动尚待单独确认"
   ],
   "uart_followup": {
     "time": 1793751139.4474392,
@@ -307,5 +310,43 @@
     "valid_frame_lines": 0,
     "error_lines": 0,
     "tail": ""
+  },
+  "flash": {
+    "command": [
+      "openFPGALoader",
+      "-b",
+      "tangmega138k",
+      "--ftdi-serial",
+      "2025030317",
+      "--write-flash",
+      "--verify",
+      "--quiet",
+      "/mnt/project/InstruementSound/piano64_3/impl/pnr/piano64_full.fs"
+    ],
+    "exit_code": 0,
+    "fs_sha256": "01198ac8a7547f963be728f345e2334af594c40e91f66b9439eac5f6e02bdff7",
+    "verify_requested": true,
+    "user_confirmed_sram": true,
+    "flash_cold_boot_user_confirmed": false,
+    "time": 1793752721.4525292,
+    "write_verified": true
+  },
+  "physical_acceptance": {
+    "confirmed_by": "user",
+    "date": "2026-11-04",
+    "feedback": "都正常，固化",
+    "screen_verified": true,
+    "keyboard_and_sound_verified": true,
+    "flash_cold_boot_verified": false
+  },
+  "theoretical_latency": {
+    "press_qualification_ms": 0.5,
+    "synchronization_and_edge_detection": "额外数个50MHz时钟，约0.1微秒以内",
+    "sample_period_us": 20.48,
+    "release_qualification_ms": 20,
+    "scenarios": 18,
+    "max_simulated_pin_to_complete_i2s_us": 2793.91,
+    "bounded_test_not_universal_worst_case": true,
+    "analog_latency_measured": false
   }
 }
