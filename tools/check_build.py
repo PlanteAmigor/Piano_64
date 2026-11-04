@@ -32,8 +32,10 @@ def main():
             for pin,mul,div in [('CLKOUT0',3,2),('CLKOUT1',15,2)]:
                 assert f'-multiply_by {mul} -divide_by {div} [get_pins {{u_hdmi/u_pll/u_pixel/PLL_inst/{pin}}}]' in sdc,'Video PLL/constraint mode mismatch'
         else:
-            for pin,div in [('CLKOUT0',5),('CLKOUT1',1)]:
-                assert f'-multiply_by 27 -divide_by {div} [get_pins {{u_hdmi/u_pll/u_pixel/PLL_inst/{pin}}}]' in sdc,'Video PLL/constraint mode mismatch'
+            assert '-multiply_by 27 -divide_by 1 [get_pins {u_hdmi/u_pll/u_pixel/PLL_inst/CLKOUT1}]' in sdc,'Serializer clock mismatch'
+            assert '-source [get_pins {u_hdmi/u_pll/u_pixel/PLL_inst/CLKOUT1}] -divide_by 5 [get_pins {u_hdmi/u_pll/u_pixel_div/CLKOUT}]' in sdc,'Native pixel divider constraint mismatch'
+            pll=(ROOT/'src/hdmi/ir4/gowin_pll_720p.v').read_text()
+            assert 'CLKDIV #(.DIV_MODE("5")) u_pixel_div' in pll,'Native pixel divider missing'
         # Check the tool's own PLL clock calculation as well as the SDC.
         # An explicit SDC alone can hide an incorrectly interpreted multiplier.
         synth=(ROOT/'impl/gwsynthesis/piano64_full_syn.rpt.html').read_text()
@@ -42,7 +44,7 @@ def main():
             cells=[re.sub(r'<[^>]+>','',c).strip() for c in re.findall(r'<td[^>]*>(.*?)</td>',row,re.S)]
             if len(cells)>=10 and cells[2]=='Generated' and cells[1].startswith('u_hdmi/u_pll/') and cells[1].endswith('.default_gen_clk'):
                 pll_clocks[cells[1]]=float(cells[4])
-        for leaf,want in [('u_pixel/PLL_inst/CLKOUT0',75.0 if low else 148.5),('u_pixel/PLL_inst/CLKOUT1',375.0 if low else 742.5)]+([] if low else [('u_ref/PLL_inst/CLKOUT0',27.5)]):
+        for leaf,want in [(('u_pixel/PLL_inst/CLKOUT0' if low else 'u_pixel_div/CLKOUT'),75.0 if low else 148.5),('u_pixel/PLL_inst/CLKOUT1',375.0 if low else 742.5)]+([] if low else [('u_ref/PLL_inst/CLKOUT0',27.5)]):
             name='u_hdmi/u_pll/'+leaf+'.default_gen_clk'
             assert abs(pll_clocks.get(name,-1)-want)<0.001,'PLL frequency mismatch: '+name
         html=(PNR/'piano64_full_tr_content.html').read_text()

@@ -19,8 +19,8 @@ def main():
         'create_generated_clock -name clk_ser -source [get_ports {CLOCK_50}] -multiply_by 15 -divide_by 2 [get_pins {u_hdmi/u_pll/u_pixel/PLL_inst/CLKOUT1}]'
     ) if low else (
         'create_generated_clock -name clk_hdmi_ref -source [get_ports {CLOCK_50}] -multiply_by 11 -divide_by 20 [get_pins {u_hdmi/u_pll/u_ref/PLL_inst/CLKOUT0}]\n'
-        'create_generated_clock -name clk_pix -source [get_pins {u_hdmi/u_pll/u_ref/PLL_inst/CLKOUT0}] -multiply_by 27 -divide_by 5 [get_pins {u_hdmi/u_pll/u_pixel/PLL_inst/CLKOUT0}]\n'
-        'create_generated_clock -name clk_ser -source [get_pins {u_hdmi/u_pll/u_ref/PLL_inst/CLKOUT0}] -multiply_by 27 -divide_by 1 [get_pins {u_hdmi/u_pll/u_pixel/PLL_inst/CLKOUT1}]'
+        'create_generated_clock -name clk_ser -source [get_pins {u_hdmi/u_pll/u_ref/PLL_inst/CLKOUT0}] -multiply_by 27 -divide_by 1 [get_pins {u_hdmi/u_pll/u_pixel/PLL_inst/CLKOUT1}]\n'
+        'create_generated_clock -name clk_pix -source [get_pins {u_hdmi/u_pll/u_pixel/PLL_inst/CLKOUT1}] -divide_by 5 [get_pins {u_hdmi/u_pll/u_pixel_div/CLKOUT}]'
     )
     anchor=next(i for i,line in enumerate(lines) if line.startswith('// BANDS / BANDS_TICK'))
     lines.insert(anchor,clocks+'\n');s='\n'.join(lines)+'\n'

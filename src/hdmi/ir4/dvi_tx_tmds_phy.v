@@ -1,3 +1,4 @@
+`include "src/hdmi/ui_video_mode.vh"
 module dvi_tx_tmds_phy(
 	
 	input				pixel_clock,
@@ -33,7 +34,14 @@ module dvi_tx_tmds_phy(
 		.D9(data[9]),
 		.PCLK(pixel_clock),
 		.FCLK(ddr_bit_clock),
-		.RESET(reset_reg)
+`ifdef UI_VIDEO_720P
+        .RESET(reset_reg)
+`else
+        // Configuration GSR initializes OSER10. Keep the serializer running
+        // through pixel-domain resets; encoder reset emits safe control words.
+        // Avoid an unsynchronized fabric-reset release in the fast IO domain.
+        .RESET(1'b0)
+`endif
 	);
 	
 	ELVDS_OBUF tmds_bufds_isnt0 (

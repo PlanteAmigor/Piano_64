@@ -1,7 +1,7 @@
 `include "src/hdmi/ui_video_mode.vh"
 // 1080p60 clock candidate; requires board lock/display verification.
-// Reference: (50 MHz /2) *33 /30 =27.5 MHz (825 MHz VCO).
-// Video: 27.5 MHz *27 =742.5 MHz VCO; /5 pixels, /1 serializer.
+// Reference: 50 MHz *22 /40 =27.5 MHz (1100 MHz VCO; board-counted).
+// Video: 27.5 MHz *27 =742.5 MHz serializer; native HCLK /5 gives pixels.
 // Retain the public module name for existing build scripts.
 module Gowin_PLL_720P(output lock,output clkout0,output clkout1,input clkin);
 `ifdef UI_VIDEO_720P
@@ -11,9 +11,13 @@ module Gowin_PLL_720P(output lock,output clkout0,output clkout1,input clkin);
         .clkin(clkin),.reset(1'b0),.clkout0(clkout0),.clkout1(clkout1),.lock(lock));
 `else
     wire ref_clk,ref_lock,pixel_lock;
-    ui_pll_core #(.FREQ("50"),.IDIV(2),.MDIV(33),.FRAC(0),.DIV0(30),.DIV1(30),.OUT1("FALSE"))
+    ui_pll_core #(.FREQ("50"),.IDIV(1),.MDIV(22),.FRAC(0),.DIV0(40),.DIV1(40),.OUT1("FALSE"))
         u_ref(.clkin(clkin),.reset(1'b0),.clkout0(ref_clk),.clkout1(),.lock(ref_lock));
-    ui_pll_core u_pixel(.clkin(ref_clk),.reset(!ref_lock),.clkout0(clkout0),.clkout1(clkout1),.lock(pixel_lock));
+    ui_pll_core u_pixel(.clkin(ref_clk),.reset(!ref_lock),.clkout0(),.clkout1(clkout1),.lock(pixel_lock));
+    // UG306: use the native HCLK divider for phase-related IOLOGIC PCLK.
+    // Both clocks derive from the very same serializer output, exactly 5:1.
+    CLKDIV #(.DIV_MODE("5")) u_pixel_div(
+        .HCLKIN(clkout1),.RESETN(pixel_lock),.CALIB(1'b0),.CLKOUT(clkout0));
     assign lock=ref_lock && pixel_lock;
 `endif
 endmodule
