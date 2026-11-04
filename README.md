@@ -4,6 +4,8 @@
 
 用户只需按七个音级键及做手势，主旋律的乐器和八度由曲谱指定，其他声部自动伴奏。使用方法见[多乐器教学与显示说明](doc/1080p_多乐器教学.md)和[曲谱播放与教学说明](doc/曲谱教学模式设计.md)。
 
+已验收源码与匹配固件下载：[720p RAR5完整包](releases/720p-20261104/piano64_3_720p_低延迟已验收_4953995.rar)，[交付说明](releases/720p-20261104/piano64_3_720p_低延迟已验收_4953995_说明.md)，[SHA-256](releases/720p-20261104/piano64_3_720p_低延迟已验收_4953995.rar.sha256)。源码快照为`4953995`，固化标签为`720p-low-latency-flash-verified-20261104`。
+
 蓝牙 v3 收谱与自动存卡说明：[蓝牙收谱与SD保存](doc/bluetooth/蓝牙收谱与SD保存.md)。新功能回归：`python3 tools/check_bt_store.py`。
 
 完整版本使用 `./build_full.sh` 构建、`./flash.sh --check` 校验、`./flash.sh` 临时下载；输出为 `impl/pnr/piano64_full.fs`。回归执行 `python3 tools/check_all.py --ui`。SD 卡需放真实 `P64.BIN` 和 `SONGxx.BIN`。
