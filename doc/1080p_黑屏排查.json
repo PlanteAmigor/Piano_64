@@ -660,7 +660,7 @@
       "diagnostics/hdmi_link/full_debug_uart.v": "e7155da1abf09d1372d1822485b8aeb9d99580d44d54ecca0026d81f308b1302",
       "src/sd/uart_tx.v": "cf55d0aa1647183b7a1a2106c45dc3f0b56b71c54f58f224bd86f1c987807393"
     },
-    "log_sha256": "3d3c523f0e463dd842942785e8ee4e03eed9d4dc18635d3a097be763b7238d28",
+    "log_sha256": "f17f2c534034393cfcae0e87ccc9cab90318183e7d38ae9d38c8167fea89ce0e",
     "limits": "Constant 96-bit status through actual UART pins at 115200 8N1; full diagnostic multi-bit CDC remains approximate."
   }
 }
