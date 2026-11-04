@@ -117,24 +117,24 @@ module tb_key_latency;
         repeat(3)begin #100000;keys[0]=1;#100000;keys[0]=0;end
         finish_measure;
         #3000000; // reach normal/full optical velocity, without bypassing ramp
-        keys=9'h1ff;#2200000;
+        keys=9'h1ff;#20200000;
         if(dut.note_key_state!=0 || dut.v_gate!=0)$fatal(1,"release stuck");
         begin_measure(1);keys[0]=0;finish_measure;
-        keys=9'h1ff;#2200000;
+        keys=9'h1ff;#20200000;
         if(TIMBRE<2)begin
             nkeys=TIMBRE==1?6:8;
             begin_measure(nkeys);keys[7:0]=0;finish_measure;
-            #3000000;keys=9'h1ff;#2200000;
+            #3000000;keys=9'h1ff;#20200000;
             // Reuse all tails well before the old 340ms quarantine expires.
             begin_measure(nkeys);keys[7:0]=0;finish_measure;
         end else begin
             begin_measure(1);keys[7]=0;finish_measure;
         end
-        keys=9'h1ff;#2200000;
+        keys=9'h1ff;#20200000;
         if(dut.note_key_state!=0 || dut.v_gate!=0)$fatal(1,"final release stuck");
         $display("PASS full key latency timbre=%0d effect=%0d: raw pin -> real P64/DDR arbiter -> synthesis/limiter/effects -> complete DAC word, each <=5ms; rearm, chord, safe tail reuse",TIMBRE,EFFECT);
         $finish;
     end
-    initial begin #80000000;$fatal(1,"global timeout");end
+    initial begin #200000000;$fatal(1,"global timeout");end
 endmodule
 `default_nettype wire

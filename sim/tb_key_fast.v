@@ -6,7 +6,7 @@ module tb_key_fast;
     wire [7:0] state,press,release_key,trig,gate;
     wire [55:0] notes;
     integer presses=0,releases=0,triggers=0;
-    key_scan #(.N(8),.DEBOUNCE(25000),.RELEASE_DEBOUNCE(100000),.IMMEDIATE(0)) keys(
+    key_scan #(.N(8),.DEBOUNCE(25000),.RELEASE_DEBOUNCE(1000000),.IMMEDIATE(0)) keys(
         .clk(clk),.rst_n(rst),.key_in(raw),.key_state(state),.key_press(press),.key_release(release_key));
     // idle deliberately remains high during allocation, as it does before real
     // DMA/load completes. Gate must reserve every voice immediately.
@@ -35,30 +35,30 @@ module tb_key_fast;
         if(state!=8'hff || gate!=8'hff || presses!=8 || triggers!=8)
             $fatal(1,"chord lost/duplicated during delayed idle: state=%h gate=%h press=%d trig=%d",state,gate,presses,triggers);
         if($time-first_edge>=5000000)$fatal(1,"press >5ms");
-        // Even 1.999ms of opening while held is insufficient to rearm.
-        raw=8'hff;#1999000;raw=0;#501000;
+        // Even 19.999ms of opening while held is insufficient to rearm.
+        raw=8'hff;#19999000;raw=0;#501000;
         if(releases || triggers!=8 || gate!=8'hff)$fatal(1,"release chatter retriggered");
-        raw=8'hff;first_edge=$time;#2001000;quiet;
-        if($time-first_edge>=5000000 || releases!=8)$fatal(1,"release qualification");
+        raw=8'hff;first_edge=$time;#20001000;quiet;
+        if($time-first_edge<20000000 || $time-first_edge>20005000 || releases!=8)$fatal(1,"release qualification");
         // Twelve very fast repeated chords; old 120/340ms timers would lose
-        // these. Each 2.7ms cycle is independently debounced, not time-scaled.
+        // these. Each 20.7ms cycle is independently debounced, not time-scaled.
         for(integer stroke=0;stroke<12;stroke=stroke+1)begin
             raw=0;#601000;
             if(gate!=8'hff || triggers!=16+stroke*8)$fatal(1,"rapid chord swallowed %d triggers=%d gate=%h",stroke,triggers,gate);
-            raw=8'hff;#2101000;quiet;
+            raw=8'hff;#20101000;quiet;
         end
         if(presses!=104 || releases!=104 || triggers!=104)$fatal(1,"one stroke one edge failed");
         // Independent keys held, one released/repressed. No shared lock timer.
-        raw=0;#601000;raw[7]=1;#2001000;
+        raw=0;#601000;raw[7]=1;#20001000;
         if($countones(gate)!=7)$fatal(1,"one release disturbed chord");
         raw[7]=0;#601000;
         if(gate!=8'hff || triggers!=113)$fatal(1,"key7 rapid rearm lost");
         #5000000;
         if(triggers!=113)$fatal(1,"held key repeated");
-        raw=8'hff;#2001000;quiet;
-        $display("PASS performance keys at 50MHz: 499us glitches rejected, bounded bounce one chord, 1.999ms false releases rejected, 12 repeated 2.7ms chords, delayed-idle reservation, independent key7 rearm, long hold, final gates zero");
+        raw=8'hff;#20001000;quiet;
+        $display("PASS performance keys at 50MHz: 499us glitches rejected, bounded bounce one chord, 19.999ms false releases rejected, 12 repeated 20.7ms chords, delayed-idle reservation, independent key7 rearm, long hold, final gates zero");
         $finish;
     end
-    initial begin #100000000;$fatal(1,"timeout");end
+    initial begin #400000000;$fatal(1,"timeout");end
 endmodule
 `default_nettype wire

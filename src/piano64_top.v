@@ -22,7 +22,7 @@ module piano64_top #(
     parameter integer STARTUP  = 2_500_000,
     parameter integer DEBOUNCE = 1_000_000,
     parameter integer PLAY_PRESS = 25_000,
-    parameter integer PLAY_RELEASE = 100_000
+    parameter integer PLAY_RELEASE = 1_000_000
 )(
     // ── 与 add_top 完全一致的板级引脚 ──────────────────────────────
     input  wire       CLOCK_50,

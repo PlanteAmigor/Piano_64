@@ -78,6 +78,7 @@ def main():
     results+=bench('tb_vibrato_replay',['sim/tb_vibrato_replay.v','src/optical/position_control.v'])
     results+=bench('tb_note_alloc_release',['sim/tb_note_alloc_release.v','src/note_alloc.v'])
     results+=bench('tb_key_fast',['sim/tb_key_fast.v','src/key_scan.v','src/note_alloc.v'])
+    results+=bench('tb_key_release_chatter',['sim/tb_key_release_chatter.v','src/key_scan.v'])
     results+=bench('tb_song',['tb_song.v',*songs])
     for name in ['tb_song_teach','tb_song_repeat','tb_song_overlap','tb_song_multi']:
         results+=bench(name,['sim/'+name+'.v','src/song/bt_song_player.v'])

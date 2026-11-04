@@ -19,7 +19,7 @@ module add_top #(
     //   8 ms 挡不住会多出几次 key_press → 重触发 → 听感是"哒哒"噪音
     parameter integer DEBOUNCE = 1_000_000,    // 功能键 20 ms
     parameter integer PLAY_PRESS = 25_000,   // 演奏键按下连续稳定 0.5 ms
-    parameter integer PLAY_RELEASE = 100_000 // 演奏键松开连续稳定 2 ms
+    parameter integer PLAY_RELEASE = 1_000_000 // 松开恢复已验证的 20 ms，防长回弹重触发
 )(
     input  wire       CLOCK_50,   // 50 MHz 晶振 V22（先进 PLL）
     input  wire       RESET_n,
@@ -353,7 +353,7 @@ module add_top #(
     //         KEY_R2[8] 短按 → 移调 -12（降）
     //
     //    原来的 key_dual 用双触点 Δt 测力度，现在有 ROW2 就不用它了。
-    //    演奏键独立消抖：0.5ms 按下、2ms 松开；两级同步后计时。
+    //    演奏键独立消抖：0.5ms 按下、20ms 松开；两级同步后计时。
     //    功能键仍用长消抖，歌曲菜单保留自己的防连跳状态机。
     //======================================================================
     wire [8:0] r1_state, r1_press, r1_release;
