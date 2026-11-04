@@ -13532,11 +13532,246 @@
           "hold": 0
         },
         "fs_sha256": "00c3e0c77ecd534d83d0f0e7330dfb62532915c1b91aa670cebfa60e26f2610f"
+      },
+      "reload_user_confirmed": {
+        "variant": "mode1080p60_single",
+        "fs_sha256": "00c3e0c77ecd534d83d0f0e7330dfb62532915c1b91aa670cebfa60e26f2610f",
+        "exit_code": 0,
+        "flash_changed": false,
+        "user_screen_acceptance": "passed",
+        "time": 1793758858.7552671,
+        "uart_bytes": 434,
+        "observed_windows": [
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29296
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29296
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29296
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29296
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          }
+        ],
+        "uart_tail": "L3 2626 7271\r\nL3 2626 7271\r\nL3 2625 7271\r\nL3 2626 7271\r\nL3 2626 7271\r\nL3 2625 7270\r\nL3 2626 7271\r\nL3 2625 7271\r\nL3 2626 7271\r\nL3 2626 7271\r\nL3 2625 7271\r\nL3 2626 7271\r\nL3 2626 7271\r\nL3 2625 7270\r\nL3 2626 7271\r\nL3 2625 7271\r\nL3 2626 7271\r\nL3 2626 7271\r\nL3 2625 7271\r\nL3 2626 7271\r\nL3 2626 7271\r\nL3 2625 7270\r\nL3 2626 7271\r\nL3 2625 7271\r\nL3 2626 7271\r\n",
+        "fresh_clock_windows": [
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29296
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9765,
+            "pixel_edges": 29297
+          },
+          {
+            "locks": 3,
+            "reference_edges": 9766,
+            "pixel_edges": 29297
+          }
+        ],
+        "clock_count_matches": true,
+        "synthesized_pixel_mhz": 150.0,
+        "synthesized_serial_mhz": 750.0,
+        "user_feedback": "正常了",
+        "monitor_reported_mode": "not_yet_confirmed",
+        "feedback_time": 1793758952.7134807
       }
     }
   ],
-  "full_single_pll_status": "build_and_regression_running",
+  "full_single_pll_status": "complete_build_zero_setup_hold_loaded_sram_user_acceptance_pending",
   "full_target": "1920x1080 at 60.606Hz, 150MHz pixel, 750MHz serial",
   "main_720p_flash_unchanged": true,
-  "note": "用户只确认彩条是否可见；显示器信息页中的分辨率/刷新率尚未单独确认。PLL锁定、平均计数不能证明抖动和信号完整性。"
+  "note": "用户只确认彩条是否可见；显示器信息页中的分辨率/刷新率尚未单独确认。PLL锁定、平均计数不能证明抖动和信号完整性。",
+  "full_single_pll_board": {
+    "time": 1793759386.36356,
+    "video_mode": "1080p60.606",
+    "fs_sha256": "fdbd34467f1a0a12651968bd1eacd440ed179e7ae74b3c142410ba9abd2b50b3",
+    "exit_code": 0,
+    "mode": "sram",
+    "flash_changed": false,
+    "full_ui_and_audio_user_acceptance": "pending",
+    "program_log_sha256": "2cf11a378ec770c3255e7450efa68a96ec1a312c95e03423c7a3d83166d50dee"
+  }
 }
