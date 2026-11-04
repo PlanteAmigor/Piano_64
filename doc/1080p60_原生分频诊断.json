@@ -1,0 +1,575 @@
+{
+  "date": "2026-11-04",
+  "status": "offline_verified_display_pending",
+  "branch": "candidate/1080p60-after-keys-20261104",
+  "hdl_base_commit": "6ef5e295ece43e6c35636a45c3599d7a71136568",
+  "stable_main_commit": "410b472f8a7a6cfa69e8f56bea747c085e585cb2",
+  "flash_fs_sha256": "01198ac8a7547f963be728f345e2334af594c40e91f66b9439eac5f6e02bdff7",
+  "flash_cold_boot_user_confirmed": true,
+  "experimental_flash_written": false,
+  "build": {
+    "video_mode": "1080p60",
+    "pll_clocks_mhz": {
+      "u_hdmi/u_pll/u_ref/PLL_inst/CLKOUT0.default_gen_clk": 27.5,
+      "u_hdmi/u_pll/u_pixel/PLL_inst/CLKOUT1.default_gen_clk": 742.5,
+      "u_hdmi/u_pll/u_pixel_div/CLKOUT.default_gen_clk": 148.5
+    },
+    "inputs": {
+      "src/add_engine.v": "bc7c44e71eab2e9569278bfa9858fecbc292b80825dcc199a241b41c08c04fcb",
+      "src/add_engine8.v": "1f7afedb4487b4c53a6169751fb09d82eda329a0233045988aa93fc8cb6d8b4d",
+      "src/add_engine8.v.old": "2ad18d50532ef919ea9e4b3bbf4c20795a5a9f18c5ab83f03a668ec4db0b4928",
+      "src/add_engine_harm.v": "6db46594dfc71710c0e253c01e08d922de18dbff8783b2685945fe5c859322a6",
+      "src/add_param_rom.v": "92a3bb42aa76f3bc51b43584af71889384bf47e4b55a83790fc0950083fd9304",
+      "src/add_sine_lut.v": "100f543490b250fa2778c78e8baeb9dcea91c44d937c0dec653a49b65faac1b6",
+      "src/add_top.v": "743bf726d656bb1bce76121047c9d26a6cd3d450867de3e497832ea03c7ed613",
+      "src/add_top.v.suona_try": "54529bfd88e36a58ff1e4cc756605749bfdbc42e4abac01f33814ddcd39fd01c",
+      "src/add_voice.v": "f0ef36bd9a0741a0cbc5e98d55a86f7f77863f1f45060fec4094a58a15512a80",
+      "src/add_voice8.v": "669bda5a75a6a6b220671a929eae7d411459297fc31a19bab7d0bf63d347352b",
+      "src/add_voice_harm.v": "2fed23fb8f3206dc0b8f8478d403dd035dfd0afb85448991722da1e43a53c78a",
+      "src/audio_soft_limiter.v": "83f20be6c9249ccd1a9dcd6774f39d1fe02274304870a060d505a038740e73ad",
+      "src/bt/bt_song_upload.v": "c7592b0108f7321de759d7a6719c93fc697f3d9d4dab728ad0a13423c368e5fc",
+      "src/bt/bt_uart_rx.v": "eabe3604ded0ebf53ab067af3919366bfe4ebf34a3286cce546e7f73b1039794",
+      "src/bt/bt_uart_tx.v": "966f96797f68452278fa6efdbf2f035ee3c8cc48128b3bdee77e1604c4bc88fe",
+      "src/ddr/arbiter.v": "a001507c82843e36e133dea75491fc044f56660fac0aff0127cf3afec7f927e0",
+      "src/ddr/ddr3_1v4_hs.cst": "2a14addfe5a6fc542f3d947c9ecb2ab74ab6269458c20719ba312c2d7ec93f29",
+      "src/ddr/ddr3_memory_interface.v": "d7cae5a16467ca35ee3f95411537344ae3702e1dba86a06571530e3dd0180c57",
+      "src/ddr/ddr_arb.v": "0a72f4149dd1769eba59141da70b0b4460f1bfb9920107929515f2918be6f93f",
+      "src/ddr/ddr_ui_pipeline.v": "c9c31c7296dc9ae0daaf1cebe623fd5efaed40d1638482d0580fbdd63806929f",
+      "src/ddr/ddr_wrap.v": "df0f2316d687d92f524608df7b1f8243f9d249891c346875091b11abb4ef5a0f",
+      "src/ddr/gowin_pll.v": "96cedf1372610d73c44dd5134ec109a0e69db527e4bfe5e04c16bd00d5b0e295",
+      "src/ddr/gowin_pll_mod.v": "517fb1c9507599ca1582d3b6bd63778a1cd5d0cd62eb3f8342235e81474d81c9",
+      "src/ddr/pll_init.v": "fa9016a14af3af7dbc31057b76f3a1915ae02951c77ee7a1e87d637505301e4c",
+      "src/ddr/priority_encoder.v": "df28220d95b47df349a72803a9751aad331eb8e1435416e8686d00572a974dd5",
+      "src/ddr_param_dma.v": "1a2eaa72de5f6542865e5768bf11742611086c27c80c2cb997b7a14c2a9307d1",
+      "src/fx/fx_chorus.v": "d3b0c8128b51f078e55a827102a178af900bbd991d65e9d64544ddebe1fd1a78",
+      "src/fx/fx_delay.v": "1b6377356031433532c013300123b9418723505da2490da7fb4adcafbc206fb8",
+      "src/fx/fx_reverb.v": "423275b11eac78d3f5f0bfb1b7ae7086de90c41e86c9afc56333278cf850b19c",
+      "src/gowin_pll/gowin_pll.ipc": "b9408546e80bbcd24428180184b9aaa2ed3dc262fdce3d6c391a728599de5821",
+      "src/gowin_pll/gowin_pll.mod": "ebfa23467ea55296e6325c4e33b146f78bccae7fb5eb1f161503230b58550672",
+      "src/gowin_pll/gowin_pll.v": "8a182042cde6eb1e80b4c898859496c9245e9a5f1c4b83db339315f05a3441aa",
+      "src/gowin_pll/gowin_pll_mod.v": "b4ce452180565372b50eb83919e16ce8ab9dbada5f4c45dd3e5a0bc3e394dde2",
+      "src/harm_buf.v": "6e659d7bc7b73935b70dc43d1df104d87f973a2d0ac45afc1c5de47653c2cef3",
+      "src/harm_rom.v": "55fcb4ab0f4c86b41c264296c11d8062adcd7882ebcb1756a5e77140182925fa",
+      "src/hdmi/hdmi_ui3_top.v": "696f9a99ea2459bddc23e26190d98b99eb38111b961a3c2502e37542eac6f3f6",
+      "src/hdmi/ir4/dvi_tx_clk_drv.v": "ecba868280092effcc40d7b87df6edea15e91b19cae75fc8420ab01c3f539cf6",
+      "src/hdmi/ir4/dvi_tx_tmds_enc.v": "d9ce5e96648278b262576c7ebdeaca7b1b6c01f92a8d70e047f155563cd2fc5a",
+      "src/hdmi/ir4/dvi_tx_tmds_phy.v": "5564c034a1db405911474ffccbb9b44e13254540ae8ac4fd33a3a50cc6032869",
+      "src/hdmi/ir4/dvi_tx_top.v": "a16cf49a57f53daf3d653087c077f80f49d2792b30e62ee38160b853c6af92d7",
+      "src/hdmi/ir4/gowin_pll_720p.v": "5ed9e1213aa8d82554bfc7390a75d1be4f7036077175f308dca712f13b0062c3",
+      "src/hdmi/ir4/tmds_encode.mem": "31fdd0137aba70499c760b91b76e5778c375aaca627bee706af073fc3ee17ee8",
+      "src/hdmi/ui/ui1080_assets.json": "45d1df6fd525bf44a066e07fbd8a95d3148c5df9762001034eac0733c1271114",
+      "src/hdmi/ui/ui1080_decimal.vh": "23357d7615de0055e17a940011937d1687cde425cc7bc5f8ac12355f4f6afc0a",
+      "src/hdmi/ui/ui1080_font.hex": "296ab10938ab3bdef3504ba482632ee1431e442ec5a9a88e5be1373817e01ca9",
+      "src/hdmi/ui/ui1080_tiles.hex": "497dc6dc54265ed8ec380311d8ba701a76b42afe7334c89f9545c2ea360daaa5",
+      "src/hdmi/ui/ui_font_asc.hex": "033cdc9a58df24d97a40f8cd2de52f974000f91906f2085809f0d567c9637cdf",
+      "src/hdmi/ui/ui_font_cn.hex": "c7744daa6c86354d46f350ed97da3137043f8ca53cf1b67e64212a206608cf05",
+      "src/hdmi/ui/ui_liss_ram.v": "34510578be552b92d1b3a787500686333a4dcf4bee0a9a39a5e68aa2ef5671ae",
+      "src/hdmi/ui/ui_scope_points.v": "d14ce25018229bbbb1d91d9a1982cd47a025e1cc56829fa2adab33a81eb2aad5",
+      "src/hdmi/ui_video_mode.vh": "a032706a89187a8ee6cafe9eb0ec4e65d3e3f7ae6ba9ca0fec99369a0ba4cc45",
+      "src/key_dual.v": "e8228473219b97a1de0e44e42f541f3efd07b825e553af0250b31594bd423851",
+      "src/key_scan.v": "51f5630b4936a1817df3887306c81e8c8b294e36ddd0cfcd9fbd7d8390a51eb4",
+      "src/mix_sum.v": "d8b35c3cc526be4e6cf7ea8a83e82bbd538c3cb214dcf0b891cdcb2bb34c5e02",
+      "src/note_alloc.v": "52d043be1c443d06d23e19ca9d9304dd46b2550fb4b923e94896ef6c7cf87834",
+      "src/optical/ad7606_serial.v": "078328e696db95920343aba635e7dfdfabf2db7fcf98e4e30bc9b5cae39200d2",
+      "src/optical/ir_diff_filter.v": "38eed08624809dee9ef6bc651ca1f250a66c1fac5385168f201aa899878647ea",
+      "src/optical/ir_tdm_ctrl.v": "89ab1102a7171a3064496fd025971ecbd9c02c8338c51c41b27f0df52520e40c",
+      "src/optical/opt_feat.v": "94d15caa73995ae2b80ff09cfcff4ad1ef7f16a7a1d784a657c837ec43b74670",
+      "src/optical/opt_pos.v": "ddf8e6cb64c6982812e743a58805ab85f1e9bad2b7e387260fb6c859384b120b",
+      "src/optical/position_control.v": "de9fc583baa97cc7178363071b746832fdb14fbe5034fb8b03671d18ffb4db62",
+      "src/optical/report6.v": "f906bc12893530dd67a51ac3fd4db67741daa8e11d67f68f41f5daa9ea212b4d",
+      "src/optical/report_feat.v": "0bbf86539a9e65b01e05d657a06d88b3001c20e7268a5d84d993a46d424d9a3c",
+      "src/param_cache.v": "58489c3ded52942678c88738a7f5ad77845522a5d74df870e5a83d46f820c433",
+      "src/param_cache.v.bak": "849dbe33f9e8cbbeee49601b1200066807f342c3cc4850caa85153ecb4bc4ca9",
+      "src/param_dma.v": "97dcbe7621e529faea1335ea4d29477033455e6e1eafc702631d362ab69787f8",
+      "src/pcm5102a_tx.v": "d7a0af4a45653f99c65e89e78a8369e5723c7bcd52a60377a28a03786584d9fa",
+      "src/piano64.cst": "17e271ac325a87a3680cc2c4cce48e75cbb3a97d4d01f2aee167b4f44ced6053",
+      "src/piano64.sdc": "d1077b3fbb901cf90e21ed51bf87e2ae811dbd41472fd6f7f01c6c0dc2201c4e",
+      "src/piano64_hdmi.cst": "d2c1611f121049885ba67bdd5d3c4229c580f8f2fb930ac69cb48718d72b8673",
+      "src/piano64_hdmi.sdc": "4bc1c2d6e0f78d197f4ceaec2be2bf987606e856940b39999d1286186dc2bdce",
+      "src/piano64_top.v": "acfd87a4b600d91a479e17161aecfc60c46761bf583f33e2ea6ff7edf15f980e",
+      "src/pll50.v": "a3664953c91bf0697f63e400d75794fded2adca10dfb5d0dc35ccd558060a087",
+      "src/pll_init.v": "3ef05a1ba92157d73e3c54ed9d589645508a4ae332d8bcf133a0457cc3e866c8",
+      "src/sd/fat32_song_store.v": "ab3747771603d4e7ad46720a33cd08e8af7c35052121fdd4553d2af3f2796ebc",
+      "src/sd/sd_async_fifo.v": "bf07fd6eef20938ff3bfefaed0616cd34ccc57d1f3774caf14aef9fbca77574a",
+      "src/sd/sd_file_list_reader.v": "0bc07380e7120b7b43f3eca3c0fc24bfc45c0a67d3a00248cfb848b44bf4852c",
+      "src/sd/sd_reader.sv": "1e623c0b18d2fe030fba381c3c91b7ab728eca16f7219fb32def5a1ae1bc1a8d",
+      "src/sd/sd_sector_rw.sv": "bf4529534f53837048ac4a016de0584728411958bbe6338409f92ffa942bc0c7",
+      "src/sd/sdcmd_ctrl.sv": "75633f664caf46cf51531648a36a1c6a9c804d14f4f0398f0a1c9afdca37ac7d",
+      "src/sd/song_sd_save.v": "1ba0aed36a7199f7e4f36783f4e0e0fe9fa2e2d4d2ce5946e8d22874728b288a",
+      "src/sd/uart_tx.v": "cf55d0aa1647183b7a1a2106c45dc3f0b56b71c54f58f224bd86f1c987807393",
+      "src/sd_ddr_loader.v": "8b3f819b6c232915cad0c4be8873bfaca61a0b19a2196cac9f635783222e2082",
+      "src/song/bt_frame_rx.v": "aa0a7442a7f3ad433b6b7f599826bfc18aa3ce47493a9d4bd5d16bef9ca3d98f",
+      "src/song/bt_song_player.v": "3fb1fbfc1a575ff7407583a88ed34ec73b4dcbeb51b081eaa1b895541161b257",
+      "src/song/song_fifo.v": "083d2387191427e1d57559a6063da9f4cbca2851202bd827cb73f5962f9ef1bd",
+      "src/song/song_file_encode.v": "576fbe9950bde6fed35a6fe0b04c12f2e95f079af1f939ba371b9225b8789f52",
+      "src/song/song_loader.v": "1df6d743eb05382f6c31a44668f0b0a9b579c150aad2239fb3e67fc8089ce2a5",
+      "src/song/song_menu_keys.v": "4e86f4920c05e33a0cc990b5b5e59a8cb2bae0b527423c3f449f5c80a2dfe3c4",
+      "src/song/song_system.v": "d273c4ca0869785854ee592785c72400b6c6b3fc6b9cba94e2998885391821b1",
+      "src/spec_cqt.v": "bdfa916fd4a8c80c20447c7cbd3537f9f4069a47ce9f5c4e69b23acea8f3d43e",
+      "src/suona_dma.v": "bbce81b198118e13ef536fde2607fe9f5edf3a2f64a2ae0973946cdee8b2a2cd",
+      "src/test_sine8.v": "f51037e2e50b559ca2f2184d9f897ad231793e924c01ae2cd6650f332a258b3c",
+      "src/ui_component_bars.v": "6d4d4073b0b7e6f13e2a58ee88acb68f85ef6c66a239f2562ae096f3055d0625",
+      "src/ws2812_keyind.v": "3c65d3e9085a19b78f3b0018b707d96f66fcbd69a4ad3abac9ed4f91fe061b5a",
+      "src/ws2812_keys.v": "cf4e86104c15da9f27ee5cebf863418b76b70485660dc7e9ab511d63c978e1de",
+      "add_param0.hex": "71f6aa9987109f7b8aaaea3f5646d6fc0a37ffcceb3ac95778aad63d2e58192c",
+      "add_param1.hex": "761502cf186f25dc6119085367a5501e631ce839e3922217bbb92f46eaaa0ce7",
+      "add_param2.hex": "f92f086f0313acd64bc093f3e20e7f0049780c232806e7d57c48c97c9447268c",
+      "add_sine.hex": "5358b8766a13f301b285223786792c0ce8f77ce8eb684e116af7a01946825361",
+      "add_sine_quarter.hex": "11ef1924260ecc5e6bc2f5717488b0cbaada7527e8753bd62c1ec4c2774ac2a8",
+      "dizi_ab.hex": "1979ae8c692e4a598064071c12cb823180195045afa3ab008fd4addc439267fa",
+      "dizi_bc.hex": "24f667304aa88a2bd48a398e3423ec3fa4eda8bc72de8f29bbc73cee5646884c",
+      "dizi_env_e.hex": "1eb865a2f9606a3c830d11e6b1fa129635e48b3abc89909b7779bb01bafee27c",
+      "dizi_env_o.hex": "3a4ce94d348ccb4dd7abaac1b9dc9a49bb2c34fe59999f5304d0f7e2565adc16",
+      "dizi_info.hex": "a0f92beabd52f3bdfb6dba1ba7da146ccc584d9e3909a7ba23f137a80cd57a04",
+      "dizi_phi.hex": "338c9974386b287d00debe45ec61367dadf25ebd7a1a8c402c320c47799e9c06",
+      "dizi_pi.hex": "a2cd608d6c1d56c4a7f4bacaa4f1ef0996125e74ac40faa0ecc152452f12146a",
+      "dizi_psi_e.hex": "cd4dc8d1dc1e16dd23428fbc63bcff50019cdcd656c8e50b063bdb2f8a0e55b5",
+      "dizi_psi_o.hex": "2982c2a80a9d6bedc1dcf0dae33153112fe7b9614d09f5726a62ddf260e497b8",
+      "gz_param0.hex": "2028880ef9e713fbf44abfc604540e388887f77766597295c498856890345e8d",
+      "gz_param1.hex": "8fa2ff3febab28685dad21a4c42a8d40ec0e98c7b94290a55c6943f67df6b858",
+      "gz_param2.hex": "a7206d3ad34b4b44d8a95409df8c896a9d27c0474f76c0acf86dc028fcb9071b",
+      "harm_u.hex": "ba075fa3a22b67744b5e44a943ba6349e5da962c487d1ebfd8f3a48007392058",
+      "harm_u_head.hex": "8dd05007b6f572b4793d9a40b285c54b6a20a14431345d92fc221282b4ec9cce",
+      "harm_u_tail.hex": "26476460f185aab48ccdfbcb4ed412519ea6018449bfaa71a9eb5a9568c30eac",
+      "spec_ai.hex": "78754cff60691a6e891a483f080f080a00ee8007ece6dcb3ed3c92680b1c6fc4",
+      "spec_ar.hex": "d40b01058d67e7429a205e896364240c4edb980fc0dd4e7f2be0298a4ebbf8d9",
+      "spec_inc.hex": "f06137ffc02967017e2c0ba08e9d1931838d8ba078fb449829ce699d2a9ec8ec",
+      "spec_l2n.hex": "81224743d2bcb156812b559064c7b985a80d73d4ff5c6eab24a37a88f2f70a73",
+      "spec_log.hex": "43931c5fa53fc26be072283149eb840f7f041cbcefd6cce96aef2ed27e30ad5a",
+      "spec_win.hex": "27ff6d5d997cfaacae766ec94f2628060d06ec7e6c6eb8342b8eaa2094f1ffe3",
+      "suona_ab.hex": "ae2f450fb5c7e37bcb89cb347d207be32afe26025f94ccc8057748f30452a301",
+      "suona_base_ab.hex": "604c2bc81479c1ee49817bab03384a85ca6c7eb946e4c681fd8c7dee3e1dba78",
+      "suona_base_bc.hex": "604c2bc81479c1ee49817bab03384a85ca6c7eb946e4c681fd8c7dee3e1dba78",
+      "suona_base_env_e.hex": "0760ecc2fc380ca1877aae8e59799af3e621334b2ec045a43efe443020c4898c",
+      "suona_base_env_o.hex": "0760ecc2fc380ca1877aae8e59799af3e621334b2ec045a43efe443020c4898c",
+      "suona_base_phi.hex": "5dc78cefebb80691c5687755ce68b530578eb6ec18405e3796e3a3fc663473fc",
+      "suona_base_pi.hex": "604c2bc81479c1ee49817bab03384a85ca6c7eb946e4c681fd8c7dee3e1dba78",
+      "suona_base_psi_e.hex": "03696711c72b6d865ae28d23abf5082e307380a3d0641cf8b01e76a6bdcd68d8",
+      "suona_base_psi_o.hex": "03696711c72b6d865ae28d23abf5082e307380a3d0641cf8b01e76a6bdcd68d8",
+      "suona_bc.hex": "5d7398221c5f4ffd635d112dd02a7c3ceabdb2c43c75bd6bd08853ba3bd1088f",
+      "suona_env_e.hex": "7eb0a5b2e0fe2c7a3bb1d9edd155b61a9aadd51475979eb4352633cb59cdb501",
+      "suona_env_o.hex": "6416851ec125271a9bde73e64e5b9495b1bc97b19e162db0ca1df3c095d4bbfb",
+      "suona_info.hex": "57d0a01a352d847ea6ff282ebff0d1154137149fa866150a7d547b0adad2b25b",
+      "suona_phi.hex": "8fbe7a5b5a7114fde113327f4efc2fe0db9feb7bfaba008a34ce5b60f7db01e8",
+      "suona_pi.hex": "5014f944827e8e3d3f90ff876d4547d35d9a82127833c2083b8c36785dd3253f",
+      "suona_psi_e.hex": "c5b9faf3337738b6975eee2068e98b3ec0bb932d31b3ed8bb28171fdfa633ece",
+      "suona_psi_o.hex": "87735a7438949a68c04a9e2afa97b2fdf65f6826f7ede2f76427786f95008ea2",
+      "build_full.tcl": "7daf620426fe751c805bf53592ae308a255cebc9d2a8ac1a2bc2e7e54bd3c5ca"
+    },
+    "bitstreams": {
+      "piano64_full.fs": "f87ef520aa4938fe0c855b57b9f522d3afaa2be38d43abab62e06f6dc0508978",
+      "piano64_full.bin": "d60c761fabefabc60bc0a1f119f822f8c6069b2701810e118bc7713d974ecf41"
+    },
+    "violations": {
+      "setup": 0,
+      "hold": 0
+    },
+    "resources": {
+      "Logic": [
+        58056.0,
+        138240.0
+      ],
+      "Register": [
+        41175.0,
+        139095.0
+      ],
+      "BSRAM": [
+        313.0,
+        340.0
+      ],
+      "DSP": [
+        157.5,
+        298.0
+      ]
+    },
+    "worst_reported_setup_ns": 0.016
+  },
+  "validation_commands": [
+    {
+      "name": "reverb",
+      "command": [
+        "python3",
+        "tools/check_reverb_pipeline.py"
+      ],
+      "exit_code": 0,
+      "time": 1793753922.349293
+    },
+    {
+      "name": "latency_t2_fx0",
+      "command": [
+        "python3",
+        "tools/check_key_latency.py",
+        "--timbre",
+        "2",
+        "--effect",
+        "0",
+        "--out",
+        "/mnt/project/InstruementSound/piano64_3/work/ui1080/review23/work/hdmi_link_full"
+      ],
+      "exit_code": 0,
+      "time": 1793754432.5369313
+    },
+    {
+      "name": "latency_t3_fx0",
+      "command": [
+        "python3",
+        "tools/check_key_latency.py",
+        "--timbre",
+        "3",
+        "--effect",
+        "0",
+        "--out",
+        "/mnt/project/InstruementSound/piano64_3/work/ui1080/review23/work/hdmi_link_full"
+      ],
+      "exit_code": 0,
+      "time": 1793754441.4290442
+    },
+    {
+      "name": "regression",
+      "command": [
+        "python3",
+        "tools/check_all.py",
+        "--bt"
+      ],
+      "exit_code": 0,
+      "time": 1793754575.0833802
+    },
+    {
+      "name": "latency_t1_fx0",
+      "command": [
+        "python3",
+        "tools/check_key_latency.py",
+        "--timbre",
+        "1",
+        "--effect",
+        "0",
+        "--out",
+        "/mnt/project/InstruementSound/piano64_3/work/ui1080/review23/work/hdmi_link_full"
+      ],
+      "exit_code": 0,
+      "time": 1793754650.7794166
+    },
+    {
+      "name": "latency_t0_fx1",
+      "command": [
+        "python3",
+        "tools/check_key_latency.py",
+        "--timbre",
+        "0",
+        "--effect",
+        "1",
+        "--out",
+        "/mnt/project/InstruementSound/piano64_3/work/ui1080/review23/work/hdmi_link_full"
+      ],
+      "exit_code": 0,
+      "time": 1793754663.931338
+    },
+    {
+      "name": "latency_t0_fx0",
+      "command": [
+        "python3",
+        "tools/check_key_latency.py",
+        "--timbre",
+        "0",
+        "--effect",
+        "0",
+        "--out",
+        "/mnt/project/InstruementSound/piano64_3/work/ui1080/review23/work/hdmi_link_full"
+      ],
+      "exit_code": 0,
+      "time": 1793754667.2095222
+    },
+    {
+      "name": "build",
+      "command": [
+        "bash",
+        "build_full.sh"
+      ],
+      "exit_code": 0,
+      "time": 1793755675.5538282
+    }
+  ],
+  "regression_pass_lines": 68,
+  "key_latency_measurements": [
+    {
+      "timbre": 0,
+      "effect": 0,
+      "ddr_response_cycles": 64,
+      "phase": 1,
+      "pcm_us": 1231.24,
+      "dac_us": 1318.31
+    },
+    {
+      "timbre": 0,
+      "effect": 0,
+      "ddr_response_cycles": 64,
+      "phase": 2,
+      "pcm_us": 617.86,
+      "dac_us": 704.95
+    },
+    {
+      "timbre": 0,
+      "effect": 0,
+      "ddr_response_cycles": 64,
+      "phase": 3,
+      "pcm_us": 2389.08,
+      "dac_us": 2476.15
+    },
+    {
+      "timbre": 0,
+      "effect": 0,
+      "ddr_response_cycles": 64,
+      "phase": 4,
+      "pcm_us": 2706.72,
+      "dac_us": 2793.91
+    },
+    {
+      "timbre": 0,
+      "effect": 1,
+      "ddr_response_cycles": 64,
+      "phase": 1,
+      "pcm_us": 1231.24,
+      "dac_us": 1318.31
+    },
+    {
+      "timbre": 0,
+      "effect": 1,
+      "ddr_response_cycles": 64,
+      "phase": 2,
+      "pcm_us": 617.86,
+      "dac_us": 704.95
+    },
+    {
+      "timbre": 0,
+      "effect": 1,
+      "ddr_response_cycles": 64,
+      "phase": 3,
+      "pcm_us": 2389.08,
+      "dac_us": 2476.15
+    },
+    {
+      "timbre": 0,
+      "effect": 1,
+      "ddr_response_cycles": 64,
+      "phase": 4,
+      "pcm_us": 2706.72,
+      "dac_us": 2793.91
+    },
+    {
+      "timbre": 1,
+      "effect": 0,
+      "ddr_response_cycles": 64,
+      "phase": 1,
+      "pcm_us": 1251.72,
+      "dac_us": 1420.71
+    },
+    {
+      "timbre": 1,
+      "effect": 0,
+      "ddr_response_cycles": 64,
+      "phase": 2,
+      "pcm_us": 638.34,
+      "dac_us": 725.43
+    },
+    {
+      "timbre": 1,
+      "effect": 0,
+      "ddr_response_cycles": 64,
+      "phase": 3,
+      "pcm_us": 873.42,
+      "dac_us": 960.63
+    },
+    {
+      "timbre": 1,
+      "effect": 0,
+      "ddr_response_cycles": 64,
+      "phase": 4,
+      "pcm_us": 2604.36,
+      "dac_us": 2691.51
+    },
+    {
+      "timbre": 2,
+      "effect": 0,
+      "ddr_response_cycles": 64,
+      "phase": 1,
+      "pcm_us": 1784.2,
+      "dac_us": 1871.27
+    },
+    {
+      "timbre": 2,
+      "effect": 0,
+      "ddr_response_cycles": 64,
+      "phase": 2,
+      "pcm_us": 1170.84,
+      "dac_us": 1257.91
+    },
+    {
+      "timbre": 2,
+      "effect": 0,
+      "ddr_response_cycles": 64,
+      "phase": 3,
+      "pcm_us": 1016.92,
+      "dac_us": 1103.99
+    },
+    {
+      "timbre": 3,
+      "effect": 0,
+      "ddr_response_cycles": 64,
+      "phase": 1,
+      "pcm_us": 1968.52,
+      "dac_us": 2055.59
+    },
+    {
+      "timbre": 3,
+      "effect": 0,
+      "ddr_response_cycles": 64,
+      "phase": 2,
+      "pcm_us": 1355.16,
+      "dac_us": 1442.23
+    },
+    {
+      "timbre": 3,
+      "effect": 0,
+      "ddr_response_cycles": 64,
+      "phase": 3,
+      "pcm_us": 1057.88,
+      "dac_us": 1144.95
+    }
+  ],
+  "vendor_video_primitives": {
+    "vendor_file": "/mnt/project/ov-cli/Gowin/IDE/simlib/gw5a/prim_sim.v",
+    "vendor_sha256": "1c9116cc7c9666b205aed0cb5536988e439c00cd2517dd6f7bd0b66b43f703ef",
+    "inputs": {
+      "src/hdmi/ui/ui_liss_ram.v": "34510578be552b92d1b3a787500686333a4dcf4bee0a9a39a5e68aa2ef5671ae",
+      "src/hdmi/ir4/gowin_pll_720p.v": "5ed9e1213aa8d82554bfc7390a75d1be4f7036077175f308dca712f13b0062c3",
+      "src/hdmi/ui_video_mode.vh": "a032706a89187a8ee6cafe9eb0ec4e65d3e3f7ae6ba9ca0fec99369a0ba4cc45",
+      "sim/tb_video_pll.v": "a89b6db549d425c9d9db28e81605e13de1325923aefb4655c679824490692737",
+      "sim/tb_liss_lines.v": "fe90110f1e646f9cfdee5dc7a7e8ff372f515ba6b1f73700196e4da7652bd930",
+      "sim/tb_liss_resolution.v": "6153560434a9383d78b2a98d35f87d5fdafdd033fd154e9de16d217cc931642f"
+    }
+  },
+  "startup_phase": {
+    "variant": "div5_ref",
+    "results": [
+      {
+        "gsr_release_ns": 13,
+        "exit_code": 0,
+        "pass": true
+      },
+      {
+        "gsr_release_ns": 117,
+        "exit_code": 0,
+        "pass": true
+      },
+      {
+        "gsr_release_ns": 499,
+        "exit_code": 0,
+        "pass": true
+      },
+      {
+        "gsr_release_ns": 713,
+        "exit_code": 0,
+        "pass": true
+      },
+      {
+        "gsr_release_ns": 999,
+        "exit_code": 0,
+        "pass": true
+      }
+    ],
+    "manifest_sha256": "d9102a937480574e304b7c16d52d5aba836081a18826e2aa0f750dfd80290f68",
+    "testbench_sha256": "39a6edcd33745b8b37b1dc80c97a9de11f677538982b354c4ed9c129beccb8a7",
+    "model_sha256": "668655fb83decd84f7c7f865952799ac2d23bdff751f8c77720390a705fc7cf5",
+    "runner_sha256": "511800c6f26211b8ed8833a8c755c582197737f766871e16afaf69dc2e87dcf4",
+    "note": "Native PLL/OSER10/CLKDIV cores unchanged; configuration GSR release varied before external reset release; four lines at boot and after reset, not full VS frame."
+  },
+  "diagnostics": {
+    "control720": {
+      "fs_sha256": "e0a65810553314a2e87dfd4767fbc6034d700d8c775b59220e8111edd5b9c26b",
+      "violations": {
+        "setup": 0,
+        "hold": 0
+      },
+      "serial_simulation": {
+        "vendor_sha256": "1c9116cc7c9666b205aed0cb5536988e439c00cd2517dd6f7bd0b66b43f703ef",
+        "manifest_sha256": "5c89cf9c1309e549a0f6c473dc785121d21e51228ad294ad221ba0835089bd04",
+        "testbench_sha256": "39a6edcd33745b8b37b1dc80c97a9de11f677538982b354c4ed9c129beccb8a7",
+        "pass": true
+      }
+    },
+    "cascade_old": {
+      "fs_sha256": "c15d48345b5a547408ab9bf96a26e03d7dfa930cf3178be30b9190e94eeeaee1",
+      "violations": {
+        "setup": 0,
+        "hold": 0
+      },
+      "serial_simulation": {
+        "vendor_sha256": "1c9116cc7c9666b205aed0cb5536988e439c00cd2517dd6f7bd0b66b43f703ef",
+        "manifest_sha256": "adf7f24061832e22d4cee16a174159f410c078ee22ce9576aac1c09519c0ee44",
+        "testbench_sha256": "39a6edcd33745b8b37b1dc80c97a9de11f677538982b354c4ed9c129beccb8a7",
+        "pass": true
+      }
+    },
+    "cascade_ref": {
+      "fs_sha256": "88ff615f1ae3eafe33cf1b717db4a5776fdfe5637c04a6c59f27fa6f24e26ac4",
+      "violations": {
+        "setup": 0,
+        "hold": 0
+      },
+      "serial_simulation": {
+        "vendor_sha256": "1c9116cc7c9666b205aed0cb5536988e439c00cd2517dd6f7bd0b66b43f703ef",
+        "manifest_sha256": "bd1db6b7242f411c06f3dd48bc1660a3368ac13ed637e9e74d105612baf38d81",
+        "testbench_sha256": "39a6edcd33745b8b37b1dc80c97a9de11f677538982b354c4ed9c129beccb8a7",
+        "pass": true
+      }
+    },
+    "div5_ref": {
+      "fs_sha256": "a997ae971483911caa122198b5d1a0cbe19c546dd2ed5b403a44269289084714",
+      "violations": {
+        "setup": 0,
+        "hold": 0
+      },
+      "serial_simulation": {
+        "vendor_sha256": "1c9116cc7c9666b205aed0cb5536988e439c00cd2517dd6f7bd0b66b43f703ef",
+        "manifest_sha256": "d9102a937480574e304b7c16d52d5aba836081a18826e2aa0f750dfd80290f68",
+        "testbench_sha256": "39a6edcd33745b8b37b1dc80c97a9de11f677538982b354c4ed9c129beccb8a7",
+        "pass": true
+      }
+    }
+  },
+  "board_probe": {
+    "variant": "div5_ref",
+    "fs_sha256": "a997ae971483911caa122198b5d1a0cbe19c546dd2ed5b403a44269289084714",
+    "exit_code": 1,
+    "flash_changed": false,
+    "user_screen_acceptance": "pending",
+    "time": 1793753580.1769817
+  },
+  "board_attempt_log": "empty\nwrite to ram\nunable to open ftdi device: -3 (device not found)\nJTAG init failed with: unable to open ftdi device\n",
+  "preserved_preexisting_worktree_diff": "diff --git a/src/add_engine_harm.v b/src/add_engine_harm.v\nindex 25d1e66..8f1cf4a 100644\n--- a/src/add_engine_harm.v\n+++ b/src/add_engine_harm.v\n@@ -632,7 +632,7 @@ module add_engine_harm #(\n         end\n     end\n \n-    // ★ 增益合并：am_q8(Q7) × fm_g(Q8) 先算成一个 g_q7，后面只乘一次。\n+     // ★ 增益合并：am_q8(Q7) × fm_g(Q8) 先算成一个 g_q7，后面只乘一次。\n     //   原来写成 vel_eff×am 再 ×fm，三级乘法串在一起 → 22.5 ns / 233 条违例。\n     //   am=128、fm=256 时 g_q7 = 128（正好是 Q7 的 1.0）。\n     wire [16:0] g_comb = {9'd0, am_q8} * {8'd0, fm_g};\n",
+  "evidence_log_sha256": {
+    "work/hdmi_link_full/latency_t0_fx0_ddr64.log": "05454b615b1d2b846c8453ae404eb3237d46176ea140c976fe22c0b195dd35db",
+    "work/hdmi_link_full/latency_t1_fx0_ddr64.log": "fc29aa2bbc66b724581a606da4c0d5040305721f0cf18490b346c615c54b1df4",
+    "work/hdmi_link_full/latency_t2_fx0.log": "3c3a5197ecfe00348f941808ad2f6e8368af7975980ec2257d9fa2d0f21f2f8e",
+    "work/hdmi_link_full/latency_t1_fx0.log": "e049d167bd312ee3770f9123f8343294c5d91a185c845140d406cc4356ff88f7",
+    "work/hdmi_link_full/latency_t0_fx0.log": "ff3a606bba47988c4727ad3ac07368d0f2cebdefdebc7fbb4ea08c84c08daa0a",
+    "work/hdmi_link_full/latency_t0_fx0_ddr64.compile.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "work/hdmi_link_full/reverb.log": "1d6af487617f6b3aa55e84d168d35d8d5d4aad8b27112e6253de0324cc0525c5",
+    "work/hdmi_link_full/latency_t3_fx0_ddr64.log": "dc00c614b6f5a9de5abbc0affa2f682df25f5dfd1ce63602320e8fa82b35091e",
+    "work/hdmi_link_full/latency_t2_fx0_ddr64.log": "2e265633327b26a4edca28dbaf8b3a578b6346625b83ee2b3d85fb71adae821b",
+    "work/hdmi_link_full/build.log": "092822deffd82dd0ebed1dbe6a030116b2d3ecab75a258b207e20a03fb80fd8c",
+    "work/hdmi_link_full/latency_t3_fx0.log": "c298b51b72d85d47e20830b0344f520ab2601542013047a07965cc64a4cae6c4",
+    "work/hdmi_link_full/latency_t1_fx0_ddr64.compile.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "work/hdmi_link_full/latency_t0_fx1.log": "3592e6959fa7d73e25e947a0f1ad70e8583aedfa6cbfc7470ae027f9c19e6b98",
+    "work/hdmi_link_full/latency_t3_fx0_ddr64.compile.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "work/hdmi_link_full/latency_t2_fx0_ddr64.compile.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "work/hdmi_link_full/regression.log": "c46c3f7a9bb53a56b49a23b267619c604965ac0cdb21cb16a6010197d8cf0b37",
+    "work/hdmi_link_full/latency_t0_fx1_ddr64.compile.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "work/hdmi_link_full/latency_t0_fx1_ddr64.log": "2d9048542fecafcc457b7fc3e06f32b76597064623c5635050f07c5f67a97e23"
+  },
+  "limits": [
+    "数字模型不证明板上PLL抖动、信号完整性或显示兼容性。",
+    "串行彩条测试覆盖启动及外部复位后的完整行；整帧行场时序另由UI时序回归覆盖。",
+    "按键延迟为有效手势、预加载P64和指定DDR等待模型下的数字仿真，不含模拟音频链路。"
+  ]
+}
