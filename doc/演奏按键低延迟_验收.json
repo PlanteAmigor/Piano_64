@@ -1,21 +1,209 @@
 {
-  "source_commit": "4e2fcabb8584ba1adc035e9112602af75872f3c6",
-  "status": "revision1_rejected_by_physical_keyboard_feedback",
+  "revision": 2,
+  "source_commit": "80239bf6553dbc9d79453b1eaf9b5e7bb8305937",
+  "status": "revision2_digital_and_build_passed_sram_programmed_physical_acceptance_pending",
   "video_mode": "720p60.606",
+  "goal_note_on_us": 5000,
   "debounce": {
     "press_cycles": 25000,
-    "release_cycles": 100000,
+    "release_cycles": 1000000,
     "press_ms": 0.5,
-    "release_ms": 2
+    "release_ms": 20
   },
-  "worst_dac_us": 2791.99,
+  "worst_dac_us": 2793.91,
   "scenario_count": 18,
-  "full_regression_pass_lines": 67,
+  "full_regression_pass_lines": 68,
+  "records": [
+    {
+      "timbre": "钢琴",
+      "effect": "干声",
+      "measurements": [
+        {
+          "timbre": 0,
+          "effect": 0,
+          "ddr_response_cycles": 64,
+          "phase": 1,
+          "pcm_us": 1231.24,
+          "dac_us": 1318.31
+        },
+        {
+          "timbre": 0,
+          "effect": 0,
+          "ddr_response_cycles": 64,
+          "phase": 2,
+          "pcm_us": 617.86,
+          "dac_us": 704.95
+        },
+        {
+          "timbre": 0,
+          "effect": 0,
+          "ddr_response_cycles": 64,
+          "phase": 3,
+          "pcm_us": 2389.08,
+          "dac_us": 2476.15
+        },
+        {
+          "timbre": 0,
+          "effect": 0,
+          "ddr_response_cycles": 64,
+          "phase": 4,
+          "pcm_us": 2706.72,
+          "dac_us": 2793.91
+        }
+      ],
+      "log": "work/key_latency/revision2/latency_t0_fx0_ddr64.log",
+      "record_sha256": "968daa8fcb2fafb0dc4b2c9e0a90f8c66c2ffae858b3c21e945b9f4daee8d9f6"
+    },
+    {
+      "timbre": "古筝",
+      "effect": "干声",
+      "measurements": [
+        {
+          "timbre": 1,
+          "effect": 0,
+          "ddr_response_cycles": 64,
+          "phase": 1,
+          "pcm_us": 1251.72,
+          "dac_us": 1420.71
+        },
+        {
+          "timbre": 1,
+          "effect": 0,
+          "ddr_response_cycles": 64,
+          "phase": 2,
+          "pcm_us": 638.34,
+          "dac_us": 725.43
+        },
+        {
+          "timbre": 1,
+          "effect": 0,
+          "ddr_response_cycles": 64,
+          "phase": 3,
+          "pcm_us": 873.42,
+          "dac_us": 960.63
+        },
+        {
+          "timbre": 1,
+          "effect": 0,
+          "ddr_response_cycles": 64,
+          "phase": 4,
+          "pcm_us": 2604.36,
+          "dac_us": 2691.51
+        }
+      ],
+      "log": "work/key_latency/revision2/latency_t1_fx0_ddr64.log",
+      "record_sha256": "441d6c5af1ee2d56ab758c43694c19918d6dc595f3c39549317ffe2dff23bf35"
+    },
+    {
+      "timbre": "唢呐",
+      "effect": "干声",
+      "measurements": [
+        {
+          "timbre": 2,
+          "effect": 0,
+          "ddr_response_cycles": 64,
+          "phase": 1,
+          "pcm_us": 1784.2,
+          "dac_us": 1871.27
+        },
+        {
+          "timbre": 2,
+          "effect": 0,
+          "ddr_response_cycles": 64,
+          "phase": 2,
+          "pcm_us": 1170.84,
+          "dac_us": 1257.91
+        },
+        {
+          "timbre": 2,
+          "effect": 0,
+          "ddr_response_cycles": 64,
+          "phase": 3,
+          "pcm_us": 1016.92,
+          "dac_us": 1103.99
+        }
+      ],
+      "log": "work/key_latency/revision2/latency_t2_fx0_ddr64.log",
+      "record_sha256": "d88799723811b1d353c0cb9e865b4f9fe8bf9981368a76cc3379d221d9e7b2ce"
+    },
+    {
+      "timbre": "笛子",
+      "effect": "干声",
+      "measurements": [
+        {
+          "timbre": 3,
+          "effect": 0,
+          "ddr_response_cycles": 64,
+          "phase": 1,
+          "pcm_us": 1968.52,
+          "dac_us": 2055.59
+        },
+        {
+          "timbre": 3,
+          "effect": 0,
+          "ddr_response_cycles": 64,
+          "phase": 2,
+          "pcm_us": 1355.16,
+          "dac_us": 1442.23
+        },
+        {
+          "timbre": 3,
+          "effect": 0,
+          "ddr_response_cycles": 64,
+          "phase": 3,
+          "pcm_us": 1057.88,
+          "dac_us": 1144.95
+        }
+      ],
+      "log": "work/key_latency/revision2/latency_t3_fx0_ddr64.log",
+      "record_sha256": "bb3130a5b51b362f6467354e5b8c0f3b76e71420d7accd61f7f12eefa79c9450"
+    },
+    {
+      "timbre": "钢琴",
+      "effect": "混响",
+      "measurements": [
+        {
+          "timbre": 0,
+          "effect": 1,
+          "ddr_response_cycles": 64,
+          "phase": 1,
+          "pcm_us": 1231.24,
+          "dac_us": 1318.31
+        },
+        {
+          "timbre": 0,
+          "effect": 1,
+          "ddr_response_cycles": 64,
+          "phase": 2,
+          "pcm_us": 617.86,
+          "dac_us": 704.95
+        },
+        {
+          "timbre": 0,
+          "effect": 1,
+          "ddr_response_cycles": 64,
+          "phase": 3,
+          "pcm_us": 2389.08,
+          "dac_us": 2476.15
+        },
+        {
+          "timbre": 0,
+          "effect": 1,
+          "ddr_response_cycles": 64,
+          "phase": 4,
+          "pcm_us": 2706.72,
+          "dac_us": 2793.91
+        }
+      ],
+      "log": "work/key_latency/revision2/latency_t0_fx1_ddr64.log",
+      "record_sha256": "44f958eebe0283dee31ec153b076e005302bd5c61d359f32a7dbf20b231ab370"
+    }
+  ],
   "build": {
     "video_mode": "720p60.606",
     "bitstreams": {
-      "piano64_full.fs": "8b3b77c9fa98dc8adb7044078ee142e154c54b5b85610e27e73ad45b336d56f6",
-      "piano64_full.bin": "e8fabe0ee2f3eb86d0a8f906393b9d6af914b3ff0abaa8b9cadcc77901255898"
+      "piano64_full.fs": "01198ac8a7547f963be728f345e2334af594c40e91f66b9439eac5f6e02bdff7",
+      "piano64_full.bin": "2d9cb9f55c6cb5136104035683d51dec19afcc848970490d9b680c63f75f23c7"
     },
     "violations": {
       "setup": 0,
@@ -23,11 +211,11 @@
     },
     "resources": {
       "Logic": [
-        56880.0,
+        57499.0,
         138240.0
       ],
       "Register": [
-        40104.0,
+        40144.0,
         139095.0
       ],
       "BSRAM": [
@@ -39,16 +227,19 @@
         298.0
       ]
     },
-    "worst_reported_setup_ns": 0.111
+    "worst_reported_setup_ns": 0.021
   },
   "board": {
+    "revision": 2,
     "mode": "sram",
     "board_serial": "2025030317",
-    "fs_sha256": "8b3b77c9fa98dc8adb7044078ee142e154c54b5b85610e27e73ad45b336d56f6",
+    "fs_sha256": "01198ac8a7547f963be728f345e2334af594c40e91f66b9439eac5f6e02bdff7",
     "video_mode": "720p60.606",
-    "screen_verified": true,
+    "screen_verified": false,
     "physical_keyboard_verified": false,
     "flash_changed": false,
+    "press_ms": 0.5,
+    "release_ms": 20,
     "exit_code": 0,
     "command": [
       "openFPGALoader",
@@ -60,24 +251,35 @@
       "--quiet",
       "/mnt/project/InstruementSound/piano64_3/impl/pnr/piano64_full.fs"
     ],
-    "uart_bytes": 5672,
-    "uart_preview": "!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n!2\r\n",
-    "uart_active": true,
-    "time": 1793744347.8589194,
-    "optical_adc_status": "BUSY timeout, heartbeat !2",
+    "uart_bytes": 0,
+    "uart_active": false,
     "optical_valid_frames_observed": false,
-    "prior_same_heartbeat_observed": "work/ui1080/clock_probe/hardware.json UART prefix",
-    "user_feedback": "画面正常，但按键或声音有异常；重复起音、爆音，或松键不停"
+    "optical_valid_frame_lines": 0,
+    "optical_error_lines": 0,
+    "uart_tail_preview": "",
+    "time": 1793751111.6003118
   },
-  "limitations": [
-    "数字仿真结果，模拟DAC/功放/扬声器延迟未实测",
-    "音源预先加载且手势已有效",
-    "覆盖0.6ms按下抖动，不能外推到任意持续抖动或任意DDR阻塞",
-    "声学试听与屏幕待用户确认",
-    "当前串口报告光学ADC BUSY超时，未观察到有效光学采样帧"
-  ],
-  "revision2": "press remains 0.5ms, release returns to 20ms; rebuild and reverify required",
-  "restored_baseline_uart": {
+  "rejected_revision1": {
+    "commit": "c8c0cde",
+    "screen_verified": true,
+    "physical_keyboard_verified": false,
+    "user_feedback": "重复起音、爆音，或松键不停",
+    "reproduced_path": "4ms contact opening falsely releases and retriggers the old 2ms scan; 20ms scan suppresses it. This is a logic reproducer, not a captured physical contact trace."
+  },
+  "baseline_restoration": {
+    "exit_code": 0,
+    "fs_sha256": "7ec417b53ac864cedb204301f05d1f85b0a656a2c812bb86e7ae63e6755717c5",
+    "flash_changed": false,
+    "time": 1793750190.1214838
+  },
+  "baseline_user_confirmation": {
+    "confirmed_by": "user",
+    "confirmation": "恢复稳定版后异常消失",
+    "same_playing_pattern_requested": true,
+    "restored_fs_sha256": "7ec417b53ac864cedb204301f05d1f85b0a656a2c812bb86e7ae63e6755717c5",
+    "time": 1793750889.910615
+  },
+  "fresh_baseline_optical": {
     "bytes": 23471,
     "valid_frame_lines": 360,
     "error_lines": 0,
@@ -91,5 +293,19 @@
       "+002767,+002798,-000031,+000034,+000000,+000000,"
     ]
   },
-  "optical_diagnosis": "Fresh baseline capture contains 360 valid frames and zero error lines in 3 seconds; earlier startup heartbeat does not establish a persistent ADC fault."
+  "limitations": [
+    "5ms指标指按下起音，释放连续确认20ms；松开不足20ms的同键重按可能合并",
+    "数字仿真不含模拟DAC、功放、扬声器与声传播延迟",
+    "有效手势、P64已载入及模型限定的DDR等待为测量前提",
+    "第一版实物失败的逻辑路径已复现，第二版实物声音仍需用户验收",
+    "加载后3秒及随后5秒UART窗口均为0字节；不能据此确认光学链路正常，待用户实物确认并继续核查"
+  ],
+  "uart_followup": {
+    "time": 1793751139.4474392,
+    "duration_s": 5,
+    "bytes": 0,
+    "valid_frame_lines": 0,
+    "error_lines": 0,
+    "tail": ""
+  }
 }
