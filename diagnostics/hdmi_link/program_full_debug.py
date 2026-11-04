@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Program timing-clean full black-screen diagnostic and capture fresh telemetry."""
 from pathlib import Path
-import hashlib,json,os,re,select,subprocess,termios,time
-R=Path(__file__).resolve().parents[2];W=R/'work/hdmi_black/full_debug'
+import argparse,hashlib,json,os,re,select,subprocess,termios,time
+R=Path(__file__).resolve().parents[2]
+ap=argparse.ArgumentParser();ap.add_argument('--half-rate',action='store_true');a=ap.parse_args()
+W=R/'work/hdmi_black'/('full_debug30' if a.half_rate else 'full_debug')
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 m=json.loads((W/'manifest.json').read_text());assert m['exit_code']==0 and m['violations']=={'setup':0,'hold':0}
 assert all(sha(W/f)==h for f,h in m['inputs'].items())
-sim=json.loads((R/'work/hdmi_black/debug_serial/results.json').read_text())
+sim=json.loads((R/'work/hdmi_black'/('debug_serial30' if a.half_rate else 'debug_serial')/'results.json').read_text())
 assert sim['frozen_inputs_sha256']==sha(W/'inputs.json')
 assert {x['mode'] for x in sim['results']}=={1,2}
 for row in sim['results']:
@@ -16,7 +18,7 @@ syn=(W/'impl/gwsynthesis/piano64_full_syn.rpt.html').read_text();clocks={}
 for row in re.findall(r'<tr[^>]*>(.*?)</tr>',syn,re.S):
  cells=[re.sub(r'<[^>]+>','',s).strip() for s in re.findall(r'<td[^>]*>(.*?)</td>',row,re.S)]
  if len(cells)>=10 and cells[2]=='Generated':clocks[cells[1]]=float(cells[4])
-for leaf,mhz in [('CLKOUT0',150),('CLKOUT1',750)]:assert clocks.get('u_hdmi/u_pll/u_pixel/PLL_inst/'+leaf+'.default_gen_clk')==mhz
+for leaf,mhz in [('CLKOUT0',75 if a.half_rate else 150),('CLKOUT1',375 if a.half_rate else 750)]:assert clocks.get('u_hdmi/u_pll/u_pixel/PLL_inst/'+leaf+'.default_gen_clk')==mhz
 p=subprocess.run(['openFPGALoader','-b','tangmega138k','--ftdi-serial','2025030317','--write-sram','--quiet',str(fs)],capture_output=True,text=True)
 (W/'program.log').write_text(p.stdout+p.stderr)
 d={'exit_code':p.returncode,'fs_sha256':sha(fs),'flash_changed':False,'time':time.time(),'user_feedback':'pending','programmer_sha256':sha(Path(__file__))}

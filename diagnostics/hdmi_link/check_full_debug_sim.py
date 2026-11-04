@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Verify the diagnostic mux at actual production serial pins, before loading."""
 from pathlib import Path
-import hashlib,json,subprocess
+import argparse,hashlib,json,subprocess
 R=Path(__file__).resolve().parents[2];D=Path(__file__).resolve().parent
-W=R/'work/hdmi_black/full_debug';O=R/'work/hdmi_black/debug_serial';O.mkdir(parents=True,exist_ok=True)
+ap=argparse.ArgumentParser();ap.add_argument('--half-rate',action='store_true');a=ap.parse_args()
+W=R/'work/hdmi_black'/('full_debug30' if a.half_rate else 'full_debug');O=R/'work/hdmi_black'/('debug_serial30' if a.half_rate else 'debug_serial');O.mkdir(parents=True,exist_ok=True)
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 inputs=json.loads((W/'inputs.json').read_text());assert all(sha(W/p)==h for p,h in inputs.items())
 models=[R/'work/hdmi_production_link/vendor.v',R/'work/video_primitives/dpb.v'];results=[]
@@ -21,7 +22,7 @@ endmodule
  if mode==1:s=s.replace('palette(visible)',"24'h40a0ff")
  tb.write_text(s)
  files=[tb,wrapper,*[W/p for p in ['src/hdmi/hdmi_ui3_top.v','src/hdmi/ui/ui_liss_ram.v','src/hdmi/ui/ui_scope_points.v','src/hdmi/ir4/gowin_pll_720p.v','src/hdmi/ir4/dvi_tx_top.v','src/hdmi/ir4/dvi_tx_tmds_enc.v','src/hdmi/ir4/dvi_tx_tmds_phy.v','src/hdmi/ir4/dvi_tx_clk_drv.v']],*models]
- exe=O/('mode'+str(mode)+'.vvp');p=subprocess.run(['iverilog','-g2012','-DUI_VENDOR_RAM_SIM','-DPROBE_1080_SINGLE','-DPROBE_1080_FAST','-s','tb_link','-s','GSR','-o',str(exe),*[str(p) for p in files]],cwd=W,capture_output=True,text=True)
+ exe=O/('mode'+str(mode)+'.vvp');p=subprocess.run(['iverilog','-g2012','-DUI_VENDOR_RAM_SIM','-DPROBE_1080_SINGLE',*(['-DPROBE_1080_FAST'] if not a.half_rate else []),'-s','tb_link','-s','GSR','-o',str(exe),*[str(p) for p in files]],cwd=W,capture_output=True,text=True)
  (O/('mode'+str(mode)+'.compile.log')).write_text(p.stdout+p.stderr);assert p.returncode==0,p.stdout+p.stderr
  with (O/('mode'+str(mode)+'.log')).open('w') as f:p=subprocess.run(['vvp',str(exe)],cwd=W,stdout=f,stderr=subprocess.STDOUT)
  log=(O/('mode'+str(mode)+'.log')).read_text();print(mode,log,flush=True);assert p.returncode==0 and 'PASS independent serial' in log
