@@ -1,0 +1,8 @@
+{
+  "status": "rejected_timing",
+  "setup_violations": 41,
+  "hold_violations": 0,
+  "worst_setup_ns": -0.332,
+  "fs_sha256": "b20817fcf3ee89306f95a6cc0126ca29c3da0c187946e5508a03d191b9551bf5",
+  "programmed": false
+}

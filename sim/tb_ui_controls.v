@@ -13,11 +13,21 @@ module tb_ui_controls;
         for(n=1;n<=118800;n=n+1)begin
             @(negedge clk);
             if(dut.fade_cnt!==(n%118800))$fatal(1,"fade counter n%0d got%0d",n,dut.fade_cnt);
+            // Stop precisely with a pending chunk carry, then resume. The
+            // lookahead registers must hold with the counter in the idle path.
+            if(n==63 || n==4095)begin
+                force dut.fading_out=0;force dut.fade_lvl=15;
+                repeat(5)begin
+                    @(negedge clk);
+                    if(dut.fade_cnt!==n)$fatal(1,"fade idle hold n%0d got%0d",n,dut.fade_cnt);
+                end
+                force dut.fading_out=1;force dut.fade_lvl=8;
+            end
         end
         release dut.fade_lvl;release dut.fading_out;
         resetn=0;repeat(4)@(negedge clk);resetn=1;repeat(24)@(negedge clk);
         if(dut.page_show!==0 || dut.fade_lvl!==15)$fatal(1,"UI reset state");
-        $display("PASS UI controls: every fade count through all carry boundaries and exact 118800-cycle wrap; eight local resets cycle-identical before/after reset");$finish;
+        $display("PASS UI controls: every fade count through all carry boundaries and exact 118800-cycle wrap, idle/resume at both pending carry boundaries; eight local resets cycle-identical before/after reset");$finish;
     end
     initial begin #2000000;$fatal(1,"UI controls timeout");end
 endmodule

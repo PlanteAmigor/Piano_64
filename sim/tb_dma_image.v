@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
 `default_nettype none
-module tb_dma_image;
+module tb_dma_image #(parameter ABORT_RESET=0);
     reg clk=0,rst_n=0,start=0;
     always #5 clk=~clk;
     reg [6:0] note;
@@ -73,10 +73,21 @@ module tb_dma_image;
                 num[0]=k;num[1]=k;num[2]=k;num[3]=u32(d+24);num[4]=num[3];
                 num[5]=u32(d+40)/2;num[6]=num[5];num[7]=u32(d+48)/4;
                 for(s=0;s<8;s=s+1) seen[s]=0;
+                if(ABORT_RESET && inst==0 && n==lo)begin
+                    @(negedge clk);note=n;start=~start;
+                    wait(dut.st==dut.S_DW && valid);
+                    @(negedge clk);rst_n=0;start=0;
+                    repeat(8)@(negedge clk);
+                    if(busy || done || aw || bw || iw || ew || ow || pw || qw || fw)
+                        $fatal(1,"descriptor abort reset did not clear transfer/strobes");
+                    for(s=0;s<8;s=s+1)if(seen[s]!=0)$fatal(1,"data written during aborted descriptor fetch");
+                    rst_n=1;repeat(4)@(negedge clk);
+                end
                 @(negedge clk);note=n;start=~start;wait(done);repeat(3) @(negedge clk);
                 for(s=0;s<8;s=s+1) if(seen[s]!=num[s]) $fatal(1,"missing writes note=%d seg=%d",n,s);
             end
         end
+        if(ABORT_RESET)$display("PASS DMA reset recovery: abort during descriptor response, no output writes, restart and validate every note");
         $display("PASS DMA: all 53 suona/dizi notes, 8 tables, %0d elements match P64.BIN exactly",total);$finish;
     end
     initial begin #30000000;$fatal(1,"DMA timeout");end

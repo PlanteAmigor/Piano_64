@@ -17,7 +17,7 @@ module fat32_song_store #(parameter integer CLK_HZ=50000000,TIMEOUT_MS=3800)(
   DATA_WRITE=14,DATA_NEXT=15,ROOT_CLEAR=16,ROOT_ZERO_NEXT=17,FAT_BEGIN=18,FAT_READ=19,
   FAT_PATCH=20,FAT_WRITE=21,FAT_NEXT=22,END_MARK=23,END_LINK_DONE=24,END_READ=25,
   END_PATCH=26,END_WRITE=27,DIR_READ=28,DIR_PATCH=29,DIR_WRITE=30,SUCCESS=31,
-  IO_START=32,IO_WAIT=33,FSI_READ=34,FSI_CHECK=35,FSI_PATCH=36,FSI_WRITE=37,FSI_NEXT=38;
+  IO_START=32,IO_WAIT=33,FSI_READ=34,FSI_CHECK=35,FSI_PATCH=36,FSI_WRITE=37,FSI_NEXT=38,FREE_INCREMENT=39,FREE_CHECK=40;
  localparam [2:0] P_BOOT=0,P_ROOT=1,P_LINK=2,P_FREE=3,P_PATCH=4,P_PLAIN=5,P_VERIFY=6,P_FSI=7;
  reg [7:0] state,return_state;
  reg [2:0] purpose;
@@ -75,7 +75,7 @@ module fat32_song_store #(parameter integer CLK_HZ=50000000,TIMEOUT_MS=3800)(
  reg [3:0] candidate_tens,candidate_ones;
  reg [31:0] allocated[0:34];
  reg [5:0] allocated_count,needed,total_needed;
- reg [31:0] free_sector;
+ reg [31:0] free_sector,free_sector_next;
  reg [6:0] file_sectors;
  reg [5:0] data_cluster_index;
  reg [7:0] data_sector_index;
@@ -132,7 +132,7 @@ module fat32_song_store #(parameter integer CLK_HZ=50000000,TIMEOUT_MS=3800)(
    root_cluster<=2;root_last<=2;root_sector<=0;root_sectors_seen<=0;root_end<=0;extend_root<=0;slot_found<=0;
    slot_lba<=0;slot_cluster<=0;slot_sector<=0;slot_offset<=0;used_ids<=0;song_count<=0;
    candidate<=1;candidate_tens<=0;candidate_ones<=1;allocated_count<=0;needed<=0;total_needed<=0;
-   free_sector<=0;file_sectors<=0;
+   free_sector<=0;free_sector_next<=0;file_sectors<=0;
    data_cluster_index<=0;data_sector_index<=0;remaining<=0;fill_index<=0;fat_index<=0;fat_copy<=0;
    linking_root<=0;patch_cluster<=0;patch_value<=0;patch_index<=0;zero_sector<=0;end_lba<=0;
    fsi_copy<=0;fsi_lba<=0;fsi_signature0<=0;fsi_signature1<=0;fsi_signature2<=0;
@@ -235,8 +235,14 @@ module fat32_song_store #(parameter integer CLK_HZ=50000000,TIMEOUT_MS=3800)(
     FREE:read_sector(read_fat_base+free_sector,FREE_DONE,P_FREE);
     FREE_DONE:begin
      if(allocated_count==total_needed)state<=DATA_BEGIN;
-     else if(free_sector+1>=fatsz || ((free_sector+1)<<7)>cluster_limit)fail(23);
-     else begin free_sector<=free_sector+1'b1;state<=FREE;end
+     else state<=FREE_INCREMENT;
+    end
+    // Separate the sector increment from the two allocation-limit comparisons.
+    // The original combined path exceeded the 50MHz budget after placement.
+    FREE_INCREMENT:begin free_sector_next<=free_sector+32'd1;state<=FREE_CHECK;end
+    FREE_CHECK:begin
+     if(free_sector_next>=fatsz || (free_sector_next<<7)>cluster_limit)fail(23);
+     else begin free_sector<=free_sector_next;state<=FREE;end
     end
     DATA_BEGIN:begin
      stream_start<=1;data_cluster_index<=0;data_sector_index<=0;remaining<=file_size;

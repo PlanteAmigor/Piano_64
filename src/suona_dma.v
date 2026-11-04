@@ -168,6 +168,30 @@ module suona_dma #(
     assign app_en   = en_r;
     assign app_addr = cmd_addr;
 
+    // Descriptor registers intentionally have no reset. Capture beats using
+    // the state/valid handshake without the high-fanout reset in their CE.
+    // Reset still clears the FSM and every write strobe; both descriptor
+    // beats are overwritten before the next transfer can consume them.
+    always @(posedge clk) begin
+        if (st==S_DW && app_rd_data_valid) begin
+            if (desc_cnt==0) begin
+                d_k    <= app_rd_data[ 31:  0];
+                d_ab   <= app_rd_data[ 63: 32];
+                d_bc   <= app_rd_data[ 95: 64];
+                d_pi   <= app_rd_data[127: 96];
+                d_ee   <= app_rd_data[159:128];
+                d_eo   <= app_rd_data[191:160];
+                d_elen <= app_rd_data[223:192];
+            end else begin
+                d_pe   <= app_rd_data[ 31:  0];
+                d_po   <= app_rd_data[ 63: 32];
+                d_plen <= app_rd_data[ 95: 64];
+                d_ph   <= app_rd_data[127: 96];
+                d_flen <= app_rd_data[159:128];
+            end
+        end
+    end
+
     always @(posedge clk) begin
         if (!local_rst_n) begin
             st <= S_IDLE; busy <= 1'b0; done <= 1'b0;
@@ -208,27 +232,16 @@ module suona_dma #(
 
                 S_DW: if (app_rd_data_valid) begin
                     if (desc_cnt == 2'd0) begin
-                        d_k    <= app_rd_data[ 31:  0];
-                        d_ab   <= app_rd_data[ 63: 32];
-                        d_bc   <= app_rd_data[ 95: 64];
-                        d_pi   <= app_rd_data[127: 96];
-                        d_ee   <= app_rd_data[159:128];
-                        d_eo   <= app_rd_data[191:160];
-                        d_elen <= app_rd_data[223:192];
                         desc_cnt <= 2'd1;
                         cmd_addr <= cmd_addr_inc;
                         st <= S_DESC;
                     end
                     else begin
-                        d_pe   <= app_rd_data[ 31:  0];
-                        d_po   <= app_rd_data[ 63: 32];
-                        d_plen <= app_rd_data[ 95: 64];
-                        d_ph   <= app_rd_data[127: 96];
-                        d_flen <= app_rd_data[159:128];
                         seg    <= 4'd0;
                         st     <= S_SEG;
                     end
                 end
+
 
                 //──────────────────────────────────────────────────
                 S_SEG: begin
