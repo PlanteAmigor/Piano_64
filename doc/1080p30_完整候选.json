@@ -1,0 +1,74 @@
+{
+  "status": "sram_loaded_user_acceptance_pending",
+  "build": {
+    "video_mode": "1080p30.303",
+    "pll_clocks_mhz": {
+      "u_hdmi/u_pll/u_pixel/PLL_inst/CLKOUT0.default_gen_clk": 75.0,
+      "u_hdmi/u_pll/u_pixel/PLL_inst/CLKOUT1.default_gen_clk": 375.0
+    },
+    "bitstreams": {
+      "piano64_full.fs": "b415d6f7619be92d72ee1d4ecf28be18f72244677ebdc6c01758b69f92541508",
+      "piano64_full.bin": "8fd67d944c5de5469d5607ca981101f1c0ea5eef884a159f71ec4199184ff789"
+    },
+    "violations": {
+      "setup": 0,
+      "hold": 0
+    },
+    "resources": {
+      "Logic": [
+        57976.0,
+        138240.0
+      ],
+      "Register": [
+        41067.0,
+        139095.0
+      ],
+      "BSRAM": [
+        313.0,
+        340.0
+      ],
+      "DSP": [
+        157.5,
+        298.0
+      ]
+    },
+    "worst_reported_setup_ns": 1.333
+  },
+  "source_manifest_sha256": "b8c76ff528eaf89a42791a0ec9050e094f143fc689ad1e91dd1c222f8ce0574f",
+  "verification": {
+    "time": 1793764356.2882066,
+    "mode": "1080p30.303",
+    "manifest_sha256": "b8c76ff528eaf89a42791a0ec9050e094f143fc689ad1e91dd1c222f8ce0574f",
+    "auxiliary_sha256": "f82d885129f63f88a0e2b5e35fd744f02b02f59efa10c02b3b5b9bea018c0c34",
+    "regression_log_sha256": "d6e2f31b1941fdf7e8a79b8bec5892f89140d3a7960f2deccc24a7305c0c078e",
+    "regression_pass_lines": 68,
+    "latency_scenarios_reused_with_identical_sources": 18,
+    "physical_result": "pending",
+    "flash_changed": false
+  },
+  "board": {
+    "time": 1793764372.6373954,
+    "command": [
+      "openFPGALoader",
+      "-b",
+      "tangmega138k",
+      "--ftdi-serial",
+      "2025030317",
+      "--write-sram",
+      "--quiet",
+      "/mnt/project/InstruementSound/piano64_3/work/ui1080/review23/work/hdmi_production30/offline_verified/piano64_full.fs"
+    ],
+    "exit_code": 0,
+    "fs_sha256": "b415d6f7619be92d72ee1d4ecf28be18f72244677ebdc6c01758b69f92541508",
+    "verification_sha256": "bb62a9bc57ebc7bd875880d25c6f2e4ded48a96a83f80ef63eea054f8ebfb9b0",
+    "flash_changed": false,
+    "user_feedback": "pending"
+  },
+  "diagnostic_feedback": "all original UI, blue and independent bars visible; audio not separately accepted",
+  "main_flash": "stable accepted 720p; unchanged",
+  "limits": [
+    "Full production 30.303Hz user acceptance pending",
+    "60.606Hz full production black screen unresolved",
+    "18 latency scenarios reused only after every recorded source SHA matched; not remeasured"
+  ]
+}
